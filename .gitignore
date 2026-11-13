@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+out/
+.classpath
+.project
+.settings/
+bin/
+
+# Test tooling
+.jqwik-database
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets never belong in the repo
+.env
+*.pem
+*.key

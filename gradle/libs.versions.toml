@@ -1,0 +1,26 @@
+# Every version is pinned and was checked on Maven Central on 2026-11-13 (Shift 1). No ranges, no "latest".
+#
+# Non-Spring modules (core, wire, sim, store-postgres, sandbox, bench) test with JUnit 5 because jqwik 1.10.2
+# is built against JUnit Platform 1.14.x. The Spring Boot module (app) uses the JUnit version Boot manages.
+# The two never share a test classpath. See DESIGN.md D23.
+
+[versions]
+junit5 = "5.14.4"
+jqwik = "1.10.2"
+archunit = "1.5.1"
+assertj = "3.27.7"
+spring-boot = "4.1.2"
+
+[libraries]
+junit5-bom = { module = "org.junit:junit-bom", version.ref = "junit5" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jqwik = { module = "net.jqwik:jqwik", version.ref = "jqwik" }
+archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
