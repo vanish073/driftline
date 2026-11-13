@@ -10,7 +10,7 @@ class AppArchitectureTest {
     private static final JavaClasses APP = DriftlineRules.importMainClasses(DriftlineRules.ROOT + ".app");
 
     @Test
-    void neverBuildsCanaries() {
-        DriftlineRules.CANARIES_BUILT_ONLY_IN_SIM.check(APP);
+    void neverBuildsSimulatorOnlyObjects() {
+        DriftlineRules.SIM_ONLY_CONSTRUCTION.check(APP);
     }
 }

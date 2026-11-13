@@ -25,6 +25,7 @@ class DriftlineRulesSelfTest {
             DriftlineRules.NO_ENVIRONMENT_OR_IO, DriftlineRules.NO_HASH_ORDERED_COLLECTIONS,
             DriftlineRules.NO_DEFAULT_LOCALE, DriftlineRules.NO_MUTABLE_STATIC_STATE, DriftlineRules.DETERMINISM,
             DriftlineRules.NO_FLOATING_POINT, DriftlineRules.NO_SPRING, DriftlineRules.CANARIES_BUILT_ONLY_IN_SIM,
+            DriftlineRules.UNCHECKED_LEDGER_TXNS_ONLY_IN_SIM, DriftlineRules.SIM_ONLY_CONSTRUCTION,
             DriftlineRules.NOTHING_DEPENDS_ON_SIM_RUNNER);
 
     private static JavaClasses only(Class<?>... classes) {
@@ -64,6 +65,9 @@ class DriftlineRulesSelfTest {
                 arguments("NO_FLOATING_POINT", DriftlineRules.NO_FLOATING_POINT, RuleFixtures.ReferencesDoubleMethod.class),
                 arguments("NO_SPRING", DriftlineRules.NO_SPRING, RuleFixtures.DependsOnSpring.class),
                 arguments("CANARIES_BUILT_ONLY_IN_SIM", DriftlineRules.CANARIES_BUILT_ONLY_IN_SIM, RuleFixtures.BuildsCanaries.class),
+                arguments("UNCHECKED_LEDGER_TXNS_ONLY_IN_SIM", DriftlineRules.UNCHECKED_LEDGER_TXNS_ONLY_IN_SIM, RuleFixtures.BuildsUncheckedLedgerTxn.class),
+                arguments("SIM_ONLY_CONSTRUCTION", DriftlineRules.SIM_ONLY_CONSTRUCTION, RuleFixtures.BuildsUncheckedLedgerTxn.class),
+                arguments("SIM_ONLY_CONSTRUCTION", DriftlineRules.SIM_ONLY_CONSTRUCTION, RuleFixtures.BuildsCanaries.class),
                 arguments("NOTHING_DEPENDS_ON_SIM_RUNNER", DriftlineRules.NOTHING_DEPENDS_ON_SIM_RUNNER, KernelPart.class));
     }
 

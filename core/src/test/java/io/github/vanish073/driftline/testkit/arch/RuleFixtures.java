@@ -172,6 +172,16 @@ final class RuleFixtures {
         SpringType bean;
     }
 
+    static final class BuildsUncheckedLedgerTxn {
+        io.github.vanish073.driftline.core.ledger.LedgerTxn txn() {
+            return io.github.vanish073.driftline.core.ledger.LedgerTxn.unchecked(
+                    io.github.vanish073.driftline.core.id.MerchantId.of("m"),
+                    new io.github.vanish073.driftline.core.ledger.Cause(
+                            io.github.vanish073.driftline.core.ledger.CauseType.MANUAL_ADJUSTMENT, "1"),
+                    Instant.EPOCH, List.of());
+        }
+    }
+
     static final class BuildsCanaries {
         Canaries canaries() {
             return Canaries.of(Canary.DEDUPE_OFF);

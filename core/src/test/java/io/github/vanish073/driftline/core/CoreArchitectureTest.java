@@ -36,7 +36,7 @@ class CoreArchitectureTest {
     }
 
     @Test
-    void neverBuildsCanaries() {
-        DriftlineRules.CANARIES_BUILT_ONLY_IN_SIM.check(CORE);
+    void neverBuildsSimulatorOnlyObjects() {
+        DriftlineRules.SIM_ONLY_CONSTRUCTION.check(CORE);
     }
 }

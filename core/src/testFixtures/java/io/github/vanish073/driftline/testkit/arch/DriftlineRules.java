@@ -24,6 +24,7 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.Canary;
+import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import java.time.Clock;
 import java.time.InstantSource;
 import java.time.ZoneId;
@@ -413,6 +414,19 @@ public final class DriftlineRules {
             .should().callConstructor(Canaries.class, List.class)
             .orShould().callMethod(Canaries.class, "of", Canary[].class)
             .because("production always runs with Canaries.NONE (DESIGN §11.10)")
+            .allowEmptyShould(true);
+
+    /** Applied to every module. Skipping ledger layer 1 is for the simulator's canaries and tests only (D28). */
+    public static final ArchRule UNCHECKED_LEDGER_TXNS_ONLY_IN_SIM = noClasses()
+            .that().resideOutsideOfPackage(SIM + "..")
+            .and().doNotBelongToAnyOf(LedgerTxn.class)
+            .should().accessTargetWhere(anyOverload(LedgerTxn.class, "unchecked"))
+            .because("production code always builds ledger transactions through the validating LedgerTxn.of (D28)")
+            .allowEmptyShould(true);
+
+    /** Everything only the simulator (and tests) may construct: canaries and unvalidated ledger transactions. */
+    public static final ArchRule SIM_ONLY_CONSTRUCTION = CompositeArchRule.of(CANARIES_BUILT_ONLY_IN_SIM)
+            .and(UNCHECKED_LEDGER_TXNS_ONLY_IN_SIM)
             .allowEmptyShould(true);
 
     /** Applied to {@code sim}. The driver may use the kernel, never the other way round (D22). */

@@ -25,7 +25,7 @@ class WireArchitectureTest {
     }
 
     @Test
-    void neverBuildsCanaries() {
-        DriftlineRules.CANARIES_BUILT_ONLY_IN_SIM.check(WIRE);
+    void neverBuildsSimulatorOnlyObjects() {
+        DriftlineRules.SIM_ONLY_CONSTRUCTION.check(WIRE);
     }
 }

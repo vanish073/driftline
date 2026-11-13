@@ -9,7 +9,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 |---|---|---|---|
 | 0 | Design and plan | — | **DONE** (2026-11-13) |
 | 1 | Foundations, ports, state machines | M1 (part 1) | **DONE** (2026-11-13) |
-| 2 | Double-entry ledger, PostgreSQL, Store contract | **M1 done** | TODO |
+| 2 | Double-entry ledger, PostgreSQL, Store contract | **M1 done** | **DONE** (2026-11-13); **M1 DONE** |
 | 3 | Simulator kernel and world models | M2 (part 1) | TODO |
 | 4 | Faults, invariants, canaries, 10k seeds in CI | **M2 done** | TODO |
 | 5 | Matcher: join, watermarks, timers, one-to-one breaks (in the simulator) | M3 (part 1) | TODO |
@@ -70,7 +70,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 - ArchUnit self-test: a fixture class that calls `Instant.now()` must fail the rule.
 
 **Exit:** `./gradlew check` is green locally; CLAUDE.md commands are filled in.
-**Carry-over:** The first commit and push are waiting for your approval. `ci.yml` has not run on GitHub yet; it runs on that push. Everything on the Build and Prove lists is done; the design refinements are D22–D27.
+**Carry-over:** — (committed as `fab4aa1`; the first CI run on GitHub was green). The design refinements are D22–D27.
 
 ---
 
@@ -100,6 +100,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 - Balance equivalence: random postings give the same balance under both strategies.
 
 **Exit (M1):** all unit and contract tests are green on both stores; the three-layer rejection is proven. Status → M1 DONE.
+**Carry-over:** The commit and push are waiting for your approval. Everything on the Build and Prove lists is done; the design details are D28 and D29. Naming: the Postgres side of the contract runs as `RowLockStoreContractIT` and `AppendSnapshotStoreContractIT` (one per balance strategy) instead of a single `PostgresStoreContractIT`. Evidence: `./gradlew check` ran 403 tests, 0 failed, including 33 Testcontainers tests on PostgreSQL 17.12.
 
 ---
 

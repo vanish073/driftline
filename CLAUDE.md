@@ -47,6 +47,8 @@
 - One module: `./gradlew :core:test`
 - One test class: `./gradlew :core:test --tests '*PaymentTransitionTableTest'`
 - App start/stop smoke test under the production heap cap (256 MB, SerialGC): `./gradlew :app:test`
+- PostgreSQL integration tests (Testcontainers, needs Docker Desktop running): `./gradlew :store-postgres:integrationTest`. `check` includes them; CI runs them as the separate `integration` job.
+- Everything except the Testcontainers suite (what CI's `build` job runs): `./gradlew check -x :store-postgres:integrationTest`
 - Free memory when the machine is swapping: `./gradlew --stop`
 - Simulator commands (`:sim:run`, `:sim:campaign`, `:sim:canaries`) arrive in Shifts 3 and 4 (DESIGN §11.12).
 
