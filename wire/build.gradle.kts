@@ -5,5 +5,7 @@ plugins {
 
 dependencies {
     api(project(":core"))
+    implementation(platform(libs.jackson.bom))
+    implementation(libs.jackson.core)
     testImplementation(testFixtures(project(":core")))
 }

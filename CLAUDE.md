@@ -50,6 +50,9 @@
 - PostgreSQL integration tests (Testcontainers, needs Docker Desktop running): `./gradlew :store-postgres:integrationTest`. `check` includes them; CI runs them as the separate `integration` job.
 - Everything except the Testcontainers suite (what CI's `build` job runs): `./gradlew check -x :store-postgres:integrationTest`
 - Free memory when the machine is swapping: `./gradlew --stop`
-- Simulator commands (`:sim:run`, `:sim:campaign`, `:sim:canaries`) arrive in Shifts 3 and 4 (DESIGN §11.12).
+- One simulator seed: `./gradlew :sim:run --args="--seed 8812 --profile calm"`; add `--trace` for the timeline. A failing seed prints the REPRO line and writes `sim/build/sim-failures/seed-<n>.trace`.
+- 1,000 `calm` seeds, each run twice (determinism): `./gradlew :sim:test --tests '*CalmCampaignTest'`
+- `:sim:campaign` and `:sim:canaries` arrive in Shift 4 (DESIGN §11.12).
+- VS Code's Gradle import is switched off in `.vscode/settings.json` (gitignored), because it raced `./gradlew`.
 
 Gradle 9.9.1 through the wrapper only. `gradle/gradle-daemon-jvm.properties` pins the daemon to Java 21, and `build-logic` compiles to Java 21 bytecode.

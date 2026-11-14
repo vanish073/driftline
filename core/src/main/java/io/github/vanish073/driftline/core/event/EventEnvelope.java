@@ -66,8 +66,17 @@ public record EventEnvelope(
         traceparent.ifPresent(EventEnvelope::requireTraceparent);
     }
 
-    /** Checks {@code 00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>}, lowercase, ids not all zero. */
     private static void requireTraceparent(String value) {
+        if (!isValidTraceparent(value)) {
+            throw new IllegalArgumentException("traceparent is not a valid W3C version-00 trace context");
+        }
+    }
+
+    /**
+     * True for {@code 00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>}, lowercase, ids not all zero. Ingest drops
+     * an invalid header instead of rejecting the request.
+     */
+    public static boolean isValidTraceparent(String value) {
         boolean shape = value.length() == 55
                 && value.startsWith("00-")
                 && value.charAt(35) == '-'
@@ -75,9 +84,7 @@ public record EventEnvelope(
                 && isLowerHex(value, 3, 35)
                 && isLowerHex(value, 36, 52)
                 && isLowerHex(value, 53, 55);
-        if (!shape || isAllZeros(value, 3, 35) || isAllZeros(value, 36, 52)) {
-            throw new IllegalArgumentException("traceparent is not a valid W3C version-00 trace context");
-        }
+        return shape && !isAllZeros(value, 3, 35) && !isAllZeros(value, 36, 52);
     }
 
     private static boolean isLowerHex(String value, int from, int to) {

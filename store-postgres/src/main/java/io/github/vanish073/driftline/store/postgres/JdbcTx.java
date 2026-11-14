@@ -17,19 +17,19 @@ import java.sql.Connection;
 /** One database transaction seen through the core's repositories. Unusable once its transaction has ended. */
 final class JdbcTx implements Tx {
 
-    private static final DedupeRepo DEDUPE = new DedupeRepo() { };
-    private static final OrderRepo ORDERS = new OrderRepo() { };
-    private static final PaymentRepo PAYMENTS = new PaymentRepo() { };
     private static final WatermarkRepo WATERMARKS = new WatermarkRepo() { };
     private static final TimerRepo TIMERS = new TimerRepo() { };
     private static final SettlementRepo SETTLEMENT = new SettlementRepo() { };
     private static final BreakRepo BREAKS = new BreakRepo() { };
     private static final OutboxRepo OUTBOX = new OutboxRepo() { };
-    private static final PartitionRepo PARTITIONS = new PartitionRepo() { };
     private static final AuditRepo AUDIT = new AuditRepo() { };
 
     private final Connection connection;
     private final JdbcLedgerRepo ledger;
+    private final DedupeRepo dedupeRepo = new JdbcStateRepos.Dedupe(this);
+    private final PaymentRepo paymentsRepo = new JdbcStateRepos.Payments(this);
+    private final OrderRepo ordersRepo = new JdbcStateRepos.Orders(this);
+    private final PartitionRepo partitionsRepo = new JdbcStateRepos.Partitions(this);
     private boolean open = true;
 
     JdbcTx(Connection connection, BalanceStrategy strategy) {
@@ -56,17 +56,20 @@ final class JdbcTx implements Tx {
 
     @Override
     public DedupeRepo dedupe() {
-        return DEDUPE;
+        connection();
+        return dedupeRepo;
     }
 
     @Override
     public OrderRepo orders() {
-        return ORDERS;
+        connection();
+        return ordersRepo;
     }
 
     @Override
     public PaymentRepo payments() {
-        return PAYMENTS;
+        connection();
+        return paymentsRepo;
     }
 
     @Override
@@ -96,7 +99,8 @@ final class JdbcTx implements Tx {
 
     @Override
     public PartitionRepo partitions() {
-        return PARTITIONS;
+        connection();
+        return partitionsRepo;
     }
 
     @Override

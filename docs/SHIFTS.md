@@ -10,7 +10,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 0 | Design and plan | — | **DONE** (2026-11-13) |
 | 1 | Foundations, ports, state machines | M1 (part 1) | **DONE** (2026-11-13) |
 | 2 | Double-entry ledger, PostgreSQL, Store contract | **M1 done** | **DONE** (2026-11-13); **M1 DONE** |
-| 3 | Simulator kernel and world models | M2 (part 1) | TODO |
+| 3 | Simulator kernel and world models | M2 (part 1) | **DONE** (2026-11-13) |
 | 4 | Faults, invariants, canaries, 10k seeds in CI | **M2 done** | TODO |
 | 5 | Matcher: join, watermarks, timers, one-to-one breaks (in the simulator) | M3 (part 1) | TODO |
 | 6 | Ingest API, Kafka drivers, settlement worker, Compose e2e | **M3 done** | TODO |
@@ -100,7 +100,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 - Balance equivalence: random postings give the same balance under both strategies.
 
 **Exit (M1):** all unit and contract tests are green on both stores; the three-layer rejection is proven. Status → M1 DONE.
-**Carry-over:** The commit and push are waiting for your approval. Everything on the Build and Prove lists is done; the design details are D28 and D29. Naming: the Postgres side of the contract runs as `RowLockStoreContractIT` and `AppendSnapshotStoreContractIT` (one per balance strategy) instead of a single `PostgresStoreContractIT`. Evidence: `./gradlew check` ran 403 tests, 0 failed, including 33 Testcontainers tests on PostgreSQL 17.12.
+**Carry-over:** — (committed as `6e5d480`; CI green on both jobs). The design details are D28 and D29. Naming: the Postgres side of the contract runs as `RowLockStoreContractIT` and `AppendSnapshotStoreContractIT` (one per balance strategy) instead of a single `PostgresStoreContractIT`. Evidence: `./gradlew check` ran 403 tests, 0 failed, including 33 Testcontainers tests on PostgreSQL 17.12.
 
 ---
 
@@ -122,6 +122,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 - A unit test of the simulator itself: FakeBank conservation holds under random transfers.
 
 **Exit:** `:sim:run` reproduces a run exactly from its seed; 1,000 `calm` seeds are green.
+**Carry-over:** Everything on the Build and Prove lists is done; the design details are D30–D32. For Shift 4: the matcher counts a reused key (`KEY_REUSED`) but does not yet write a `quarantine` row; that belongs with the `MERCHANT_KEY_REUSE` fault. Evidence: `CalmCampaignTest` ran 1,000 seeds twice each, with 0 violations, identical digests, and 1,000 distinct digests; seed 1 gives digest `c20b4caf…` in separate JVMs; a clean, uncached check ran 421 unit and 40 PostgreSQL integration tests, 0 failed.
 
 ---
 
