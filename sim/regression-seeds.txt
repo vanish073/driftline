@@ -1,0 +1,7 @@
+# Regression corpus (DESIGN §11.13). Every :sim:campaign run replays these seeds before its own, and CI's
+# simulation job (shard 0) replays them on every pull request and push.
+#
+# One seed per line: <seed> <profile> [<canary code> ...]   then an optional "# BUG-NNN: ..." comment.
+# Every real bug in docs/BUGS.md adds its seed here. Canary detections are not bugs and are not listed.
+#
+# (empty: no simulator-found bug so far)

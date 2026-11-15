@@ -1,6 +1,8 @@
 package io.github.vanish073.driftline.core.matcher;
 
 import io.github.vanish073.driftline.core.event.EventEnvelope;
+import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.Canary;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
@@ -18,6 +20,7 @@ import io.github.vanish073.driftline.core.payment.PaymentStateMachine;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
 import io.github.vanish073.driftline.core.port.DedupeRepo;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.state.Decision;
 import io.github.vanish073.driftline.core.state.DecisionKind;
@@ -29,15 +32,30 @@ import java.util.Optional;
 /**
  * The matcher, first cut (Shift 3; DESIGN §5). Sans-I/O: the driver hands it one {@link PartitionBatch} and the
  * transaction to run it in. For each record it claims the dedupe row, applies the payment or order state machine,
- * records the decision, and posts CAPTURE and ORDER_MATCH; then it commits the offset, all in the same transaction,
- * so a crash before commit replays the batch with no effect (D2, D3).
+ * records the decision, and posts CAPTURE and ORDER_MATCH; then it commits the offset under the batch's partition
+ * epoch, all in the same transaction, so a crash before commit replays the batch with no effect (D2, D3) and a
+ * fenced commit rolls the whole batch back (§5.1). A key reused with a different payload is quarantined in the same
+ * transaction (§10.3).
+ *
+ * <p>Canary C01 ({@link Canary#DEDUPE_OFF}) skips the dedupe claim; canary C06 lives in {@link PaymentStateMachine}.
  *
  * <p>Not here yet: watermarks, timers, break detection (Shift 5), settlement (Shifts 5 and 7), refunds (Shift 8).
  */
 public final class Matcher {
 
-    private final PaymentStateMachine payments = new PaymentStateMachine();
+    private final PaymentStateMachine payments;
     private final OrderStateMachine orders = new OrderStateMachine();
+    private final boolean dedupeOff;
+
+    /** The production matcher: no canary. */
+    public Matcher() {
+        this(Canaries.NONE);
+    }
+
+    public Matcher(Canaries canaries) {
+        this.payments = new PaymentStateMachine(canaries);
+        this.dedupeOff = canaries.isEnabled(Canary.DEDUPE_OFF);
+    }
 
     public BatchOutcome process(PartitionBatch batch, Tx tx) {
         int applied = 0;
@@ -59,11 +77,15 @@ public final class Matcher {
             }
             committed = record.offset() + 1;
             EventEnvelope e = record.envelope();
-            DedupeRepo.Claim claim = tx.dedupe().claim(
+            DedupeRepo.Claim claim = dedupeOff ? DedupeRepo.Claim.FIRST : tx.dedupe().claim(
                     e.merchantId(), e.source(), e.eventKey(), e.payloadSha256(), record.partition(), record.offset());
             switch (claim) {
                 case DUPLICATE -> duplicates++;
-                case KEY_REUSED -> keyReused++;
+                case KEY_REUSED -> {
+                    tx.quarantine().add(new QuarantineRepo.Entry(record.partition(), record.offset(), e.merchantId(),
+                            e.source(), e.eventKey(), e.payloadSha256(), QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT));
+                    keyReused++;
+                }
                 case FIRST -> {
                     switch (e.eventType()) {
                         case PAYMENT_PENDING, PAYMENT_SUCCEEDED, PAYMENT_FAILED -> {
@@ -81,7 +103,7 @@ public final class Matcher {
             }
         }
         if (committed > next) {
-            tx.partitions().commitOffset(batch.partition(), committed);
+            tx.partitions().commitOffset(batch.partition(), batch.epoch(), committed);
         }
         return new BatchOutcome(applied, alreadyProcessed, duplicates, keyReused, notYetHandled,
                 postings.posted, postings.conflicts);

@@ -25,6 +25,16 @@ public enum Canary {
         this.plantedBug = plantedBug;
     }
 
+    /** The canary with code {@code code}, such as {@code C09}. */
+    public static Canary fromCode(String code) {
+        for (Canary c : values()) {
+            if (c.code.equals(code)) {
+                return c;
+            }
+        }
+        throw new IllegalArgumentException("no canary " + code);
+    }
+
     public String code() {
         return code;
     }

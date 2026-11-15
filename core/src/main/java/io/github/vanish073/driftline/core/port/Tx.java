@@ -23,5 +23,7 @@ public interface Tx {
 
     PartitionRepo partitions();
 
+    QuarantineRepo quarantine();
+
     AuditRepo audit();
 }

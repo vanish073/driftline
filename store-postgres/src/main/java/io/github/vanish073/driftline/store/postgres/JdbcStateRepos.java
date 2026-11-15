@@ -2,6 +2,7 @@ package io.github.vanish073.driftline.store.postgres;
 
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.event.Source;
+import io.github.vanish073.driftline.core.id.IdRules;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
@@ -18,6 +19,8 @@ import io.github.vanish073.driftline.core.port.DedupeRepo;
 import io.github.vanish073.driftline.core.port.OrderRepo;
 import io.github.vanish073.driftline.core.port.PartitionRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
+import io.github.vanish073.driftline.core.port.StoreConflict;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -29,7 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/** The dedupe, payment, order and partition repositories over JDBC (DESIGN §12, migration V2). */
+/** The dedupe, payment, order, partition and quarantine repositories over JDBC (DESIGN §12, migrations V2 and V3). */
 final class JdbcStateRepos {
 
     private JdbcStateRepos() {
@@ -307,35 +310,122 @@ final class JdbcStateRepos {
             this.tx = tx;
         }
 
+        /** §5.1 "on assignment": bump the epoch, take ownership, and learn where to seek. */
         @Override
-        public long nextOffset(int partition) {
-            try (PreparedStatement ps = tx.connection().prepareStatement(
-                    "SELECT next_offset FROM partition_leases WHERE partition = ?")) {
+        public Lease acquire(int partition, String owner) {
+            IdRules.requireToken("owner", owner);
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    INSERT INTO partition_leases AS l (partition, epoch, owner) VALUES (?, 1, ?)
+                    ON CONFLICT (partition) DO UPDATE SET epoch = l.epoch + 1, owner = EXCLUDED.owner
+                    RETURNING epoch, next_offset
+                    """)) {
                 ps.setInt(1, partition);
+                ps.setString(2, owner);
                 try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? rs.getLong(1) : 0L;
+                    rs.next();
+                    return new Lease(partition, rs.getLong(1), Optional.of(owner), rs.getLong(2));
                 }
             } catch (SQLException e) {
-                throw SqlErrors.translate("next offset of partition " + partition, e);
+                throw SqlErrors.translate("acquire partition " + partition, e);
             }
         }
 
         @Override
-        public void commitOffset(int partition, long nextOffset) {
-            long current = nextOffset(partition);
-            if (nextOffset < current) {
-                throw new IllegalArgumentException("offset of partition " + partition + " cannot move back from "
-                        + current + " to " + nextOffset);
-            }
-            try (PreparedStatement ps = tx.connection().prepareStatement("""
-                    INSERT INTO partition_leases (partition, next_offset) VALUES (?, ?)
-                    ON CONFLICT (partition) DO UPDATE SET next_offset = EXCLUDED.next_offset
-                    """)) {
+        public Lease lease(int partition) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(
+                    "SELECT epoch, owner, next_offset FROM partition_leases WHERE partition = ?")) {
                 ps.setInt(1, partition);
-                ps.setLong(2, nextOffset);
-                ps.executeUpdate();
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next()
+                            ? new Lease(partition, rs.getLong(1), Optional.ofNullable(rs.getString(2)), rs.getLong(3))
+                            : new Lease(partition, 0, Optional.empty(), 0);
+                }
+            } catch (SQLException e) {
+                throw SqlErrors.translate("lease of partition " + partition, e);
+            }
+        }
+
+        @Override
+        public long nextOffset(int partition) {
+            return lease(partition).nextOffset();
+        }
+
+        /**
+         * §5.1 "on every batch commit". The UPDATE is the fence: under READ COMMITTED it waits for a concurrent
+         * acquire of the same row and then re-checks the epoch, so a zombie never commits past a new owner.
+         */
+        @Override
+        public void commitOffset(int partition, long epoch, long nextOffset) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    UPDATE partition_leases SET next_offset = ?
+                     WHERE partition = ? AND epoch = ? AND next_offset <= ?
+                    """)) {
+                ps.setLong(1, nextOffset);
+                ps.setInt(2, partition);
+                ps.setLong(3, epoch);
+                ps.setLong(4, nextOffset);
+                if (ps.executeUpdate() == 1) {
+                    return;
+                }
             } catch (SQLException e) {
                 throw SqlErrors.translate("commit offset of partition " + partition, e);
+            }
+            Lease current = lease(partition);
+            if (current.epoch() != epoch) {
+                throw new StoreConflict("partition " + partition + " is fenced: epoch " + epoch
+                        + " was superseded by " + current.epoch());
+            }
+            throw new IllegalArgumentException("offset of partition " + partition + " cannot move back from "
+                    + current.nextOffset() + " to " + nextOffset);
+        }
+    }
+
+    static final class Quarantine implements QuarantineRepo {
+        private final JdbcTx tx;
+
+        Quarantine(JdbcTx tx) {
+            this.tx = tx;
+        }
+
+        @Override
+        public void add(Entry entry) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    INSERT INTO quarantine (id, partition, kafka_offset, merchant_id, source, event_key, payload_sha256,
+                                            reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO NOTHING
+                    """)) {
+                ps.setString(1, entry.id());
+                ps.setInt(2, entry.partition());
+                ps.setLong(3, entry.offset());
+                ps.setString(4, entry.merchantId().value());
+                ps.setString(5, entry.source().name());
+                ps.setString(6, entry.eventKey());
+                ps.setString(7, entry.payloadSha256().hex());
+                ps.setString(8, entry.reason().name());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw SqlErrors.translate("quarantine " + entry.partition() + "@" + entry.offset(), e);
+            }
+        }
+
+        @Override
+        public List<Entry> forMerchant(MerchantId merchantId) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    SELECT partition, kafka_offset, source, event_key, payload_sha256, reason FROM quarantine
+                     WHERE merchant_id = ? ORDER BY partition, kafka_offset
+                    """)) {
+                ps.setString(1, merchantId.value());
+                List<Entry> out = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Entry(rs.getInt(1), rs.getLong(2), merchantId, Source.valueOf(rs.getString(3)),
+                                rs.getString(4), new Sha256(rs.getString(5)), Reason.valueOf(rs.getString(6))));
+                    }
+                }
+                return List.copyOf(out);
+            } catch (SQLException e) {
+                throw SqlErrors.translate("quarantine of " + merchantId, e);
             }
         }
     }

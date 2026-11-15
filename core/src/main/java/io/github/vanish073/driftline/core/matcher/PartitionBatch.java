@@ -3,10 +3,17 @@ package io.github.vanish073.driftline.core.matcher;
 import java.util.List;
 import java.util.Objects;
 
-/** Consecutive records of one partition, processed in one Store transaction (DESIGN §5.7). */
-public record PartitionBatch(int partition, List<LogRecord> records) {
+/**
+ * Consecutive records of one partition, processed in one Store transaction (DESIGN §5.7).
+ *
+ * @param epoch the partition epoch the processing instance holds; the offset commit is fenced by it (§5.1)
+ */
+public record PartitionBatch(int partition, long epoch, List<LogRecord> records) {
 
     public PartitionBatch {
+        if (epoch < 1) {
+            throw new IllegalArgumentException("a batch is processed under an acquired epoch (>= 1), not " + epoch);
+        }
         Objects.requireNonNull(records, "records");
         records = List.copyOf(records);
         for (int i = 0; i < records.size(); i++) {
