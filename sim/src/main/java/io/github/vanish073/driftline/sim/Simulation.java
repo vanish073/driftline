@@ -1,9 +1,14 @@
 package io.github.vanish073.driftline.sim;
 
+import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.matcher.MatcherConfig;
+import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
+import io.github.vanish073.driftline.core.matcher.MerchantTerms;
+import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import io.github.vanish073.driftline.core.time.IstCalendar;
 import io.github.vanish073.driftline.sim.fault.FaultEvent;
 import io.github.vanish073.driftline.sim.fault.FaultInjector;
@@ -18,6 +23,7 @@ import io.github.vanish073.driftline.sim.kernel.Trace;
 import io.github.vanish073.driftline.sim.node.Coordinator;
 import io.github.vanish073.driftline.sim.node.IngestNode;
 import io.github.vanish073.driftline.sim.node.MatcherInstance;
+import io.github.vanish073.driftline.sim.node.SettlementWorkerNode;
 import io.github.vanish073.driftline.sim.random.SplitMix64;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
 import io.github.vanish073.driftline.sim.world.FakeBank;
@@ -25,6 +31,7 @@ import io.github.vanish073.driftline.sim.world.FakeGateway;
 import io.github.vanish073.driftline.sim.world.FakeMerchant;
 import io.github.vanish073.driftline.sim.world.PlannedOrder;
 import io.github.vanish073.driftline.sim.world.Scenario;
+import io.github.vanish073.driftline.sim.world.SettlementFeed;
 import io.github.vanish073.driftline.sim.world.Workload;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +48,7 @@ import java.util.TreeSet;
  * workload decides what happens, the network the base delays, the swarm which faults are on, and the faults stream
  * when they strike. The real ingest normaliser, matcher, state machines and ledger rules run against fakes of the
  * gateway, merchants, bank, network, clocks, log and store, with two matcher instances under a partition coordinator.
+ * Settlement files travel from the bank's feed to a separate settlement worker, which runs the real CSV parser.
  *
  * <p>Phases (§11.6): RUN (traffic plus faults) for the traffic days; HEAL (no new faults, crashed and paused nodes
  * come back, the store comes up, the network becomes reliable, clocks resynchronise); DRAIN to the end of the drain
@@ -55,6 +63,9 @@ public final class Simulation {
     static final long CUSTOMER_FUNDS_PAISE = 100_000_000L;
     static final long MAX_STEPS = 3_000_000L;
     static final List<String> MATCHERS = List.of("matcher-a", "matcher-b");
+    /** The merchants' contracted pricing in the simulator: the same model the fake gateway settles with. */
+    static final FeeSchedule FEES = new FeeSchedule(200, 1_800);
+    static final int CYCLE_DAYS = 1;
     /** An exception escaped a step: a bug in Driftline or in the simulator, reported like any other violation. */
     public static final String STEP_THREW = "SIM-STEP-THREW";
     public static final String LIVENESS = "SIM-LIVENESS";
@@ -101,26 +112,40 @@ public final class Simulation {
         for (int c = 0; c < profile.customers; c++) {
             bank.open("customer:" + c, CUSTOMER_FUNDS_PAISE);
         }
+        LocalDate firstSettlementDate = IstCalendar.istDate(EPOCH).plusDays(1);
+        List<MerchantTerms> terms = new ArrayList<>();
+        for (MerchantId m : merchantIds) {
+            terms.add(new MerchantTerms(m, contexts.get(m).partition(), FEES, CYCLE_DAYS, firstSettlementDate));
+        }
+        MerchantDirectory directory = new MerchantDirectory(terms);
+        MatcherConfig config = MatcherConfig.DEFAULT;
 
         Coordinator coordinator = new Coordinator(scheduler, trace, partitions);
         TreeMap<String, MatcherInstance> matchers = new TreeMap<>();
         for (String name : MATCHERS) {
-            matchers.put(name, new MatcherInstance(name, store, log, scheduler, trace, coordinator, faults, canaries,
-                    invariants::anomaly));
+            matchers.put(name, new MatcherInstance(name, store, log, scheduler, trace, coordinator, faults, directory,
+                    config, canaries, invariants::anomaly));
         }
         IngestNode ingest = new IngestNode(scheduler, new SimClock(scheduler), contexts, log, coordinator, faults, trace);
         for (MerchantId m : merchantIds) {
             merchants.put(m, new FakeMerchant(m, scheduler, network, ingest, trace, faults));
         }
-        FakeGateway gateway = new FakeGateway(scheduler, network, bank, ingest, trace, secrets, merchants);
+        SettlementWorkerNode worker = new SettlementWorkerNode(scheduler, new SimClock(scheduler), contexts, store, log,
+                coordinator, faults, trace);
+        SettlementFeed feed = new SettlementFeed(scheduler, network, faults, trace, worker);
+        FakeGateway gateway = new FakeGateway(scheduler, network, bank, ingest, trace, secrets, merchants,
+                SplitMix64.stream(seed, "bank"), feed);
+        LocalDate lastFileDate = IstCalendar.istDate(EPOCH).plusDays(profile.trafficDays + profile.drainDays);
+        invariants.world(gateway, feed, merchants, EPOCH, CYCLE_DAYS, config.graceDays(), lastFileDate);
 
         long runMillis = profile.trafficDays * DAY_MILLIS;
         long endMillis = (profile.trafficDays + profile.drainDays) * DAY_MILLIS;
         TreeMap<String, SimClock> clocks = new TreeMap<>();
         clocks.put(IngestNode.NAME, ingest.clock());
+        clocks.put(SettlementWorkerNode.NAME, worker.clock());
         matchers.forEach((name, m) -> clocks.put(name, m.clock()));
-        scheduleFaults(faults, scheduler, trace, store, ingest, matchers, clocks, runMillis, profile.trafficDays);
-        scheduler.at(runMillis, "kernel", () -> heal(faults, scheduler, trace, store, ingest, matchers, clocks));
+        scheduleFaults(faults, scheduler, trace, store, ingest, worker, matchers, clocks, runMillis, profile.trafficDays);
+        scheduler.at(runMillis, "kernel", () -> heal(faults, scheduler, trace, store, ingest, worker, matchers, clocks));
         coordinator.start();
 
         int orderCount = workloadRng.between(profile.minOrders, profile.maxOrders);
@@ -147,7 +172,7 @@ public final class Simulation {
                 }
             }
             if (violation.isEmpty()) {
-                violation = invariants.atEnd(scheduler.now(), log, gateway.undelivered()
+                violation = invariants.atEnd(scheduler.now(), log, gateway.undelivered() + feed.undelivered()
                         + merchants.values().stream().mapToLong(FakeMerchant::undelivered).sum());
             }
             if (violation.isEmpty() && !coordinator.allAssigned()) {
@@ -172,6 +197,28 @@ public final class Simulation {
             stats.merge("rule.payment." + t.row().rule().name(), 1L, Long::sum);
         }
         stats.put("settlement.lines", (long) gateway.settlementLines().size());
+        stats.put("settlement.files", feed.files());
+        stats.put("settlement.worker.accepted", worker.accepted());
+        stats.put("settlement.worker.duplicates", worker.duplicates());
+        stats.put("settlement.worker.conflicts", (long) worker.conflicts().size());
+        stats.put("settlement.matched", (long) store.committedMatches().size());
+        for (Break b : store.committedBreaks()) {
+            stats.merge("breaks." + b.type().name(), 1L, Long::sum);
+            if (b.evidence().containsKey("order_paid_later") || b.evidence().containsKey("attributed_to")
+                    || b.evidence().containsKey("kept_by_order")) {
+                stats.merge("breaks.late_evidence", 1L, Long::sum);
+            }
+        }
+        stats.put("oracle.expected", (long) invariants.expected().size());
+        stats.put("oracle.detected", (long) invariants.detected().size());
+        long cacheHits = 0;
+        long cacheMisses = 0;
+        for (MatcherInstance m : matchers.values()) {
+            cacheHits += m.cacheHits();
+            cacheMisses += m.cacheMisses();
+        }
+        stats.put("keyed_state.hits", cacheHits);
+        stats.put("keyed_state.misses", cacheMisses);
         stats.put("coordinator.reassignments", coordinator.reassignments());
         long records = 0;
         for (int p = 0; p < log.partitionCount(); p++) {
@@ -191,7 +238,8 @@ public final class Simulation {
 
     /** Schedules the planned event faults and the per-node clock skews of the RUN phase. */
     private static void scheduleFaults(FaultInjector faults, Scheduler scheduler, Trace trace, InMemoryStore store,
-                                       IngestNode ingest, TreeMap<String, MatcherInstance> matchers,
+                                       IngestNode ingest, SettlementWorkerNode worker,
+                                       TreeMap<String, MatcherInstance> matchers,
                                        TreeMap<String, SimClock> clocks, long runMillis, int trafficDays) {
         TreeMap<String, Long> skews = faults.skews(new ArrayList<>(clocks.keySet()));
         skews.forEach((node, offset) -> clocks.get(node).setOffsetMillis(offset));
@@ -200,6 +248,7 @@ public final class Simulation {
         }
         List<String> crashable = new ArrayList<>(MATCHERS);
         crashable.add(IngestNode.NAME);
+        crashable.add(SettlementWorkerNode.NAME);
         List<FaultEvent> plan = faults.plan(runMillis, trafficDays, crashable, MATCHERS, new ArrayList<>(clocks.keySet()));
         int[] storeDown = {0};
         for (FaultEvent event : plan) {
@@ -209,6 +258,7 @@ public final class Simulation {
                 }
                 switch (event) {
                     case FaultEvent.Crash c when c.node().equals(IngestNode.NAME) -> ingest.crash(c.downtimeMillis());
+                    case FaultEvent.Crash c when c.node().equals(SettlementWorkerNode.NAME) -> worker.crash(c.downtimeMillis());
                     case FaultEvent.Crash c when c.midBatch() -> matchers.get(c.node()).armCrash(c.downtimeMillis());
                     case FaultEvent.Crash c -> matchers.get(c.node()).crash(c.downtimeMillis());
                     case FaultEvent.Pause p -> matchers.get(p.node()).armPause(p.durationMillis());
@@ -245,11 +295,13 @@ public final class Simulation {
 
     /** HEAL (§11.6): stop faults, bring every node and the store back, resynchronise clocks. */
     private static void heal(FaultInjector faults, Scheduler scheduler, Trace trace, InMemoryStore store,
-                             IngestNode ingest, TreeMap<String, MatcherInstance> matchers, TreeMap<String, SimClock> clocks) {
+                             IngestNode ingest, SettlementWorkerNode worker, TreeMap<String, MatcherInstance> matchers,
+                             TreeMap<String, SimClock> clocks) {
         faults.heal();
         store.setUnavailable(false);
         clocks.values().forEach(c -> c.setOffsetMillis(0));
         ingest.heal();
+        worker.heal();
         matchers.values().forEach(MatcherInstance::heal);
         trace.line(scheduler.now(), "kernel", "HEAL");
     }
@@ -268,6 +320,14 @@ public final class Simulation {
             FakeGateway.Payment p = gateway.start(o.merchantId(), first, o.orderId(), o.customer(), o.amount());
             switch (scenario) {
                 case NORMAL -> scheduler.after(decidedAfter, "gateway", () -> gateway.succeed(p, true));
+                case SHORT_SETTLEMENT, MISSING_SETTLEMENT, ORPHAN_SETTLEMENT -> {
+                    gateway.plan(p, switch (scenario) {
+                        case SHORT_SETTLEMENT -> FakeGateway.SettlementPlan.SHORT;
+                        case MISSING_SETTLEMENT -> FakeGateway.SettlementPlan.WITHHELD;
+                        default -> FakeGateway.SettlementPlan.WITH_ORPHAN;
+                    });
+                    scheduler.after(decidedAfter, "gateway", () -> gateway.succeed(p, true));
+                }
                 case PAYMENT_FAILED -> scheduler.after(decidedAfter, "gateway", () -> gateway.fail(p));
                 case DEBITED_NO_ORDER -> scheduler.after(decidedAfter, "gateway", () -> gateway.succeed(p, false));
                 case LATE_SUCCESS -> {

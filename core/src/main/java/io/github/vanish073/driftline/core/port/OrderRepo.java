@@ -20,4 +20,7 @@ public interface OrderRepo {
 
     /** The transitions of one order, oldest first. */
     List<OrderTransition> transitions(MerchantId merchantId, OrderId orderId);
+
+    /** The merchant's open orders (CREATED, PENDING_PAYMENT or PAID; §5.2), by order id. */
+    List<OrderState> open(MerchantId merchantId);
 }

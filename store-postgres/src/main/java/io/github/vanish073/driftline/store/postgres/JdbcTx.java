@@ -18,10 +18,6 @@ import java.sql.Connection;
 /** One database transaction seen through the core's repositories. Unusable once its transaction has ended. */
 final class JdbcTx implements Tx {
 
-    private static final WatermarkRepo WATERMARKS = new WatermarkRepo() { };
-    private static final TimerRepo TIMERS = new TimerRepo() { };
-    private static final SettlementRepo SETTLEMENT = new SettlementRepo() { };
-    private static final BreakRepo BREAKS = new BreakRepo() { };
     private static final OutboxRepo OUTBOX = new OutboxRepo() { };
     private static final AuditRepo AUDIT = new AuditRepo() { };
 
@@ -32,6 +28,10 @@ final class JdbcTx implements Tx {
     private final OrderRepo ordersRepo = new JdbcStateRepos.Orders(this);
     private final PartitionRepo partitionsRepo = new JdbcStateRepos.Partitions(this);
     private final QuarantineRepo quarantineRepo = new JdbcStateRepos.Quarantine(this);
+    private final WatermarkRepo watermarkRepo = new JdbcDetectionRepos.Watermarks(this);
+    private final TimerRepo timerRepo = new JdbcDetectionRepos.Timers(this);
+    private final BreakRepo breakRepo = new JdbcDetectionRepos.Breaks(this);
+    private final SettlementRepo settlementRepo = new JdbcDetectionRepos.Settlement(this);
     private boolean open = true;
 
     JdbcTx(Connection connection, BalanceStrategy strategy) {
@@ -76,22 +76,26 @@ final class JdbcTx implements Tx {
 
     @Override
     public WatermarkRepo watermarks() {
-        return WATERMARKS;
+        connection();
+        return watermarkRepo;
     }
 
     @Override
     public TimerRepo timers() {
-        return TIMERS;
+        connection();
+        return timerRepo;
     }
 
     @Override
     public SettlementRepo settlement() {
-        return SETTLEMENT;
+        connection();
+        return settlementRepo;
     }
 
     @Override
     public BreakRepo breaks() {
-        return BREAKS;
+        connection();
+        return breakRepo;
     }
 
     @Override

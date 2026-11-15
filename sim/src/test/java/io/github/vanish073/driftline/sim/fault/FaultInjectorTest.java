@@ -38,7 +38,8 @@ class FaultInjectorTest {
                 }
                 on.merge(f, 1, Integer::sum);
                 if (f.isRate()) {
-                    assertThat(s.level(f)).as(f.name()).isBetween(10, 300);
+                    int max = f == Fault.FILE_LATE ? 500 : 300;   // up to 50% of files late, 30% of messages
+                    assertThat(s.level(f)).as(f.name()).isBetween(10, max);
                 } else if (f == Fault.CLOCK_SKEW) {
                     assertThat(s.level(f)).isEqualTo(1);
                 } else {

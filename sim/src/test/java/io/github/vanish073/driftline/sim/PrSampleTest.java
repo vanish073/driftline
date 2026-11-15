@@ -26,17 +26,21 @@ class PrSampleTest {
         e.put(Fault.NET_DROP, List.of("fault.net.dropped"));
         e.put(Fault.NET_DUP, List.of("fault.net.duplicated"));
         e.put(Fault.NET_DELAY, List.of("fault.net.delayed"));
-        e.put(Fault.NODE_CRASH, List.of("fault.matcher.crashes", "fault.matcher.crashes.mid_batch", "fault.ingest.crashes"));
+        e.put(Fault.NODE_CRASH, List.of("fault.matcher.crashes", "fault.matcher.crashes.mid_batch", "fault.ingest.crashes",
+                "fault.worker.crashes"));
         e.put(Fault.NODE_PAUSE, List.of("fault.matcher.pauses", "fault.matcher.fenced", "coordinator.reassignments"));
         e.put(Fault.CLOCK_JUMP, List.of("fault.clock.jumps"));
         e.put(Fault.STORE_DOWN, List.of("fault.store.down.windows", "fault.store.retries"));
         e.put(Fault.PRODUCE_AMBIGUOUS, List.of("fault.ingest.ambiguous"));
-        e.put(Fault.MERCHANT_KEY_REUSE, List.of("fault.merchant.keys.reused", "quarantined"));
+        e.put(Fault.MERCHANT_KEY_REUSE, List.of("fault.merchant.keys.reused", "quarantined", "breaks.IDEMPOTENCY_CONFLICT"));
+        e.put(Fault.FILE_LATE, List.of("fault.file.late", "breaks.FEED_STALL"));
+        e.put(Fault.FILE_DUP, List.of("fault.file.duplicated", "settlement.worker.duplicates"));
+        e.put(Fault.FILE_CONFLICT, List.of("fault.file.conflicting", "settlement.worker.conflicts", "breaks.FILE_CONFLICT"));
         return e;
     }
 
     @Test
-    void twoHundredPrSeedsPassWithEveryFaultFiring() {
+    void twoHundredPrSeedsPassWithEveryFaultFiringAndEveryBreakTypeDetected() {
         List<String> failures = new ArrayList<>();
         TreeMap<String, Long> totals = new TreeMap<>();
         int skewed = 0;
@@ -62,6 +66,11 @@ class PrSampleTest {
             }
         });
         assertThat(skewed).as("seeds with CLOCK_SKEW").isPositive();
+        for (String type : List.of("DEBITED_NO_ORDER", "LATE_SUCCESS", "DUPLICATE_CAPTURE", "SHORT_SETTLEMENT",
+                "MISSING_SETTLEMENT", "ORPHAN_SETTLEMENT")) {
+            assertThat(totals.getOrDefault("breaks." + type, 0L)).as("every one-to-one break type occurs: " + type)
+                    .isPositive();
+        }
         assertThat(evidence.size() + 1).as("every fault is covered").isEqualTo(Fault.values().length);
     }
 }
