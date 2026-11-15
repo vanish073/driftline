@@ -67,11 +67,11 @@ class IngestApiTest {
     static final Instant NOW = Instant.parse("2026-11-15T10:00:00Z");
     static final MerchantId A = MerchantId.of("m_a");
     static final MerchantId B = MerchantId.of("m_b");
-    static final byte[] SECRET_A = "whsec_a_0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
-    static final byte[] SECRET_B = "whsec_b_0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
-    static final String TOKEN_A = "tok_a_writer";
-    static final String TOKEN_A_READER = "tok_a_reader";
-    static final String TOKEN_B = "tok_b_writer";
+    static final byte[] SECRET_A = "test-only-webhook-secret-a-not-a-real-key".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] SECRET_B = "test-only-webhook-secret-b-not-a-real-key".getBytes(StandardCharsets.US_ASCII);
+    static final String TOKEN_A = "test-token-a_writer";
+    static final String TOKEN_A_READER = "test-token-a_reader";
+    static final String TOKEN_B = "test-token-b_writer";
 
     @Autowired
     MockMvc mvc;
@@ -259,11 +259,11 @@ class IngestApiTest {
 
     @Test
     void aRevokedTokenAuthenticatesNothing() throws Exception {
-        Sha256 hash = DevBootstrap.tokenHash("tok_revoked");
+        Sha256 hash = DevBootstrap.tokenHash("test-token-revoked");
         when(directory.token(hash)).thenReturn(Optional.of(new PostgresDirectory.ApiToken(hash, Optional.of(A),
                 List.of("events:write"), NOW.minusSeconds(600), Optional.of(NOW.minusSeconds(1)))));
         mvc.perform(post("/v1/merchants/m_a/order-events").content(orderEvent()).header("Idempotency-Key", "k")
-                        .header("Authorization", "Bearer tok_revoked"))
+                        .header("Authorization", "Bearer test-token-revoked"))
                 .andExpect(status().isUnauthorized());
     }
 

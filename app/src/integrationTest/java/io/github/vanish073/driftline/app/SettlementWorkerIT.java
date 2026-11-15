@@ -63,7 +63,7 @@ class SettlementWorkerIT {
             Instant now = Instant.parse("2026-11-15T06:00:00Z");
             directory.onboard(new MerchantTerms(M, 1, new FeeSchedule(200, 1_800), 1, LocalDate.parse("2026-11-14")), now);
             directory.addWebhookSecret(new PostgresDirectory.WebhookSecret(M, "k1", cipher.encrypt(
-                    "whsec_worker_0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8),
+                    "test-only-webhook-secret-worker-not-a-real-key".getBytes(StandardCharsets.UTF_8),
                     MerchantRegistry.context(M, "k1")), now, Optional.empty()));
             MerchantRegistry merchants = MerchantRegistry.load(directory, cipher, now);
             SettlementInbox inbox = new SettlementInbox(pool);

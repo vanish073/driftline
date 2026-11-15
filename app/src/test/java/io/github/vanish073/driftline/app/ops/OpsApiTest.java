@@ -76,8 +76,8 @@ class OpsApiTest {
         LocalDate first = LocalDate.parse("2026-11-14");
         when(merchants.merchants()).thenReturn(List.of(new MerchantTerms(A, 1, fees, 1, first),
                 new MerchantTerms(B, 2, fees, 1, first)));
-        token("tok_a", Optional.of(A));
-        token("tok_ops", Optional.empty());
+        token("test-token-a", Optional.of(A));
+        token("test-token-ops", Optional.empty());
         Tx tx = Mockito.mock(Tx.class);
         BreakRepo breaks = Mockito.mock(BreakRepo.class);
         when(tx.breaks()).thenReturn(breaks);
@@ -98,41 +98,41 @@ class OpsApiTest {
 
     @Test
     void aMerchantTokenListsOnlyItsOwnBreaks() throws Exception {
-        mvc.perform(get("/v1/breaks").header("Authorization", "Bearer tok_a"))
+        mvc.perform(get("/v1/breaks").header("Authorization", "Bearer test-token-a"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.breaks[0].type").value("DUPLICATE_CAPTURE"))
                 .andExpect(jsonPath("$.breaks[0].evidence.kept").value("pay_1"));
-        mvc.perform(get("/v1/breaks?merchantId=m_b").header("Authorization", "Bearer tok_a"))
+        mvc.perform(get("/v1/breaks?merchantId=m_b").header("Authorization", "Bearer test-token-a"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void anOpsTokenListsEveryMerchantAndFilters() throws Exception {
-        mvc.perform(get("/v1/breaks").header("Authorization", "Bearer tok_ops"))
+        mvc.perform(get("/v1/breaks").header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.count").value(2));
-        mvc.perform(get("/v1/breaks?type=debited_no_order").header("Authorization", "Bearer tok_ops"))
+        mvc.perform(get("/v1/breaks?type=debited_no_order").header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.breaks[0].merchant_id").value("m_b"));
-        mvc.perform(get("/v1/breaks?state=NOPE").header("Authorization", "Bearer tok_ops"))
+        mvc.perform(get("/v1/breaks?state=NOPE").header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void anotherMerchantsBreakIs404NotForbiddenSoItsExistenceDoesNotLeak() throws Exception {
-        mvc.perform(get("/v1/breaks/" + BREAK_A.breakId()).header("Authorization", "Bearer tok_a"))
+        mvc.perform(get("/v1/breaks/" + BREAK_A.breakId()).header("Authorization", "Bearer test-token-a"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.subject_key").value("pay_2"));
-        mvc.perform(get("/v1/breaks/" + BREAK_B.breakId()).header("Authorization", "Bearer tok_a"))
+        mvc.perform(get("/v1/breaks/" + BREAK_B.breakId()).header("Authorization", "Bearer test-token-a"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/v1/breaks/" + BREAK_B.breakId()).header("Authorization", "Bearer tok_ops"))
+        mvc.perform(get("/v1/breaks/" + BREAK_B.breakId()).header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isOk());
     }
 
     @Test
     void anOpsTokenMustNameTheMerchantOfAPaymentTimeline() throws Exception {
-        mvc.perform(get("/v1/payments/pay_1/timeline").header("Authorization", "Bearer tok_ops"))
+        mvc.perform(get("/v1/payments/pay_1/timeline").header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(get("/v1/payments/pay_1/timeline?merchantId=m_b").header("Authorization", "Bearer tok_a"))
+        mvc.perform(get("/v1/payments/pay_1/timeline?merchantId=m_b").header("Authorization", "Bearer test-token-a"))
                 .andExpect(status().isForbidden());
     }
 

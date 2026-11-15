@@ -45,9 +45,9 @@ class ApplicationSmokeIT {
 
     static final long HEAP_BUDGET_BYTES = 256L * 1024 * 1024;
     static final String MERCHANT = "m_smoke";
-    static final String SECRET = "whsec_smoke_0123456789abcdef0123456789abcdef";
-    static final String TOKEN = "tok_smoke_merchant";
-    static final String OPS_TOKEN = "tok_smoke_ops";
+    static final String SECRET = "test-only-webhook-secret-smoke-not-a-real-key";
+    static final String TOKEN = "test-token-smoke_merchant";
+    static final String OPS_TOKEN = "test-token-smoke_ops";
     static final Instant T = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(Duration.ofHours(1));
     static final LocalDate FIRST_SETTLEMENT = LocalDate.parse("2026-11-10");
 
