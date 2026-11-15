@@ -3,7 +3,7 @@ package io.github.vanish073.driftline.sim.kernel;
 import io.github.vanish073.driftline.core.port.Clock;
 import java.time.Instant;
 
-/** The {@link Clock} port in the simulator: the scheduler's virtual time plus a per-node offset (skew, Shift 4). */
+/** The {@link Clock} port in the simulator: the scheduler's virtual time plus a per-node offset (CLOCK_SKEW and CLOCK_JUMP). */
 public final class SimClock implements Clock {
 
     private final Scheduler scheduler;
@@ -15,6 +15,10 @@ public final class SimClock implements Clock {
 
     public void setOffsetMillis(long offsetMillis) {
         this.offsetMillis = offsetMillis;
+    }
+
+    public long offsetMillis() {
+        return offsetMillis;
     }
 
     @Override

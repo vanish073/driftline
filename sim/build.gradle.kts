@@ -13,6 +13,39 @@ tasks.named<JavaExec>("run") {
     maxHeapSize = "384m"
 }
 
+// ./gradlew :sim:campaign --args="--from 1 --count 10000 --threads 8"   (DESIGN §11.12)
+tasks.register<JavaExec>("campaign") {
+    group = "simulation"
+    description = "Runs the regression corpus, then many simulator seeds on several threads."
+    mainClass = "io.github.vanish073.driftline.sim.runner.CampaignMain"
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "768m"
+    jvmArgs("-XX:+UseParallelGC")
+}
+
+// ./gradlew :sim:canaries   (seeds-to-detection per planted bug, DESIGN §11.10)
+tasks.register<JavaExec>("canaries") {
+    group = "simulation"
+    description = "Plants each active canary and counts the pr seeds until the simulator catches it."
+    mainClass = "io.github.vanish073.driftline.sim.runner.CanaryMain"
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "512m"
+    jvmArgs("-XX:+UseParallelGC")
+}
+
+// ./gradlew :sim:determinism   (INV-DETERMINISTIC: 100 seeds run twice in one JVM, digests written for a
+// cross-JVM diff; CI runs it twice and diffs the two files)
+tasks.register<JavaExec>("determinism") {
+    group = "simulation"
+    description = "Runs 100 pr seeds twice, compares their trace digests and writes them to a file."
+    mainClass = "io.github.vanish073.driftline.sim.runner.CampaignMain"
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "512m"
+    jvmArgs("-XX:+UseParallelGC")
+    args("--from", "1", "--count", "100", "--double-run", "100", "--regression", "none",
+        "--digests", "build/sim-results/digests.txt")
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(project(":wire"))

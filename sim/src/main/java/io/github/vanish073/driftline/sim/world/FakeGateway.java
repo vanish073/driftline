@@ -180,7 +180,8 @@ public final class FakeGateway {
         return new TreeMap<>(payments);
     }
 
+    /** Deliveries never acknowledged, including those given up on. */
     public long undelivered() {
-        return deliveries.stream().filter(d -> !d.acked() && !d.gaveUp()).count();
+        return deliveries.stream().filter(d -> !d.acked()).count();
     }
 }

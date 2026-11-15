@@ -7,6 +7,7 @@ import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.sim.fault.FaultInjector;
 import io.github.vanish073.driftline.sim.kernel.Scheduler;
 import io.github.vanish073.driftline.sim.kernel.SimNetwork;
 import io.github.vanish073.driftline.sim.kernel.Trace;
@@ -17,10 +18,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * A merchant's order system (DESIGN §11.4): orders with versions and expiry, reported to Driftline as snapshots, each
  * version retried with the same {@code Idempotency-Key} until it is acknowledged.
+ *
+ * <p>Under MERCHANT_KEY_REUSE the merchant runs a buggy client: a new version is sometimes sent under the previous
+ * version's key, with the new body. Those keys are recorded, because only they may ever reach the quarantine.
  */
 public final class FakeMerchant {
 
@@ -36,6 +41,7 @@ public final class FakeMerchant {
         final Instant expiresAt;
         EventType status;
         long version;
+        String lastKey;
         Optional<PaymentId> paidWith = Optional.empty();
 
         Order(OrderId id, Money amount, Instant expiresAt) {
@@ -61,9 +67,13 @@ public final class FakeMerchant {
     private final String node;
     private final TreeMap<OrderId, Order> orders = new TreeMap<>();
     private final List<Delivery> deliveries = new ArrayList<>();
+    private final FaultInjector faults;
+    private final TreeSet<String> reusedKeys = new TreeSet<>();
 
-    public FakeMerchant(MerchantId merchantId, Scheduler scheduler, SimNetwork network, Ingress ingress, Trace trace) {
+    public FakeMerchant(MerchantId merchantId, Scheduler scheduler, SimNetwork network, Ingress ingress, Trace trace,
+                        FaultInjector faults) {
         this.merchantId = merchantId;
+        this.faults = faults;
         this.scheduler = scheduler;
         this.network = network;
         this.ingress = ingress;
@@ -115,9 +125,17 @@ public final class FakeMerchant {
                 new OrderPayload(order.id, order.version, order.amount, order.expiresAt, paidWith));
         byte[] body = OrderEventCodec.encode(message);
         String key = DerivedId.of("order-event", merchantId.value(), order.id.value(), Long.toString(order.version)).value();
-        trace.line(scheduler.now(), node, status.wireName() + " " + order.id + " v" + order.version);
+        boolean reuse = faults.reuseKey(order.lastKey != null);
+        if (reuse) {
+            key = order.lastKey;
+            reusedKeys.add(key);
+        }
+        order.lastKey = key;
+        trace.line(scheduler.now(), node, status.wireName() + " " + order.id + " v" + order.version
+                + (reuse ? " REUSING key " + key : ""));
+        String sentKey = key;
         Delivery delivery = new Delivery(scheduler, node, (attemptNo, reply) -> network.send("ingest",
-                () -> ingress.receive(new Request.OrderEvent(merchantId, body, Optional.of(key)),
+                () -> ingress.receive(new Request.OrderEvent(merchantId, body, Optional.of(sentKey)),
                         status2 -> network.send(node, () -> reply.accept(status2)))), at -> null);
         deliveries.add(delivery);
         delivery.start();
@@ -127,8 +145,13 @@ public final class FakeMerchant {
         return Optional.ofNullable(orders.get(id));
     }
 
-    /** Deliveries not yet acknowledged and not given up on. */
+    /** Deliveries never acknowledged, including those given up on. */
     public long undelivered() {
-        return deliveries.stream().filter(d -> !d.acked() && !d.gaveUp()).count();
+        return deliveries.stream().filter(d -> !d.acked()).count();
+    }
+
+    /** Keys this merchant's buggy client sent with a second, different body. */
+    public TreeSet<String> reusedKeys() {
+        return new TreeSet<>(reusedKeys);
     }
 }

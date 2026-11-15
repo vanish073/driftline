@@ -6,7 +6,7 @@ Each row's seed is also added to `sim/regression-seeds.txt`, which every CI run 
 
 | # | Date | Shift | Seed · profile · commit | Invariant violated | Symptom | Root cause | Fix (commit) | Would a unit test have caught it? |
 |---|---|---|---|---|---|---|---|---|
-| — | — | — | — | — | *(no entries yet; the log starts in Shift 3)* | — | — | — |
+| — | — | — | — | — | *(no entries yet: no simulator-found bug through Shift 4's 10,000-seed `pr` campaign)* | — | — | — |
 
 ## Entry template (detailed write-up below the table)
 

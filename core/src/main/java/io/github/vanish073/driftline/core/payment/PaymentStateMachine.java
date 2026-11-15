@@ -1,5 +1,7 @@
 package io.github.vanish073.driftline.core.payment;
 
+import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.Canary;
 import io.github.vanish073.driftline.core.state.Decision;
 import java.time.Instant;
 import java.util.Optional;
@@ -10,8 +12,22 @@ import java.util.Optional;
  *
  * <p>Duplicates by event key never get here; the dedupe row stops them first (D3). What can get here is the same fact
  * reported again under a different key, which the table classifies as IGNORED_DUPLICATE.
+ *
+ * <p>Canary C06 ({@link Canary#SUCCESS_TO_FAILED}, DESIGN §11.10) plants "last event wins": a failure that arrives
+ * after the success it precedes moves the payment back to FAILED. Only the simulator can switch it on.
  */
 public final class PaymentStateMachine {
+
+    private final boolean successToFailed;
+
+    /** The production machine: no canary. */
+    public PaymentStateMachine() {
+        this(Canaries.NONE);
+    }
+
+    public PaymentStateMachine(Canaries canaries) {
+        this.successToFailed = canaries.isEnabled(Canary.SUCCESS_TO_FAILED);
+    }
 
     public Decision<PaymentState> decide(PaymentState current, PaymentEvidence incoming) {
         if (!current.paymentId().equals(incoming.paymentId())) {
@@ -33,6 +49,10 @@ public final class PaymentStateMachine {
                 TimeOrder.of(incoming.eventTime(), current.successAt()),
                 incoming.reported());
 
+        if (successToFailed && row.rule() == PaymentRule.FAILURE_BEFORE_SUCCESS) {
+            return Decision.of(row.rule(), new PaymentState(current.paymentId(), PaymentStatus.FAILED,
+                    current.orderId(), current.amount(), Optional.of(incoming.eventTime()), Optional.empty(), false));
+        }
         return switch (row.rule().kind()) {
             case APPLIED -> Decision.of(row.rule(), applied(current, incoming, row.to()));
             case IGNORED_STALE, IGNORED_DUPLICATE -> Decision.of(row.rule(), current);

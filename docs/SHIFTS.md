@@ -11,7 +11,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 1 | Foundations, ports, state machines | M1 (part 1) | **DONE** (2026-11-13) |
 | 2 | Double-entry ledger, PostgreSQL, Store contract | **M1 done** | **DONE** (2026-11-13); **M1 DONE** |
 | 3 | Simulator kernel and world models | M2 (part 1) | **DONE** (2026-11-13) |
-| 4 | Faults, invariants, canaries, 10k seeds in CI | **M2 done** | TODO |
+| 4 | Faults, invariants, canaries, 10k seeds in CI | **M2 done** | **DONE** (2026-11-15); **M2 DONE** |
 | 5 | Matcher: join, watermarks, timers, one-to-one breaks (in the simulator) | M3 (part 1) | TODO |
 | 6 | Ingest API, Kafka drivers, settlement worker, Compose e2e | **M3 done** | TODO |
 | 7 | Batch settlement matching and test corpus | M4 (part 1) | TODO |
@@ -145,6 +145,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 - Each bug found has a BUGS.md row and a regression seed.
 
 **Exit (M2):** a pull request on GitHub shows the 10k-seed job green. Status → M2 DONE.
+**Carry-over:** — (committed as `b6a5dc6`, PR #1). The design details are D33–D37. M2 exit: on PR #1, GitHub Actions run 43709077412 went green on every job. The `simulation` matrix ran 10,000 distinct `pr` seeds (4 × 2,500), shard 0 replayed the regression corpus and found identical digests for 100 seeds across two JVMs, and `canaries-quick` passed (`docs/results/sim-campaign-pr-ci-run-43709077412.txt`). Local evidence: 10,000 `pr` seeds and 100 determinism double-runs passed in 114 s on 8 threads (`docs/results/sim-campaign-pr-10k.txt`); C01, C05, C06 and C09 were caught in 1, 1, 20 and 5 seeds, each by its intended invariant (`docs/results/canaries.md`); the full `./gradlew check` ran 447 unit and 49 PostgreSQL integration tests, 0 failed. No simulator-found bug, so BUGS.md and `sim/regression-seeds.txt` stay empty. Per-seed cost (D36): 20–32 ms in CI and about 90 ms locally, against the 20 ms target of §11.15.
 
 ---
 

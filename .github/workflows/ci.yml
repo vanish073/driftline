@@ -1,5 +1,5 @@
-# CI (Shift 2). DESIGN §16 lists the jobs added later: simulation (10,000 seeds), canaries-quick, security,
-# e2e-compose and claims-lint. Every third-party action is pinned by commit SHA.
+# CI. DESIGN §16 lists the jobs added later: security, e2e-compose and claims-lint. Every third-party action is
+# pinned by commit SHA.
 name: ci
 
 on:
@@ -65,3 +65,77 @@ jobs:
           name: integration-test-reports
           path: '**/build/reports/tests/'
           retention-days: 7
+
+  # DESIGN §16, Shift 4: 4 shards x 2,500 = 10,000 pr seeds. The base seed is derived from the run id, so every run
+  # explores new seeds; a failing seed prints its REPRO line and uploads its full trace. Shard 0 also replays
+  # sim/regression-seeds.txt and runs the determinism double-run in two separate JVMs.
+  simulation:
+    name: simulation (shard ${{ matrix.shard }} of 4, 2,500 pr seeds)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Campaign
+        env:
+          SHARD: ${{ matrix.shard }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          FROM=$(( RUN_ID * 10000 + 1 ))
+          CORPUS=$([ "$SHARD" = "0" ] && echo "regression-seeds.txt" || echo "none")
+          echo "base seed $FROM, shard $SHARD/4, corpus $CORPUS"
+          ./gradlew :sim:campaign --args="--profile pr --from $FROM --count 10000 --shard $SHARD/4 --threads 4 --regression $CORPUS"
+
+      - name: Determinism (100 seeds twice in one JVM, then the digests diffed across two JVMs)
+        if: matrix.shard == 0
+        run: |
+          ./gradlew :sim:determinism
+          cp sim/build/sim-results/digests.txt "$RUNNER_TEMP/digests-first.txt"
+          ./gradlew :sim:determinism
+          diff "$RUNNER_TEMP/digests-first.txt" sim/build/sim-results/digests.txt
+          echo "identical digests across JVMs: $(wc -l < sim/build/sim-results/digests.txt) seeds"
+
+      - name: Upload failing-seed traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-failures-shard-${{ matrix.shard }}
+          path: sim/build/sim-failures/
+          retention-days: 14
+
+  # DESIGN §11.10: each active canary must be caught within 500 pr seeds, by the invariant it is meant to trip.
+  canaries-quick:
+    name: canaries-quick
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Canaries
+        run: ./gradlew :sim:canaries --args="--threads 4 --out build/sim-results/canaries.md"
+
+      - name: Upload the canary table
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: canaries
+          path: sim/build/sim-results/canaries.md
+          retention-days: 14

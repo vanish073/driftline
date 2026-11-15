@@ -2,6 +2,8 @@ package io.github.vanish073.driftline.sim.store;
 
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.event.Source;
+import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.Canary;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
@@ -24,8 +26,10 @@ import io.github.vanish073.driftline.core.port.OrderRepo;
 import io.github.vanish073.driftline.core.port.OutboxRepo;
 import io.github.vanish073.driftline.core.port.PartitionRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.Store;
+import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.core.port.TimerRepo;
 import io.github.vanish073.driftline.core.port.Tx;
@@ -33,6 +37,7 @@ import io.github.vanish073.driftline.core.port.TxBody;
 import io.github.vanish073.driftline.core.port.WatermarkRepo;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -46,6 +51,11 @@ import java.util.TreeMap;
  *
  * <p>What it cannot model, stated in DESIGN §11.9: concurrency and isolation anomalies, SQL constraints and
  * triggers. The Store contract suite and the PostgreSQL integration tests cover those.
+ *
+ * <p>Two canaries remove a check that PostgreSQL makes with a constraint or a WHERE clause (DESIGN §11.10):
+ * C05 ({@link Canary#LEDGER_UNIQUE_OFF}) drops the ledger's cause uniqueness, and C09 ({@link Canary#NO_FENCING})
+ * drops the epoch check on offset commits. Every offset commit is logged with the epoch it used and the epoch the
+ * lease had, so INV-FENCED is checked against what happened, not against the check itself.
  */
 public final class InMemoryStore implements Store {
 
@@ -58,6 +68,10 @@ public final class InMemoryStore implements Store {
 
     /** A committed row tagged with its merchant, for the simulator's invariants. */
     public record Recorded<T>(MerchantId merchantId, T row) {
+    }
+
+    /** One committed offset commit: the epoch the committer used and the lease's epoch when it committed. */
+    public record OffsetCommit(String txName, int partition, long epochUsed, long leaseEpoch, long nextOffset) {
     }
 
     private record Key(String merchant, String a, String b) implements Comparable<Key> {
@@ -102,11 +116,26 @@ public final class InMemoryStore implements Store {
     private final TreeMap<Key, OrderState> orders = new TreeMap<>();
     private final TreeMap<Key, List<OrderTransition>> orderTransitions = new TreeMap<>();
     private final List<Recorded<OrderTransition>> orderLog = new ArrayList<>();
-    private final TreeMap<Integer, Long> offsets = new TreeMap<>();
+    private final TreeMap<Integer, PartitionRepo.Lease> leases = new TreeMap<>();
+    private final List<OffsetCommit> offsetCommitLog = new ArrayList<>();
+    private final TreeMap<String, QuarantineRepo.Entry> quarantine = new TreeMap<>();
+    private final List<QuarantineRepo.Entry> quarantineLog = new ArrayList<>();
 
+    private final boolean ledgerUniqueOff;
+    private final boolean noFencing;
     private boolean unavailable;
     private boolean inTransaction;
     private long commits;
+
+    /** A store with every check in place. */
+    public InMemoryStore() {
+        this(Canaries.NONE);
+    }
+
+    public InMemoryStore(Canaries canaries) {
+        this.ledgerUniqueOff = canaries.isEnabled(Canary.LEDGER_UNIQUE_OFF);
+        this.noFencing = canaries.isEnabled(Canary.NO_FENCING);
+    }
 
     /** Switches the STORE_DOWN fault on or off (DESIGN §11.5): while on, every transaction fails before it runs. */
     public void setUnavailable(boolean unavailable) {
@@ -124,7 +153,7 @@ public final class InMemoryStore implements Store {
             throw new IllegalStateException("transactions do not nest: " + txName + " started inside another");
         }
         inTransaction = true;
-        InMemoryTx tx = new InMemoryTx();
+        InMemoryTx tx = new InMemoryTx(txName);
         try {
             R result = body.run(tx);
             tx.commit();
@@ -157,7 +186,22 @@ public final class InMemoryStore implements Store {
 
     /** The committed next offset of a partition, or 0. */
     public long committedOffset(int partition) {
-        return offsets.getOrDefault(partition, 0L);
+        return lease(partition).nextOffset();
+    }
+
+    /** Every committed offset commit, in commit order (INV-FENCED). */
+    public List<OffsetCommit> committedOffsetCommits() {
+        return Collections.unmodifiableList(offsetCommitLog);
+    }
+
+    /** Every committed quarantine row, in commit order. */
+    public List<QuarantineRepo.Entry> committedQuarantine() {
+        return Collections.unmodifiableList(quarantineLog);
+    }
+
+    private PartitionRepo.Lease lease(int partition) {
+        PartitionRepo.Lease lease = leases.get(partition);
+        return lease != null ? lease : new PartitionRepo.Lease(partition, 0, Optional.empty(), 0);
     }
 
     public long commits() {
@@ -168,6 +212,7 @@ public final class InMemoryStore implements Store {
 
     private final class InMemoryTx implements Tx {
 
+        private final String txName;
         private boolean open = true;
         private final TreeMap<Key, LedgerTxn> pendingLedger = new TreeMap<>();
         private final List<LedgerTxn> pendingLedgerOrder = new ArrayList<>();
@@ -176,13 +221,20 @@ public final class InMemoryStore implements Store {
         private final List<Recorded<PaymentTransition>> pendingPaymentLog = new ArrayList<>();
         private final TreeMap<Key, OrderState> pendingOrders = new TreeMap<>();
         private final List<Recorded<OrderTransition>> pendingOrderLog = new ArrayList<>();
-        private final TreeMap<Integer, Long> pendingOffsets = new TreeMap<>();
+        private final TreeMap<Integer, PartitionRepo.Lease> pendingLeases = new TreeMap<>();
+        private final List<OffsetCommit> pendingOffsetCommits = new ArrayList<>();
+        private final TreeMap<String, QuarantineRepo.Entry> pendingQuarantine = new TreeMap<>();
 
         private final LedgerRepo ledgerRepo = new InMemoryLedger();
         private final DedupeRepo dedupeRepo = new InMemoryDedupe();
         private final PaymentRepo paymentRepo = new InMemoryPayments();
         private final OrderRepo orderRepo = new InMemoryOrders();
         private final PartitionRepo partitionRepo = new InMemoryPartitions();
+        private final QuarantineRepo quarantineRepo = new InMemoryQuarantine();
+
+        InMemoryTx(String txName) {
+            this.txName = txName;
+        }
 
         private void requireOpen() {
             if (!open) {
@@ -211,7 +263,13 @@ public final class InMemoryStore implements Store {
                         .add(r.row());
                 orderLog.add(r);
             }
-            offsets.putAll(pendingOffsets);
+            leases.putAll(pendingLeases);
+            offsetCommitLog.addAll(pendingOffsetCommits);
+            for (QuarantineRepo.Entry entry : pendingQuarantine.values()) {
+                if (quarantine.putIfAbsent(entry.id(), entry) == null) {
+                    quarantineLog.add(entry);
+                }
+            }
         }
 
         @Override
@@ -242,6 +300,12 @@ public final class InMemoryStore implements Store {
         public PartitionRepo partitions() {
             requireOpen();
             return partitionRepo;
+        }
+
+        @Override
+        public QuarantineRepo quarantine() {
+            requireOpen();
+            return quarantineRepo;
         }
 
         @Override
@@ -280,7 +344,7 @@ public final class InMemoryStore implements Store {
                 requireOpen();
                 LedgerChecks.requireValid(txn.merchantId(), txn.entries());
                 Key key = causeKey(txn.merchantId(), txn.cause());
-                Optional<LedgerTxn> existing = lookup(key);
+                Optional<LedgerTxn> existing = ledgerUniqueOff ? Optional.empty() : lookup(key);
                 if (existing.isPresent()) {
                     return existing.get().sameEntriesAs(txn)
                             ? new PostResult.Duplicate(existing.get().id())
@@ -404,21 +468,70 @@ public final class InMemoryStore implements Store {
 
         private final class InMemoryPartitions implements PartitionRepo {
             @Override
-            public long nextOffset(int partition) {
+            public Lease acquire(int partition, String owner) {
                 requireOpen();
-                Long pending = pendingOffsets.get(partition);
-                return pending != null ? pending : offsets.getOrDefault(partition, 0L);
+                Lease current = lease(partition);
+                Lease next = new Lease(partition, Math.addExact(current.epoch(), 1), Optional.of(owner),
+                        current.nextOffset());
+                pendingLeases.put(partition, next);
+                return next;
             }
 
             @Override
-            public void commitOffset(int partition, long nextOffset) {
+            public Lease lease(int partition) {
                 requireOpen();
-                long current = nextOffset(partition);
-                if (nextOffset < current) {
-                    throw new IllegalArgumentException("offset of partition " + partition + " cannot move back from "
-                            + current + " to " + nextOffset);
+                Lease pending = pendingLeases.get(partition);
+                return pending != null ? pending : InMemoryStore.this.lease(partition);
+            }
+
+            @Override
+            public long nextOffset(int partition) {
+                return lease(partition).nextOffset();
+            }
+
+            @Override
+            public void commitOffset(int partition, long epoch, long nextOffset) {
+                requireOpen();
+                Lease current = lease(partition);
+                if (epoch != current.epoch() && !noFencing) {
+                    throw new StoreConflict("partition " + partition + " is fenced: epoch " + epoch
+                            + " was superseded by " + current.epoch());
                 }
-                pendingOffsets.put(partition, nextOffset);
+                if (nextOffset < current.nextOffset()) {
+                    throw new IllegalArgumentException("offset of partition " + partition + " cannot move back from "
+                            + current.nextOffset() + " to " + nextOffset);
+                }
+                pendingLeases.put(partition, new Lease(partition, current.epoch(), current.owner(), nextOffset));
+                pendingOffsetCommits.add(new OffsetCommit(txName, partition, epoch, current.epoch(), nextOffset));
+            }
+        }
+
+        private final class InMemoryQuarantine implements QuarantineRepo {
+            @Override
+            public void add(Entry entry) {
+                requireOpen();
+                Objects.requireNonNull(entry, "entry");
+                if (!quarantine.containsKey(entry.id())) {
+                    pendingQuarantine.putIfAbsent(entry.id(), entry);
+                }
+            }
+
+            @Override
+            public List<Entry> forMerchant(MerchantId merchantId) {
+                requireOpen();
+                List<Entry> out = new ArrayList<>();
+                for (Entry e : quarantine.values()) {
+                    if (e.merchantId().equals(merchantId)) {
+                        out.add(e);
+                    }
+                }
+                for (Entry e : pendingQuarantine.values()) {
+                    if (e.merchantId().equals(merchantId)) {
+                        out.add(e);
+                    }
+                }
+                out.sort(Comparator.comparingInt(Entry::partition).thenComparingLong(Entry::offset));
+                return List.copyOf(out);
             }
         }
     }

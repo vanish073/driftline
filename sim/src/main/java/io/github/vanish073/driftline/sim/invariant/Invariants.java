@@ -4,18 +4,21 @@ import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import io.github.vanish073.driftline.core.order.OrderTransition;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
 import io.github.vanish073.driftline.sim.world.FakeBank;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Supplier;
 
 /**
- * The invariants of DESIGN §11.7 that Shift 3 checks. Incremental checks run after every step and look only at rows
- * committed since the previous step; end-state checks run once the run has drained.
+ * The invariants of DESIGN §11.7 checked so far (Shifts 3 and 4). Incremental checks run after every step and look
+ * only at rows committed since the previous step; end-state checks run once the run has drained.
  */
 public final class Invariants {
 
@@ -25,7 +28,12 @@ public final class Invariants {
     public static final String TRANSITIONS_LEGAL = "INV-TRANSITIONS-LEGAL";
     public static final String ONE_OUTCOME = "INV-ONE-OUTCOME";
     public static final String WORLD_CONSERVED = "INV-WORLD-CONSERVED";
-    /** Matcher anomalies that are bugs in a fault-free run: a ledger conflict or a reused key. */
+    /** No offset is ever committed under a partition epoch that has been superseded (§5.1). */
+    public static final String FENCED = "INV-FENCED";
+    /**
+     * Matcher anomalies that are always bugs: a ledger conflict, or a quarantined key that the world never reused
+     * (so Driftline split one event in two).
+     */
     public static final String NO_ANOMALY = "INV-NO-ANOMALY";
     /** End state: every record appended to the log was processed, and every world message was acknowledged. */
     public static final String DRAINED = "INV-DRAINED";
@@ -36,13 +44,18 @@ public final class Invariants {
     private int ledgerSeen;
     private int paymentSeen;
     private int orderSeen;
+    private int offsetCommitSeen;
+    private int quarantineSeen;
+    private final Supplier<Set<String>> reusedKeys;
     private final TreeSet<String> causes = new TreeSet<>();
     private final TreeSet<String> appliedEventKeys = new TreeSet<>();
     private final TreeMap<String, PaymentStatus> paymentStatus = new TreeMap<>();
 
-    public Invariants(InMemoryStore store, FakeBank bank) {
+    /** @param reusedKeys the keys the world's buggy clients reused (MERCHANT_KEY_REUSE), per merchant and key */
+    public Invariants(InMemoryStore store, FakeBank bank, Supplier<Set<String>> reusedKeys) {
         this.store = store;
         this.bank = bank;
+        this.reusedKeys = reusedKeys;
     }
 
     public void anomaly(String description) {
@@ -92,6 +105,23 @@ public final class Invariants {
             Optional<String> illegal = Checks.orderTransitionLegal(r.row());
             if (illegal.isPresent()) {
                 return Optional.of(new Violation(TRANSITIONS_LEGAL, illegal.get(), now));
+            }
+        }
+        List<InMemoryStore.OffsetCommit> commits = store.committedOffsetCommits();
+        for (; offsetCommitSeen < commits.size(); offsetCommitSeen++) {
+            InMemoryStore.OffsetCommit c = commits.get(offsetCommitSeen);
+            if (c.epochUsed() != c.leaseEpoch()) {
+                return Optional.of(new Violation(FENCED, c.txName() + " committed p" + c.partition() + " to offset "
+                        + c.nextOffset() + " with epoch " + c.epochUsed() + " while the lease was at epoch "
+                        + c.leaseEpoch(), now));
+            }
+        }
+        List<QuarantineRepo.Entry> quarantined = store.committedQuarantine();
+        for (; quarantineSeen < quarantined.size(); quarantineSeen++) {
+            QuarantineRepo.Entry q = quarantined.get(quarantineSeen);
+            if (!reusedKeys.get().contains(q.merchantId() + "/" + q.eventKey())) {
+                return Optional.of(new Violation(NO_ANOMALY, "quarantined " + q.source() + " key " + q.eventKey()
+                        + " at p" + q.partition() + "@" + q.offset() + ", which the world never reused", now));
             }
         }
         if (bank.total() != bank.opened()) {

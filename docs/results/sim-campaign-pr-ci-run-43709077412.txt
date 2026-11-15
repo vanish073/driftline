@@ -1,0 +1,63 @@
+# CI evidence for the Shift 4 (M2) exit: PR #1, commit b6a5dc6, GitHub Actions run 43709077412
+# https://github.com/vanish073/driftline/actions/runs/43709077412
+# Lines below are copied verbatim from the job logs (gh run view 43709077412 --job <id> --log), filtered to the summary lines.
+
+build (unit, ArchUnit, jqwik)	pass	1m26s
+canaries-quick	pass	46s
+integration (PostgreSQL in Testcontainers)	pass	53s
+simulation (shard 0 of 4, 2,500 pr seeds)	pass	1m11s
+simulation (shard 1 of 4, 2,500 pr seeds)	pass	49s
+simulation (shard 2 of 4, 2,500 pr seeds)	pass	40s
+simulation (shard 3 of 4, 2,500 pr seeds)	pass	58s
+
+## job 132796512923
+base seed 437090774120001, shard 0/4, corpus regression-seeds.txt
+campaign: profile=pr seeds=437090774120001..437090774122500 (2500) shard=0/4 threads=4 corpus=0 double-run=0
+  rule.payment.FAILURE_BEFORE_SUCCESS = 29
+  scenario.PAYMENT_FAILED = 21142
+wall=19.9s  per-seed=31.77ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+  rule.payment.FAILURE_BEFORE_SUCCESS = 2
+  scenario.PAYMENT_FAILED = 859
+wall=5.6s  per-seed=111.13ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+  rule.payment.FAILURE_BEFORE_SUCCESS = 2
+  scenario.PAYMENT_FAILED = 859
+wall=5.3s  per-seed=106.46ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+identical digests across JVMs: 100 seeds
+
+## job 132796512907
+base seed 437090774120001, shard 1/4, corpus none
+campaign: profile=pr seeds=437090774122501..437090774125000 (2500) shard=1/4 threads=4 corpus=0 double-run=0
+  rule.payment.FAILURE_BEFORE_SUCCESS = 30
+  scenario.PAYMENT_FAILED = 20791
+wall=12.4s  per-seed=19.82ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 132796512766
+base seed 437090774120001, shard 2/4, corpus none
+campaign: profile=pr seeds=437090774125001..437090774127500 (2500) shard=2/4 threads=4 corpus=0 double-run=0
+  rule.payment.FAILURE_BEFORE_SUCCESS = 30
+  scenario.PAYMENT_FAILED = 20712
+wall=13.1s  per-seed=20.89ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 132796512946
+base seed 437090774120001, shard 3/4, corpus none
+campaign: profile=pr seeds=437090774127501..437090774130000 (2500) shard=3/4 threads=4 corpus=0 double-run=0
+  rule.payment.FAILURE_BEFORE_SUCCESS = 29
+  scenario.PAYMENT_FAILED = 20806
+wall=13.6s  per-seed=21.81ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 132796512620
+C06: pay_105_a SUCCEEDED -> FAILED by FAILURE_BEFORE_SUCCESS is not in the table
+canaries: profile=pr from=1 budget=500 threads=4 wall=1.4s
+| C01 `DEDUPE_OFF` | skip the dedupe insert | 1 | 1 | INV-EVENT-ONCE | INV-EVENT-ONCE, INV-LEDGER-ONCE |
+| C05 `LEDGER_UNIQUE_OFF` | post without the cause uniqueness check | 1 | 1 | INV-LEDGER-ONCE | INV-LEDGER-ONCE |
+| C06 `SUCCESS_TO_FAILED` | allow SUCCEEDED to FAILED | 20 | 20 | INV-TRANSITIONS-LEGAL | INV-TRANSITIONS-LEGAL, INV-ONE-OUTCOME |
+| C09 `NO_FENCING` | commit without the epoch check | 5 | 5 | INV-FENCED | INV-FENCED, INV-LEDGER-ONCE |
+PASS: every canary caught within 500 seeds

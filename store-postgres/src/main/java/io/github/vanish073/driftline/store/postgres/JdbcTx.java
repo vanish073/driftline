@@ -8,6 +8,7 @@ import io.github.vanish073.driftline.core.port.OrderRepo;
 import io.github.vanish073.driftline.core.port.OutboxRepo;
 import io.github.vanish073.driftline.core.port.PartitionRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.TimerRepo;
 import io.github.vanish073.driftline.core.port.Tx;
@@ -30,6 +31,7 @@ final class JdbcTx implements Tx {
     private final PaymentRepo paymentsRepo = new JdbcStateRepos.Payments(this);
     private final OrderRepo ordersRepo = new JdbcStateRepos.Orders(this);
     private final PartitionRepo partitionsRepo = new JdbcStateRepos.Partitions(this);
+    private final QuarantineRepo quarantineRepo = new JdbcStateRepos.Quarantine(this);
     private boolean open = true;
 
     JdbcTx(Connection connection, BalanceStrategy strategy) {
@@ -101,6 +103,12 @@ final class JdbcTx implements Tx {
     public PartitionRepo partitions() {
         connection();
         return partitionsRepo;
+    }
+
+    @Override
+    public QuarantineRepo quarantine() {
+        connection();
+        return quarantineRepo;
     }
 
     @Override

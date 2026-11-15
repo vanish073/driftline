@@ -9,6 +9,8 @@ import io.github.vanish073.driftline.core.event.OrderPayload;
 import io.github.vanish073.driftline.core.event.PaymentPayload;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.event.Source;
+import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.Canary;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
@@ -91,6 +93,20 @@ class PaymentStateMachineTest {
         assertThat(play(f1, s3, f5).conflict()).isTrue();
         assertThat(play(f5, f1, s3).conflict()).isTrue();
         assertThat(play(s3, f1, f5).conflict()).isTrue();
+    }
+
+    /** Canary C06 (DESIGN §11.10): "last event wins" turns a reordered late success back into a failure. */
+    @Test
+    void canaryC06MovesASucceededPaymentBackToFailed() {
+        PaymentStateMachine planted = new PaymentStateMachine(Canaries.of(Canary.SUCCESS_TO_FAILED));
+        PaymentState succeeded = planted.decide(PaymentState.unknown(PAYMENT), event(PaymentStatus.SUCCEEDED, 3)).state();
+        Decision<PaymentState> d = planted.decide(succeeded, event(PaymentStatus.FAILED, 1));
+        assertThat(d.rule()).isEqualTo(PaymentRule.FAILURE_BEFORE_SUCCESS);
+        assertThat(d.state().status()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(PaymentTransitionTable.rows()).noneMatch(r -> r.from() == PaymentStatus.SUCCEEDED
+                && r.to() == PaymentStatus.FAILED);
+        assertThat(machine.decide(succeeded, event(PaymentStatus.FAILED, 1)).state().status())
+                .as("without the canary").isEqualTo(PaymentStatus.SUCCEEDED);
     }
 
     /** D24 (c): T is fixed by the earliest success evidence, whichever report arrives first. */

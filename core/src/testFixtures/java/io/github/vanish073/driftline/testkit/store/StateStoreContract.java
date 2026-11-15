@@ -19,7 +19,10 @@ import io.github.vanish073.driftline.core.payment.PaymentState;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
 import io.github.vanish073.driftline.core.port.DedupeRepo;
+import io.github.vanish073.driftline.core.port.PartitionRepo;
+import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.Store;
+import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.TxBody;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -30,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 
 /**
- * The dedupe, payment, order and partition part of the Store contract (DESIGN §3.2, §11.9). Runs against
+ * The dedupe, payment, order, partition (with fencing) and quarantine part of the Store contract (DESIGN §3.2, §11.9). Runs against
  * {@code InMemoryStore} and {@code PostgresStore}. Every test works on its own merchant and partition number.
  */
 public abstract class StateStoreContract {
@@ -166,23 +169,120 @@ public abstract class StateStoreContract {
         assertThat(log).containsExactly(t1);
     }
 
+    private PartitionRepo.Lease acquire(String owner) {
+        return tx(t -> t.partitions().acquire(partition, owner));
+    }
+
+    private List<QuarantineRepo.Entry> quarantined(MerchantId merchant) {
+        return tx(t -> t.quarantine().forMerchant(merchant));
+    }
+
+    private void commit(long epoch, long next) {
+        tx(t -> {
+            t.partitions().commitOffset(partition, epoch, next);
+            return null;
+        });
+    }
+
     @Test
     void offsetsStartAtZeroAndOnlyMoveForward() {
         assertThat(offset()).isZero();
-        tx(t -> {
-            t.partitions().commitOffset(partition, 5);
-            return null;
-        });
+        long epoch = acquire("matcher-a.1").epoch();
+        commit(epoch, 5);
         assertThat(offset()).isEqualTo(5);
-        tx(t -> {
-            t.partitions().commitOffset(partition, 5);
-            return null;
-        });
+        commit(epoch, 5);
+        assertThatThrownBy(() -> commit(epoch, 4)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(offset()).isEqualTo(5);
+    }
+
+    @Test
+    void anUnacquiredPartitionHasEpochZeroAndNoOwner() {
+        PartitionRepo.Lease none = tx(t -> t.partitions().lease(partition));
+        assertThat(none).isEqualTo(new PartitionRepo.Lease(partition, 0, Optional.empty(), 0));
+        assertThatThrownBy(() -> commit(1, 1)).as("no one holds epoch 1 yet").isInstanceOf(StoreConflict.class);
+        assertThat(offset()).isZero();
+    }
+
+    @Test
+    void acquireBumpsTheEpochAndKeepsTheOffset() {
+        PartitionRepo.Lease first = acquire("matcher-a.1");
+        assertThat(first).isEqualTo(new PartitionRepo.Lease(partition, 1, Optional.of("matcher-a.1"), 0));
+        commit(1, 7);
+        PartitionRepo.Lease second = acquire("matcher-b.1");
+        assertThat(second).as("the new owner seeks to the committed offset")
+                .isEqualTo(new PartitionRepo.Lease(partition, 2, Optional.of("matcher-b.1"), 7));
+        PartitionRepo.Lease stored = tx(t -> t.partitions().lease(partition));
+        assertThat(stored).isEqualTo(second);
+    }
+
+    @Test
+    void aZombieIsFencedAndItsWholeTransactionRollsBack() {
+        long zombie = acquire("matcher-a.1").epoch();
+        commit(zombie, 3);
+        long owner = acquire("matcher-b.1").epoch();
+        PaymentId id = PaymentId.of("pay_zombie");
+        PaymentState pending = new PaymentState(id, PaymentStatus.PENDING, Optional.of(OrderId.of("o")),
+                Optional.of(Money.ofPaise(1)), Optional.empty(), Optional.empty(), false);
         assertThatThrownBy(() -> tx(t -> {
-            t.partitions().commitOffset(partition, 4);
+            t.dedupe().claim(m, Source.GATEWAY, "evt_zombie", HASH_A, partition, 3);
+            t.payments().save(m, pending);
+            t.partitions().commitOffset(partition, zombie, 4);
             return null;
-        })).isInstanceOf(IllegalArgumentException.class);
-        assertThat(offset()).isEqualTo(5);
+        })).isInstanceOf(StoreConflict.class);
+        assertThat(offset()).isEqualTo(3);
+        assertThat(payment(id)).as("nothing the zombie wrote survives").isEmpty();
+        assertThat(claim(Source.GATEWAY, "evt_zombie", HASH_A)).isEqualTo(DedupeRepo.Claim.FIRST);
+        commit(owner, 4);
+        assertThat(offset()).isEqualTo(4);
+        assertThatThrownBy(() -> commit(zombie, 9)).isInstanceOf(StoreConflict.class);
+        assertThatThrownBy(() -> commit(owner + 1, 9)).as("a future epoch is not held either")
+                .isInstanceOf(StoreConflict.class);
+        assertThat(offset()).isEqualTo(4);
+    }
+
+    @Test
+    void aRolledBackAcquireLeavesTheEpochAlone() {
+        long epoch = acquire("matcher-a.1").epoch();
+        assertThatThrownBy(() -> tx(t -> {
+            t.partitions().acquire(partition, "matcher-b.1");
+            throw new IllegalStateException("crash during assignment");
+        })).isInstanceOf(IllegalStateException.class);
+        long stored = tx(t -> t.partitions().lease(partition)).epoch();
+        assertThat(stored).isEqualTo(epoch);
+        commit(epoch, 2);
+        assertThat(offset()).isEqualTo(2);
+    }
+
+    @Test
+    void quarantineKeepsOneRowPerLogPositionInOrder() {
+        QuarantineRepo.Entry late = new QuarantineRepo.Entry(partition, 9, m, Source.MERCHANT, "key_1", HASH_B,
+                QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT);
+        QuarantineRepo.Entry early = new QuarantineRepo.Entry(partition, 4, m, Source.MERCHANT, "key_1", HASH_A,
+                QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT);
+        tx(t -> {
+            t.quarantine().add(late);
+            t.quarantine().add(early);
+            t.quarantine().add(late);
+            assertThat(t.quarantine().forMerchant(m)).as("visible inside the transaction").containsExactly(early, late);
+            return null;
+        });
+        tx(t -> {
+            t.quarantine().add(early);
+            return null;
+        });
+        assertThat(quarantined(m)).containsExactly(early, late);
+        assertThat(quarantined(MerchantId.of("m-nobody"))).isEmpty();
+    }
+
+    @Test
+    void aRolledBackQuarantineRowIsForgotten() {
+        QuarantineRepo.Entry entry = new QuarantineRepo.Entry(partition, 1, m, Source.GATEWAY, "evt_q", HASH_A,
+                QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT);
+        assertThatThrownBy(() -> tx(t -> {
+            t.quarantine().add(entry);
+            throw new IllegalStateException("crash before commit");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(quarantined(m)).isEmpty();
     }
 
     @Test
@@ -195,7 +295,8 @@ public abstract class StateStoreContract {
             t.payments().save(m, pending);
             t.payments().appendTransition(m, new PaymentTransition(id, PaymentStatus.NONE, PaymentStatus.PENDING,
                     PaymentRule.FIRST_EVIDENCE, "evt_atomic", T0));
-            t.partitions().commitOffset(partition, 1);
+            long epoch = t.partitions().acquire(partition, "matcher-a.1").epoch();
+            t.partitions().commitOffset(partition, epoch, 1);
             throw new IllegalStateException("crash before commit");
         })).isInstanceOf(IllegalStateException.class);
         assertThat(payment(id)).isEmpty();
