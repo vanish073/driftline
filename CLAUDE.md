@@ -46,9 +46,13 @@
 - Everything (compile with `-Werror`, unit tests, jqwik properties, ArchUnit, the Spring check): `./gradlew check`
 - One module: `./gradlew :core:test`
 - One test class: `./gradlew :core:test --tests '*PaymentTransitionTableTest'`
-- App start/stop smoke test under the production heap cap (256 MB, SerialGC): `./gradlew :app:test`
-- PostgreSQL integration tests (Testcontainers, needs Docker Desktop running): `./gradlew :store-postgres:integrationTest`. `check` includes them; CI runs them as the separate `integration` job.
-- Everything except the Testcontainers suite (what CI's `build` job runs): `./gradlew check -x :store-postgres:integrationTest`
+- App unit tests (MVC slices, security, no Docker): `./gradlew :app:test`
+- PostgreSQL integration tests (Testcontainers, needs Docker Desktop running): `./gradlew :store-postgres:integrationTest`.
+- App integration tests (PostgreSQL and Kafka in Testcontainers, all under the production heap cap of 256 MB with SerialGC; includes the start/stop smoke test `*ApplicationSmokeIT`): `./gradlew :app:integrationTest`. `check` includes both suites; CI runs them as the separate `integration` job.
+- Everything except the Testcontainers suites (what CI's `build` job runs): `./gradlew check -x :store-postgres:integrationTest -x :app:integrationTest`
+- End to end in Docker Compose (M3; close VS Code first; stops Gradle itself): `scripts/e2e.sh [results-file]`. Generated secrets and the Compose log go to `deploy/compose/.dev/` (git-ignored).
+- Inject a scenario into a running stack: `sandbox/build/install/sandbox/bin/sandbox inject --type DUPLICATE_CAPTURE --count 5`
+- Claims lint (CI job `claims-lint`): `scripts/claims-lint.sh`
 - Free memory when the machine is swapping: `./gradlew --stop`
 - One simulator seed: `./gradlew :sim:run --args="--seed 8812 --profile calm"`; add `--trace` for the timeline. A failing seed prints the REPRO line and writes `sim/build/sim-failures/seed-<n>.trace`.
 - 1,000 `calm` seeds, each run twice (determinism): `./gradlew :sim:test --tests '*CalmCampaignTest'`

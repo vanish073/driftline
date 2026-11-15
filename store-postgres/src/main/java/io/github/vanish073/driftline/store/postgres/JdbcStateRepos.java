@@ -531,5 +531,42 @@ final class JdbcStateRepos {
                 throw SqlErrors.translate("quarantine of " + merchantId, e);
             }
         }
+
+        @Override
+        public void addUndecodable(Undecodable record) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    INSERT INTO quarantine (id, partition, kafka_offset, reason, error, raw)
+                    VALUES (?, ?, ?, 'UNDECODABLE', ?, ?)
+                    ON CONFLICT (id) DO NOTHING
+                    """)) {
+                ps.setString(1, record.id());
+                ps.setInt(2, record.partition());
+                ps.setLong(3, record.offset());
+                ps.setString(4, record.error());
+                ps.setBytes(5, record.raw());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw SqlErrors.translate("quarantine " + record.partition() + "@" + record.offset(), e);
+            }
+        }
+
+        @Override
+        public List<Undecodable> undecodable(int partition) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    SELECT kafka_offset, error, raw FROM quarantine
+                     WHERE partition = ? AND reason = 'UNDECODABLE' ORDER BY kafka_offset
+                    """)) {
+                ps.setInt(1, partition);
+                List<Undecodable> out = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Undecodable(partition, rs.getLong(1), rs.getString(2), rs.getBytes(3)));
+                    }
+                }
+                return List.copyOf(out);
+            } catch (SQLException e) {
+                throw SqlErrors.translate("undecodable records of partition " + partition, e);
+            }
+        }
     }
 }

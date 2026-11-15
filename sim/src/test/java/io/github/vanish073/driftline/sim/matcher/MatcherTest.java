@@ -81,6 +81,10 @@ class MatcherTest {
         return store.transact("batch", tx -> with.process(new PartitionBatch(0, underEpoch, T0, records), tx));
     }
 
+    private List<QuarantineRepo.Undecodable> undecodable() {
+        return store.transact("read", tx -> tx.quarantine().undecodable(0));
+    }
+
     private long balance(AccountCode code) {
         return store.transact("read", tx -> tx.ledger().balance(M, code)).paise();
     }
@@ -112,6 +116,43 @@ class MatcherTest {
         assertThat(redelivered.duplicates()).isEqualTo(1);
         assertThat(store.committedLedger()).hasSize(1);
         assertThat(store.committedPaymentTransitions()).hasSize(1);
+    }
+
+    @Test
+    void anUndecodableRecordIsQuarantinedInTheBatchTransactionAndTheOffsetMovesPastIt() {
+        // The Kafka driver's split (D47): records 0 and 2 decode, record 1 does not; all three in one transaction.
+        LogRecord first = payment("e1", EventType.PAYMENT_PENDING, 1);
+        log.add(null);   // offset 1: the undecodable record has no envelope
+        LogRecord third = payment("e2", EventType.PAYMENT_SUCCEEDED, 2);
+        byte[] garbage = {(byte) 0xff, 0x01};
+        boolean quarantined = store.transact("batch", tx -> {
+            matcher.process(new PartitionBatch(0, epoch, T0, List.of(first)), tx);
+            boolean q = matcher.quarantineUndecodable(0, epoch, 1, "not valid JSON", garbage, tx);
+            matcher.process(new PartitionBatch(0, epoch, T0, List.of(third)), tx);
+            return q;
+        });
+        assertThat(quarantined).isTrue();
+        assertThat(store.committedOffset(0)).isEqualTo(3);
+        assertThat(store.committedPaymentTransitions()).hasSize(2);
+        assertThat(undecodable())
+                .containsExactly(new QuarantineRepo.Undecodable(0, 1, "not valid JSON", garbage));
+
+        // A replay of the same position (a crash after commit, then a re-read) changes nothing.
+        boolean again = store.transact("replay", tx -> matcher.quarantineUndecodable(0, epoch, 1, "again", garbage, tx));
+        assertThat(again).isFalse();
+        assertThat(undecodable()).hasSize(1);
+    }
+
+    @Test
+    void anUndecodableRecordIsFencedAndCannotSkipOffsets() {
+        long newer = store.transact("steal", tx -> tx.partitions().acquire(0, "matcher-b.1")).epoch();
+        assertThatThrownBy(() -> store.transact("zombie", tx ->
+                matcher.quarantineUndecodable(0, epoch, 0, "bad", new byte[] {1}, tx)))
+                .isInstanceOf(StoreConflict.class);
+        assertThat(undecodable()).as("rolled back with the batch").isEmpty();
+        assertThatThrownBy(() -> store.transact("gap", tx ->
+                matcher.quarantineUndecodable(0, newer, 5, "bad", new byte[] {1}, tx)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("skips offsets");
     }
 
     @Test

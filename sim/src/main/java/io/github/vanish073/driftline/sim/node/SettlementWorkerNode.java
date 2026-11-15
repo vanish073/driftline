@@ -1,16 +1,9 @@
 package io.github.vanish073.driftline.sim.node;
 
-import io.github.vanish073.driftline.core.breaks.Break;
-import io.github.vanish073.driftline.core.breaks.BreakType;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
-import io.github.vanish073.driftline.core.event.EventType;
-import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.event.Sha256;
-import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.port.SettlementRepo.Receipt;
-import io.github.vanish073.driftline.core.port.SettlementRepo.ReceiptStatus;
-import io.github.vanish073.driftline.core.port.SettlementRepo.ReceivedFile;
 import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
@@ -24,9 +17,8 @@ import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFileParser;
-import java.nio.charset.StandardCharsets;
+import io.github.vanish073.driftline.wire.settlement.SettlementIntake;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.IntConsumer;
@@ -123,23 +115,8 @@ public final class SettlementWorkerNode implements SettlementUploads {
         Instant now = clock.now();
         Receipt receipt;
         try {
-            receipt = store.transact("worker-receive-" + file.fileId(), tx -> {
-                Receipt r = tx.settlement().receive(new ReceivedFile(merchantId, file.fileId(), file.settlementDate(),
-                        sha, file.lines().size(), file.totalAmount(), now, ReceiptStatus.ACCEPTED));
-                if (r == Receipt.DUPLICATE
-                        && tx.settlement().receipt(sha).orElseThrow().status() == ReceiptStatus.REJECTED_CONFLICT) {
-                    return Receipt.CONFLICT;   // the same refused bytes again: still refused, never emitted (BUG-002)
-                }
-                if (r == Receipt.CONFLICT) {
-                    TreeMap<String, String> facts = new TreeMap<>();
-                    facts.put("file_id", file.fileId());
-                    facts.put("settlement_date", file.settlementDate().toString());
-                    facts.put("sha256", sha.hex());
-                    tx.breaks().raise(Break.detected(merchantId, BreakType.FILE_CONFLICT,
-                            file.settlementDate() + ":" + sha.hex().substring(0, 16), now, facts), "upload refused");
-                }
-                return r;
-            });
+            receipt = store.transact("worker-receive-" + file.fileId(),
+                    tx -> SettlementIntake.receive(tx, file, sha, now));
         } catch (StoreUnavailable | StoreConflict e) {
             faults.count("store.retries");
             return;   // no reply: the bank retries on its schedule
@@ -162,18 +139,10 @@ public final class SettlementWorkerNode implements SettlementUploads {
     }
 
     private void emit(MerchantContext merchant, SettlementFile file, Sha256 sha, Instant receivedAt) {
-        int partition = merchant.partition();
-        for (SettlementLinePayload line : file.lines()) {
-            String key = sha.hex() + ":" + line.lineNo();
-            log.append(new EventEnvelope(EventEnvelope.SCHEMA_VERSION, merchant.merchantId(), partition, Source.BANK,
-                    key, EventType.SETTLEMENT_LINE, file.generatedAt(), receivedAt,
-                    Sha256.of(key.getBytes(StandardCharsets.US_ASCII)), line, Optional.empty()));
+        for (EventEnvelope envelope : SettlementIntake.envelopes(merchant.partition(), file, sha, receivedAt)) {
+            log.append(envelope);
         }
-        String endKey = sha.hex() + ":T";
-        log.append(new EventEnvelope(EventEnvelope.SCHEMA_VERSION, merchant.merchantId(), partition, Source.BANK,
-                endKey, EventType.SETTLEMENT_FILE_END, file.generatedAt(), receivedAt,
-                Sha256.of(endKey.getBytes(StandardCharsets.US_ASCII)), file.fileEnd(sha), Optional.empty()));
-        coordinator.wake(partition);
+        coordinator.wake(merchant.partition());
     }
 
     /** {@code merchant/date} of every upload refused as a conflict. */

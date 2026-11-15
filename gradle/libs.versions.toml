@@ -36,6 +36,23 @@ jackson-core = { module = "tools.jackson.core:jackson-core" }
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
 spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+# Shift 6 (app only; versions managed by the Spring Boot 4.1.2 BOM: Kafka 4.2.2, Micrometer 1.17.2, Flyway 12.4.0,
+# Testcontainers 2.0.5).
+spring-boot-starter-webmvc = { module = "org.springframework.boot:spring-boot-starter-webmvc" }
+spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
+spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }
+spring-security-test = { module = "org.springframework.security:spring-security-test" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
+kafka-clients = { module = "org.apache.kafka:kafka-clients" }
+boot-flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
+boot-postgresql = { module = "org.postgresql:postgresql" }
+boot-testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }
+boot-testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
+# The e2e suite runs from the console launcher while Gradle is stopped (DESIGN §15.1), on the JUnit 5 line (D23).
+junit-platform-console-standalone = { module = "org.junit.platform:junit-platform-console-standalone", version = "1.14.4" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

@@ -173,6 +173,28 @@ public final class Matcher {
     }
 
     /**
+     * Quarantines a log record that did not decode into an envelope (§5.7, D47), and commits the offset past it under
+     * {@code epoch}, so the partition never stalls on it. The driver calls this inside the same Store transaction as the
+     * batches around the record. A record below the stored offset was already handled (a replay) and changes nothing.
+     *
+     * @return true if the record was quarantined now, false if it was already processed
+     * @throws IllegalArgumentException if {@code offset} skips past the next offset to process
+     * @throws io.github.vanish073.driftline.core.port.StoreConflict if {@code epoch} is fenced
+     */
+    public boolean quarantineUndecodable(int partition, long epoch, long offset, String error, byte[] raw, Tx tx) {
+        long next = tx.partitions().nextOffset(partition);
+        if (offset < next) {
+            return false;
+        }
+        if (offset != next) {
+            throw new IllegalArgumentException("record skips offsets: expected " + next + ", got " + offset);
+        }
+        tx.quarantine().addUndecodable(new QuarantineRepo.Undecodable(partition, offset, error, raw));
+        tx.partitions().commitOffset(partition, epoch, offset + 1);
+        return true;
+    }
+
+    /**
      * Advances idle watermarks and fires due timers with no new records (§5.4: "if idle on a tick"). Fenced like a
      * batch: it commits the unchanged offset under {@code epoch}.
      */

@@ -5,7 +5,8 @@ plugins {
 
 dependencies {
     api(project(":core"))
-    implementation(platform(libs.jackson.bom))
-    implementation(libs.jackson.core)
+    // StrictJson.write hands callers a JsonGenerator, so Jackson's streaming core is part of wire's API.
+    api(platform(libs.jackson.bom))
+    api(libs.jackson.core)
     testImplementation(testFixtures(project(":core")))
 }

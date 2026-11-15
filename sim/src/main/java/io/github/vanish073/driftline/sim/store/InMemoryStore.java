@@ -180,6 +180,8 @@ public final class InMemoryStore implements Store {
     private final List<OffsetCommit> offsetCommitLog = new ArrayList<>();
     private final TreeMap<String, QuarantineRepo.Entry> quarantine = new TreeMap<>();
     private final List<QuarantineRepo.Entry> quarantineLog = new ArrayList<>();
+    /** Undecodable records by quarantine id (one per log position, shared with {@link #quarantine}'s ids). */
+    private final TreeMap<String, QuarantineRepo.Undecodable> undecodable = new TreeMap<>();
     private final Table<Key, WatermarkRepo.StreamWatermark> streamWatermarks = new Table<>();
     private final Table<Key, LocalDate> settledThrough = new Table<>();
     private final Table<Key, TimerRepo.Timer> timers = new Table<>();
@@ -332,6 +334,7 @@ public final class InMemoryStore implements Store {
         private final TreeMap<Integer, PartitionRepo.Lease> pendingLeases = new TreeMap<>();
         private final List<OffsetCommit> pendingOffsetCommits = new ArrayList<>();
         private final TreeMap<String, QuarantineRepo.Entry> pendingQuarantine = new TreeMap<>();
+        private final TreeMap<String, QuarantineRepo.Undecodable> pendingUndecodable = new TreeMap<>();
         private final Table<Key, WatermarkRepo.StreamWatermark>.View streamView = streamWatermarks.view();
         private final Table<Key, LocalDate>.View settledView = settledThrough.view();
         private final Table<Key, TimerRepo.Timer>.View timerView = timers.view();
@@ -400,6 +403,7 @@ public final class InMemoryStore implements Store {
                     quarantineLog.add(entry);
                 }
             }
+            undecodable.putAll(pendingUndecodable);
             streamView.commit();
             settledView.commit();
             timerView.commit();
@@ -742,13 +746,45 @@ public final class InMemoryStore implements Store {
         }
 
         private final class InMemoryQuarantine implements QuarantineRepo {
+            private boolean taken(String id) {
+                return quarantine.containsKey(id) || pendingQuarantine.containsKey(id) || undecodable.containsKey(id)
+                        || pendingUndecodable.containsKey(id);
+            }
+
             @Override
             public void add(Entry entry) {
                 requireOpen();
                 Objects.requireNonNull(entry, "entry");
-                if (!quarantine.containsKey(entry.id())) {
-                    pendingQuarantine.putIfAbsent(entry.id(), entry);
+                if (!taken(entry.id())) {
+                    pendingQuarantine.put(entry.id(), entry);
                 }
+            }
+
+            @Override
+            public void addUndecodable(Undecodable record) {
+                requireOpen();
+                Objects.requireNonNull(record, "record");
+                if (!taken(record.id())) {
+                    pendingUndecodable.put(record.id(), record);
+                }
+            }
+
+            @Override
+            public List<Undecodable> undecodable(int partition) {
+                requireOpen();
+                List<Undecodable> out = new ArrayList<>();
+                for (Undecodable u : undecodable.values()) {
+                    if (u.partition() == partition) {
+                        out.add(u);
+                    }
+                }
+                for (Undecodable u : pendingUndecodable.values()) {
+                    if (u.partition() == partition) {
+                        out.add(u);
+                    }
+                }
+                out.sort(Comparator.comparingLong(Undecodable::offset));
+                return List.copyOf(out);
             }
 
             @Override
@@ -904,6 +940,14 @@ public final class InMemoryStore implements Store {
             public Optional<Break> find(MerchantId merchantId, BreakType type, String subjectKey) {
                 requireOpen();
                 return breakView.get(breakKey(merchantId, Break.idOf(merchantId, type, subjectKey)));
+            }
+
+            @Override
+            public Optional<Break> byId(String breakId) {
+                requireOpen();
+                Objects.requireNonNull(breakId, "breakId");
+                List<Break> found = breakView.where(b -> b.breakId().equals(breakId));
+                return found.isEmpty() ? Optional.empty() : Optional.of(found.get(0));
             }
 
             private Break existing(MerchantId merchantId, String breakId) {

@@ -27,6 +27,9 @@ public interface BreakRepo {
 
     Optional<Break> find(MerchantId merchantId, BreakType type, String subjectKey);
 
+    /** The break with this id, whatever its merchant (ids are derived from the merchant, D4); for the ops API. */
+    Optional<Break> byId(String breakId);
+
     /**
      * Records one piece of evidence. An unchanged value changes nothing; a new key or a new value is stored and bumps
      * the version.
