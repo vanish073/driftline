@@ -12,7 +12,7 @@ import java.util.List;
 public final class Workload {
 
     /** Weights out of 100, in {@link Scenario} order. */
-    private static final List<Integer> WEIGHTS = List.of(70, 8, 6, 6, 5, 5);
+    private static final List<Integer> WEIGHTS = List.of(61, 8, 6, 6, 5, 5, 3, 3, 3);
 
     private Workload() {
     }

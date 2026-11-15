@@ -33,6 +33,8 @@ public final class Swarm {
                 case NET_DELAY -> rng.between(20, 300);
                 case PRODUCE_AMBIGUOUS -> rng.between(10, 150);
                 case MERCHANT_KEY_REUSE -> rng.between(20, 200);
+                case FILE_LATE -> rng.between(100, 500);                 // 10% to 50% of files
+                case FILE_DUP, FILE_CONFLICT -> rng.between(50, 300);
                 case NODE_CRASH, NODE_PAUSE, CLOCK_JUMP, STORE_DOWN -> rng.between(1, 4);   // per traffic day
                 case CLOCK_SKEW -> rng.between(1, 1);
             });

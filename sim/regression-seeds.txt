@@ -4,4 +4,5 @@
 # One seed per line: <seed> <profile> [<canary code> ...]   then an optional "# BUG-NNN: ..." comment.
 # Every real bug in docs/BUGS.md adds its seed here. Canary detections are not bugs and are not listed.
 #
-# (empty: no simulator-found bug so far)
+361 pr   # BUG-001: a quarantined merchant event left a duplicate-captured order un-escalated
+143 pr   # BUG-002: the settlement worker re-emitted a file it had refused

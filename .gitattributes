@@ -2,3 +2,5 @@
 *.bat text eol=crlf
 gradlew text eol=lf
 *.jar binary
+# Golden settlement files test exact bytes (CRLF breaks, no final break): never normalise them.
+wire/src/test/resources/settlement/*.csv -text

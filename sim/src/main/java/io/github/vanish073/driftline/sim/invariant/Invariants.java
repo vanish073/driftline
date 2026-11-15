@@ -1,5 +1,10 @@
 package io.github.vanish073.driftline.sim.invariant;
 
+import io.github.vanish073.driftline.core.breaks.Break;
+import io.github.vanish073.driftline.core.breaks.BreakKind;
+import io.github.vanish073.driftline.core.breaks.BreakType;
+import io.github.vanish073.driftline.core.id.MerchantId;
+import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import io.github.vanish073.driftline.core.order.OrderTransition;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
@@ -8,6 +13,11 @@ import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
 import io.github.vanish073.driftline.sim.world.FakeBank;
+import io.github.vanish073.driftline.sim.world.FakeGateway;
+import io.github.vanish073.driftline.sim.world.FakeMerchant;
+import io.github.vanish073.driftline.sim.world.SettlementFeed;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +47,19 @@ public final class Invariants {
     public static final String NO_ANOMALY = "INV-NO-ANOMALY";
     /** End state: every record appended to the log was processed, and every world message was acknowledged. */
     public static final String DRAINED = "INV-DRAINED";
+    /** A MISSING_SETTLEMENT break exists only if the world did not settle that payment by its due date plus grace. */
+    public static final String MISSING_IS_REAL = "INV-MISSING-IS-REAL";
+    /** End state: every one-to-one break the world implies (the oracle) has a Driftline break of that type. */
+    public static final String DETECTED = "INV-DETECTED";
+
+    /**
+     * Anomalies the simulated world never causes, so Driftline raising one is a bug. FILE_CONFLICT is expected only
+     * for a merchant the bank sent a conflicting file for; IDEMPOTENCY_CONFLICT only with a quarantined record, which
+     * the quarantine check above ties to a key the world really reused; FEED_STALL whenever a file is late.
+     */
+    static final List<BreakType> NEVER_EXPECTED = List.of(BreakType.STATUS_CONFLICT, BreakType.ORDER_ANOMALY,
+            BreakType.OVER_SETTLEMENT, BreakType.SETTLEMENT_CONFLICT, BreakType.INFERRED_MATCH_CHALLENGED,
+            BreakType.LEDGER_CONFLICT);
 
     private final InMemoryStore store;
     private final FakeBank bank;
@@ -50,12 +73,34 @@ public final class Invariants {
     private final TreeSet<String> causes = new TreeSet<>();
     private final TreeSet<String> appliedEventKeys = new TreeSet<>();
     private final TreeMap<String, PaymentStatus> paymentStatus = new TreeMap<>();
+    private int breakSeen;
+    private FakeGateway gateway;
+    private SettlementFeed feed;
+    private TreeMap<MerchantId, FakeMerchant> merchants;
+    private Instant epoch;
+    private int cycleDays;
+    private int graceDays;
+    private LocalDate lastFileDate;
+    private TreeSet<String> expected = new TreeSet<>();
+    private TreeSet<String> detected = new TreeSet<>();
 
     /** @param reusedKeys the keys the world's buggy clients reused (MERCHANT_KEY_REUSE), per merchant and key */
     public Invariants(InMemoryStore store, FakeBank bank, Supplier<Set<String>> reusedKeys) {
         this.store = store;
         this.bank = bank;
         this.reusedKeys = reusedKeys;
+    }
+
+    /** Connects the world the settlement and detection checks compare against (set once, before the run). */
+    public void world(FakeGateway gateway, SettlementFeed feed, TreeMap<MerchantId, FakeMerchant> merchants, Instant epoch,
+                      int cycleDays, int graceDays, LocalDate lastFileDate) {
+        this.gateway = gateway;
+        this.feed = feed;
+        this.merchants = merchants;
+        this.epoch = epoch;
+        this.cycleDays = cycleDays;
+        this.graceDays = graceDays;
+        this.lastFileDate = lastFileDate;
     }
 
     public void anomaly(String description) {
@@ -124,11 +169,77 @@ public final class Invariants {
                         + " at p" + q.partition() + "@" + q.offset() + ", which the world never reused", now));
             }
         }
+        List<Break> raises = store.committedBreakRaises();
+        for (; breakSeen < raises.size(); breakSeen++) {
+            Optional<Violation> v = checkRaised(raises.get(breakSeen), now);
+            if (v.isPresent()) {
+                return v;
+            }
+        }
         if (bank.total() != bank.opened()) {
             return Optional.of(new Violation(WORLD_CONSERVED, "the world holds " + bank.total() + " paise but "
                     + bank.opened() + " were opened", now));
         }
         return Optional.empty();
+    }
+
+    private Optional<Violation> checkRaised(Break b, long now) {
+        if (NEVER_EXPECTED.contains(b.type())) {
+            return Optional.of(new Violation(NO_ANOMALY, b.type() + " " + b.merchantId() + "/" + b.subjectKey()
+                    + " " + b.evidence() + ", which the world never causes", now));
+        }
+        if (b.type() == BreakType.FILE_CONFLICT && !b.evidence().containsKey("file_id")) {
+            // Raised by the matcher's own guard, not by the worker at upload: a refused file reached the log.
+            return Optional.of(new Violation(NO_ANOMALY, "FILE_CONFLICT " + b.merchantId() + "/" + b.subjectKey()
+                    + " raised by the matcher: a file the worker should have refused reached the log", now));
+        }
+        if (b.type() == BreakType.FILE_CONFLICT && feed != null
+                && feed.conflicting().stream().noneMatch(c -> c.startsWith(b.merchantId() + "/"))) {
+            return Optional.of(new Violation(NO_ANOMALY, "FILE_CONFLICT " + b.merchantId() + "/" + b.subjectKey()
+                    + ", but the bank sent no conflicting file", now));
+        }
+        if (b.type() == BreakType.MISSING_SETTLEMENT && gateway != null) {
+            Optional<FakeGateway.Payment> p = gateway.payment(PaymentId.of(b.subjectKey()));
+            if (p.isEmpty() || !p.get().captured()) {
+                return Optional.of(new Violation(MISSING_IS_REAL, "MISSING_SETTLEMENT for " + b.subjectKey()
+                        + ", which the world never captured", now));
+            }
+            LocalDate deadline = Oracle.lastOnTimeDate(epoch.plusMillis(p.get().capturedAtMillis()), cycleDays, graceDays);
+            if (p.get().settledOn().filter(d -> !d.isAfter(deadline)).isPresent()) {
+                return Optional.of(new Violation(MISSING_IS_REAL, "MISSING_SETTLEMENT for " + b.subjectKey()
+                        + ", which the world settled on " + p.get().settledOn().get() + " (in "
+                        + p.get().lineKey().orElse("?") + "), by its deadline " + deadline, now));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * A DEBITED_NO_ORDER or DUPLICATE_CAPTURE the world implies for a payment whose order had a merchant event refused
+     * as IDEMPOTENCY_CONFLICT. Driftline cannot know that order's true state (the refused event may be the one that
+     * says which payment paid it), and it escalated the order instead, which INV-DETECTED accepts ("a break or an
+     * escalation", DESIGN §11.7). Found by seed 361 (BUG-001).
+     */
+    private boolean coveredByEscalation(String expectedKey, TreeSet<String> escalatedOrders) {
+        boolean orderDependent = expectedKey.startsWith(BreakType.DEBITED_NO_ORDER + " ")
+                || expectedKey.startsWith(BreakType.DUPLICATE_CAPTURE + " ");
+        if (!orderDependent) {
+            return false;
+        }
+        String subject = expectedKey.substring(expectedKey.indexOf('/') + 1);
+        return gateway.payment(PaymentId.of(subject))
+                .filter(p -> escalatedOrders.contains(p.merchant() + "/" + p.order()))
+                .isPresent();
+    }
+
+    /** The oracle's expected breaks, computed at the end of the run. */
+    public TreeSet<String> expected() {
+        return new TreeSet<>(expected);
+    }
+
+    /** The oracle's expected breaks that Driftline raised. */
+    public TreeSet<String> detected() {
+        return new TreeSet<>(detected);
     }
 
     public Optional<Violation> atEnd(long now, SimLog log, long undeliveredWorldMessages) {
@@ -145,6 +256,27 @@ public final class Invariants {
         }
         if (undeliveredWorldMessages != 0) {
             return Optional.of(new Violation(DRAINED, undeliveredWorldMessages + " world messages were never acknowledged", now));
+        }
+        if (gateway != null) {
+            expected = Oracle.expected(gateway, merchants, epoch, cycleDays, graceDays, lastFileDate);
+            TreeSet<String> raised = new TreeSet<>();
+            TreeSet<String> escalatedOrders = new TreeSet<>();
+            for (Break b : store.committedBreaks()) {
+                if (b.kind() == BreakKind.BREAK) {
+                    raised.add(Oracle.key(b.type(), b.merchantId(), b.subjectKey()));
+                }
+                if (b.type() == BreakType.IDEMPOTENCY_CONFLICT && b.evidence().containsKey("order_id")) {
+                    escalatedOrders.add(b.merchantId() + "/" + b.evidence().get("order_id"));
+                }
+            }
+            detected = new TreeSet<>(expected);
+            detected.retainAll(raised);
+            for (String e : expected) {
+                if (!raised.contains(e) && !coveredByEscalation(e, escalatedOrders)) {
+                    return Optional.of(new Violation(DETECTED, "the world implies " + e + ", but Driftline never raised it",
+                            now));
+                }
+            }
         }
         return Optional.empty();
     }

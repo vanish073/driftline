@@ -29,6 +29,7 @@ public final class Delivery {
     private final String node;
     private final Attempt attempt;
     private final LongFunction<Void> onGiveUp;
+    private Runnable onAck = () -> { };
     private boolean acked;
     private boolean gaveUp;
     private int attempts;
@@ -45,6 +46,12 @@ public final class Delivery {
         fire();
     }
 
+    /** Runs {@code action} once, when the first 2xx reply arrives. Set it before {@link #start()}. */
+    Delivery onAck(Runnable action) {
+        this.onAck = action;
+        return this;
+    }
+
     private void fire() {
         if (acked) {
             return;
@@ -54,8 +61,9 @@ public final class Delivery {
             firstAttemptAt = scheduler.now();
         }
         attempt.send(attemptNo, status -> {
-            if (status >= 200 && status < 300) {
+            if (status >= 200 && status < 300 && !acked) {
                 acked = true;
+                onAck.run();
             }
         });
         long wait = BACKOFF.get(Math.min(attemptNo, BACKOFF.size()) - 1);

@@ -2,8 +2,11 @@ package io.github.vanish073.driftline.sim.node;
 
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.matcher.BatchOutcome;
+import io.github.vanish073.driftline.core.matcher.KeyedState;
 import io.github.vanish073.driftline.core.matcher.LogRecord;
 import io.github.vanish073.driftline.core.matcher.Matcher;
+import io.github.vanish073.driftline.core.matcher.MatcherConfig;
+import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
 import io.github.vanish073.driftline.core.matcher.PartitionBatch;
 import io.github.vanish073.driftline.core.port.PartitionRepo;
 import io.github.vanish073.driftline.core.port.Store;
@@ -14,6 +17,7 @@ import io.github.vanish073.driftline.sim.kernel.Scheduler;
 import io.github.vanish073.driftline.sim.kernel.SimClock;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.kernel.Trace;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -32,12 +36,19 @@ import java.util.function.Consumer;
  * batch: a crash then dies inside the batch transaction before commit (CP6); a pause freezes after the fetch and
  * before the transaction, holding the batch. If the pause outlasts the session timeout, the partition moves and the
  * instance wakes as a zombie with a stale epoch; its held batch is then fenced by the Store (INV-FENCED, CP7).
+ *
+ * <p>Shift 5: each batch carries this node's processing clock; after each committed transaction the outcome goes back
+ * to the matcher so its keyed-state cache learns the writes (§5.2), and a tick is scheduled at the outcome's
+ * {@code nextWakeAt}, so idle watermarks advance and timers fire with no new records (§5.4, §5.5). The cache is
+ * dropped whenever ownership changes or the node crashes, and warmed after every acquire.
  */
 public final class MatcherInstance {
 
     public static final int MAX_BATCH = 100;
     static final long POLL_DELAY_MILLIS = 50;
     static final long STORE_RETRY_MILLIS = 1_000;
+    /** The shortest wait before a tick, so a timer that is not due yet never spins. */
+    static final long MIN_TICK_DELAY_MILLIS = 1_000;
 
     private final String name;
     private final Store store;
@@ -60,7 +71,8 @@ public final class MatcherInstance {
     private long armedCrashDowntimeMillis;
 
     public MatcherInstance(String name, Store store, SimLog log, Scheduler scheduler, Trace trace, Coordinator coordinator,
-                           FaultInjector faults, Canaries canaries, Consumer<String> anomalies) {
+                           FaultInjector faults, MerchantDirectory merchants, MatcherConfig config, Canaries canaries,
+                           Consumer<String> anomalies) {
         this.name = name;
         this.store = store;
         this.log = log;
@@ -69,7 +81,7 @@ public final class MatcherInstance {
         this.coordinator = coordinator;
         this.faults = faults;
         this.anomalies = anomalies;
-        this.matcher = new Matcher(canaries);
+        this.matcher = new Matcher(merchants, config, canaries);
         this.clock = new SimClock(scheduler);
         coordinator.register(this);
     }
@@ -93,6 +105,14 @@ public final class MatcherInstance {
 
     public boolean isPaused() {
         return paused;
+    }
+
+    public long cacheHits() {
+        return matcher.keyedState().hits();
+    }
+
+    public long cacheMisses() {
+        return matcher.keyedState().misses();
     }
 
     /** Runs {@code action} after {@code delay} in this incarnation; held while paused, dropped after a crash. */
@@ -168,6 +188,7 @@ public final class MatcherInstance {
         paused = false;
         incarnation++;
         consumers.clear();
+        matcher.forgetAll();
         deferred.clear();
         armedPauseMillis = 0;
         armedCrashDowntimeMillis = 0;
@@ -226,12 +247,22 @@ public final class MatcherInstance {
             if (!keep.contains(p)) {
                 trace.line(scheduler.now(), name, "learns it lost p" + p);
                 consumers.remove(p).active = false;
+                matcher.ownershipChanged(p);
             }
         }
         if (owned.isEmpty()) {
             memberEpoch++;
             coordinator.join(memberId());
         }
+    }
+
+    private static String describe(BatchOutcome outcome) {
+        if (outcome.raised().isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(" raised=");
+        outcome.raised().forEach(b -> out.append(b.type()).append('(').append(b.subjectKey()).append(") "));
+        return out.toString().stripTrailing();
     }
 
     // ---- one partition ----------------------------------------------------------------------------------------
@@ -242,6 +273,8 @@ public final class MatcherInstance {
         private long position;
         private boolean active = true;
         private boolean pollScheduled;
+        /** Scheduler time of the pending tick, or {@code Long.MAX_VALUE}. */
+        private long tickAt = Long.MAX_VALUE;
         /** A fetched batch not yet processed: held across a pause. */
         private List<LogRecord> held = List.of();
 
@@ -264,13 +297,76 @@ public final class MatcherInstance {
                         tx -> tx.partitions().acquire(partition, member));
                 epoch = lease.epoch();
                 position = lease.nextOffset();
+                matcher.ownershipChanged(partition);
                 trace.line(scheduler.now(), name, "acquires p" + partition + " epoch " + epoch + " at offset " + position);
+                warm();
                 pollScheduled = true;
-                schedule(faults.assignLatencyMillis(), this::poll);
+                long latency = faults.assignLatencyMillis();
+                schedule(latency, this::poll);
+                scheduleTickIn(latency + MIN_TICK_DELAY_MILLIS);
             } catch (StoreUnavailable e) {
                 faults.count("store.retries");
                 schedule(STORE_RETRY_MILLIS, this::acquire);
             }
+        }
+
+        /** Loads the partition's open payments and orders into the cache (§5.2); skipped while the store is down. */
+        void warm() {
+            try {
+                KeyedState.Delta delta = store.transact(memberId() + "-warm-p" + partition, tx -> matcher.warm(partition, tx));
+                matcher.committed(delta);
+            } catch (StoreUnavailable e) {
+                faults.count("store.retries");
+            }
+        }
+
+        void scheduleTick(Optional<Instant> wakeAt) {
+            wakeAt.ifPresent(at -> scheduleTickIn(at.toEpochMilli() - clock.now().toEpochMilli()));
+        }
+
+        void scheduleTickIn(long delayMillis) {
+            long delay = Math.max(MIN_TICK_DELAY_MILLIS, delayMillis);
+            long at = scheduler.now() + delay;
+            if (tickAt > scheduler.now() && tickAt <= at) {
+                return;   // an earlier tick is already pending
+            }
+            tickAt = at;
+            schedule(delay, () -> {
+                if (tickAt == at) {
+                    tick();
+                }
+            });
+        }
+
+        void tick() {
+            tickAt = Long.MAX_VALUE;
+            if (!active || epoch == 0) {
+                return;
+            }
+            String member = memberId();
+            try {
+                BatchOutcome outcome = store.transact(member + "-tick-p" + partition,
+                        tx -> matcher.tick(partition, epoch, clock.now(), tx));
+                matcher.committed(outcome);
+                if (outcome.timersFired() > 0 || !outcome.raised().isEmpty()) {
+                    trace.line(scheduler.now(), name, "p" + partition + " tick timers=" + outcome.timersFired()
+                            + describe(outcome));
+                }
+                scheduleTick(outcome.nextWakeAt());
+            } catch (StoreUnavailable e) {
+                faults.count("store.retries");
+                scheduleTickIn(STORE_RETRY_MILLIS);
+            } catch (StoreConflict fenced) {
+                fenced(fenced);
+            }
+        }
+
+        private void fenced(StoreConflict fenced) {
+            faults.count("matcher.fenced");
+            trace.line(scheduler.now(), name, "fenced on p" + partition + " with epoch " + epoch + ": " + fenced.getMessage());
+            active = false;
+            consumers.remove(partition);
+            matcher.ownershipChanged(partition);
         }
 
         void wake() {
@@ -300,17 +396,20 @@ public final class MatcherInstance {
             String member = memberId();
             try {
                 BatchOutcome outcome = store.transact(member + "-batch-p" + partition, tx -> {
-                    BatchOutcome o = matcher.process(new PartitionBatch(partition, epoch, records), tx);
+                    BatchOutcome o = matcher.process(new PartitionBatch(partition, epoch, clock.now(), records), tx);
                     if (crashing) {
                         throw new SimCrash();
                     }
                     return o;
                 });
                 position = records.get(records.size() - 1).offset() + 1;
+                matcher.committed(outcome);
                 trace.line(scheduler.now(), name, "p" + partition + " epoch " + epoch + " batch @" + records.get(0).offset()
                         + " applied=" + outcome.applied() + " skipped=" + outcome.alreadyProcessed()
                         + " dup=" + outcome.duplicates() + " reused=" + outcome.keyReused()
-                        + " later=" + outcome.notYetHandled() + " posted=" + outcome.postings());
+                        + " later=" + outcome.notYetHandled() + " posted=" + outcome.postings()
+                        + " timers=" + outcome.timersFired() + describe(outcome));
+                scheduleTick(outcome.nextWakeAt());
                 for (var conflict : outcome.ledgerConflicts()) {
                     anomalies.accept("LEDGER_CONFLICT: " + conflict.existing() + " vs " + conflict.attempted());
                 }
@@ -329,10 +428,7 @@ public final class MatcherInstance {
                 pollScheduled = true;
                 schedule(STORE_RETRY_MILLIS, this::poll);
             } catch (StoreConflict fenced) {
-                faults.count("matcher.fenced");
-                trace.line(scheduler.now(), name, "fenced on p" + partition + " with epoch " + epoch + ": " + fenced.getMessage());
-                active = false;
-                consumers.remove(partition);
+                fenced(fenced);
             }
         }
     }

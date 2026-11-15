@@ -199,6 +199,85 @@ final class JdbcStateRepos {
                 throw SqlErrors.translate("payment transitions " + paymentId, e);
             }
         }
+
+        private List<PaymentState> list(String sql, String... params) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(sql)) {
+                for (int i = 0; i < params.length; i++) {
+                    ps.setString(i + 1, params[i]);
+                }
+                List<PaymentState> out = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new PaymentState(PaymentId.of(rs.getString("payment_id")),
+                                PaymentStatus.valueOf(rs.getString("status")),
+                                Optional.of(OrderId.of(rs.getString("order_id"))),
+                                Optional.of(Money.ofPaise(rs.getLong("amount_paise"))),
+                                instant(rs, "failed_at"), instant(rs, "success_at"), rs.getBoolean("conflict")));
+                    }
+                }
+                return List.copyOf(out);
+            } catch (SQLException e) {
+                throw SqlErrors.translate("payments", e);
+            }
+        }
+
+        @Override
+        public List<PaymentState> forOrder(MerchantId merchantId, OrderId orderId) {
+            return list("""
+                    SELECT payment_id, status, order_id, amount_paise, failed_at, success_at, conflict FROM payments
+                     WHERE merchant_id = ? AND order_id = ? ORDER BY payment_id COLLATE "C"
+                    """, merchantId.value(), orderId.value());
+        }
+
+        @Override
+        public List<PaymentState> unsettled(MerchantId merchantId) {
+            return list("""
+                    SELECT p.payment_id, p.status, p.order_id, p.amount_paise, p.failed_at, p.success_at, p.conflict
+                      FROM payments p
+                     WHERE p.merchant_id = ?
+                       AND NOT EXISTS (SELECT 1 FROM settlement_matches s
+                                        WHERE s.merchant_id = p.merchant_id AND s.payment_id = p.payment_id)
+                     ORDER BY p.payment_id COLLATE "C"
+                    """, merchantId.value());
+        }
+
+        private Optional<Optional<String>> owner(MerchantId merchantId, PaymentId paymentId, boolean lock) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(
+                    "SELECT action_owner_break_id FROM payments WHERE merchant_id = ? AND payment_id = ?"
+                            + (lock ? " FOR UPDATE" : ""))) {
+                ps.setString(1, merchantId.value());
+                ps.setString(2, paymentId.value());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(Optional.ofNullable(rs.getString(1))) : Optional.empty();
+                }
+            } catch (SQLException e) {
+                throw SqlErrors.translate("action owner of " + paymentId, e);
+            }
+        }
+
+        @Override
+        public Optional<String> actionOwner(MerchantId merchantId, PaymentId paymentId) {
+            return owner(merchantId, paymentId, false).flatMap(o -> o);
+        }
+
+        @Override
+        public Optional<String> claimActionOwner(MerchantId merchantId, PaymentId paymentId, String breakId) {
+            Optional<String> existing = owner(merchantId, paymentId, true)
+                    .orElseThrow(() -> new IllegalArgumentException("payment " + paymentId + " is not stored"));
+            if (existing.isPresent()) {
+                return existing.get().equals(breakId) ? Optional.empty() : existing;
+            }
+            try (PreparedStatement ps = tx.connection().prepareStatement(
+                    "UPDATE payments SET action_owner_break_id = ? WHERE merchant_id = ? AND payment_id = ?")) {
+                ps.setString(1, breakId);
+                ps.setString(2, merchantId.value());
+                ps.setString(3, paymentId.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw SqlErrors.translate("claim action owner of " + paymentId, e);
+            }
+            return Optional.empty();
+        }
     }
 
     static final class Orders implements OrderRepo {
@@ -299,6 +378,30 @@ final class JdbcStateRepos {
                 return List.copyOf(out);
             } catch (SQLException e) {
                 throw SqlErrors.translate("order transitions " + orderId, e);
+            }
+        }
+
+        @Override
+        public List<OrderState> open(MerchantId merchantId) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    SELECT order_id, status, version, amount_paise, expires_at, paid_with FROM orders
+                     WHERE merchant_id = ? AND status IN ('CREATED', 'PENDING_PAYMENT', 'PAID')
+                     ORDER BY order_id COLLATE "C"
+                    """)) {
+                ps.setString(1, merchantId.value());
+                List<OrderState> out = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String paidWith = rs.getString("paid_with");
+                        out.add(new OrderState(OrderId.of(rs.getString("order_id")),
+                                OrderStatus.valueOf(rs.getString("status")), rs.getLong("version"),
+                                Optional.of(Money.ofPaise(rs.getLong("amount_paise"))), instant(rs, "expires_at"),
+                                paidWith == null ? Optional.empty() : Optional.of(PaymentId.of(paidWith))));
+                    }
+                }
+                return List.copyOf(out);
+            } catch (SQLException e) {
+                throw SqlErrors.translate("open orders of " + merchantId, e);
             }
         }
     }

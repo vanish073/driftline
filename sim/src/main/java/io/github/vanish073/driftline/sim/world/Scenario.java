@@ -16,5 +16,11 @@ public enum Scenario {
     /** Two successful payments for one order (DUPLICATE_CAPTURE). */
     DUPLICATE_CAPTURE,
     /** The customer is debited but the merchant never hears of it; the order expires (DEBITED_NO_ORDER). */
-    DEBITED_NO_ORDER
+    DEBITED_NO_ORDER,
+    /** A normal order whose settlement line pays less than the expected net (SHORT_SETTLEMENT). */
+    SHORT_SETTLEMENT,
+    /** A normal order whose payment the bank never settles (MISSING_SETTLEMENT). */
+    MISSING_SETTLEMENT,
+    /** A normal order whose settlement file also carries an extra line with an unknown reference (ORPHAN_SETTLEMENT). */
+    ORPHAN_SETTLEMENT
 }

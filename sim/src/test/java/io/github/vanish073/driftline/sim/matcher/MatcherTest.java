@@ -3,6 +3,7 @@ package io.github.vanish073.driftline.sim.matcher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.vanish073.driftline.core.breaks.BreakType;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.EventPayload;
 import io.github.vanish073.driftline.core.event.EventType;
@@ -20,20 +21,25 @@ import io.github.vanish073.driftline.core.ledger.CauseType;
 import io.github.vanish073.driftline.core.matcher.BatchOutcome;
 import io.github.vanish073.driftline.core.matcher.LogRecord;
 import io.github.vanish073.driftline.core.matcher.Matcher;
+import io.github.vanish073.driftline.core.matcher.MatcherConfig;
+import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
+import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.matcher.PartitionBatch;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.StoreConflict;
+import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
-/** The core matcher, first cut, against the in-memory store. */
+/** The core matcher's record path (dedupe, state machines, postings, offsets, fencing) against the in-memory store. */
 class MatcherTest {
 
     private static final MerchantId M = MerchantId.of("m_0");
@@ -43,7 +49,10 @@ class MatcherTest {
     private static final Instant T0 = Instant.parse("2026-11-13T06:00:00Z");
 
     private final InMemoryStore store = new InMemoryStore();
-    private final Matcher matcher = new Matcher();
+    private static final MerchantDirectory DIRECTORY = new MerchantDirectory(List.of(
+            new MerchantTerms(M, 0, new FeeSchedule(200, 1_800), 1, LocalDate.parse("2026-11-14"))));
+
+    private final Matcher matcher = new Matcher(DIRECTORY);
     private final List<LogRecord> log = new ArrayList<>();
     private final long epoch = store.transact("assign", tx -> tx.partitions().acquire(0, "matcher-a.1")).epoch();
 
@@ -69,7 +78,7 @@ class MatcherTest {
     }
 
     private BatchOutcome process(Matcher with, long underEpoch, List<LogRecord> records) {
-        return store.transact("batch", tx -> with.process(new PartitionBatch(0, underEpoch, records), tx));
+        return store.transact("batch", tx -> with.process(new PartitionBatch(0, underEpoch, T0, records), tx));
     }
 
     private long balance(AccountCode code) {
@@ -116,6 +125,11 @@ class MatcherTest {
                 .isEqualTo(PaymentStatus.PENDING);
         assertThat(store.committedQuarantine()).containsExactly(new QuarantineRepo.Entry(0, 1, M, Source.GATEWAY, "e1",
                 second.envelope().payloadSha256(), QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT));
+        assertThat(store.committedBreaks()).singleElement().satisfies(b -> {
+            assertThat(b.type()).isEqualTo(BreakType.IDEMPOTENCY_CONFLICT);
+            assertThat(b.evidence()).containsEntry("order_id", O.value()).containsEntry("payment_id", P.value())
+                    .containsEntry("offset", "1");
+        });
     }
 
     @Test
@@ -139,14 +153,14 @@ class MatcherTest {
         long stale = unfenced.transact("a", tx -> tx.partitions().acquire(0, "matcher-a.1")).epoch();
         unfenced.transact("b", tx -> tx.partitions().acquire(0, "matcher-b.1"));
         LogRecord r = payment("e1", EventType.PAYMENT_PENDING, 1);
-        unfenced.transact("zombie", tx -> matcher.process(new PartitionBatch(0, stale, List.of(r)), tx));
+        unfenced.transact("zombie", tx -> matcher.process(new PartitionBatch(0, stale, T0, List.of(r)), tx));
         assertThat(unfenced.committedOffsetCommits()).singleElement()
                 .satisfies(c -> assertThat(c.epochUsed()).isLessThan(c.leaseEpoch()));
     }
 
     @Test
     void canaryC01SkipsDedupeSoARedeliveryReachesTheStateMachineAgain() {
-        Matcher noDedupe = new Matcher(Canaries.of(Canary.DEDUPE_OFF));
+        Matcher noDedupe = new Matcher(DIRECTORY, MatcherConfig.DEFAULT, Canaries.of(Canary.DEDUPE_OFF));
         process(noDedupe, epoch, List.of(payment("e1", EventType.PAYMENT_SUCCEEDED, 1)));
         process(noDedupe, epoch, List.of(payment("e1", EventType.PAYMENT_SUCCEEDED, 1)));
         assertThat(store.committedPaymentTransitions()).extracting(t -> t.row().eventKey()).containsExactly("e1", "e1");

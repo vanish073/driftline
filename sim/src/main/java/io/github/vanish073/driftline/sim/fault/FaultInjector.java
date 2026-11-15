@@ -95,6 +95,37 @@ public final class FaultInjector {
         return Math.min(delay, MAX_HEAVY_DELAY_MILLIS);
     }
 
+    /** How long FILE_LATE holds a settlement file back: at most 36 hours, far inside the 3-day delivery horizon. */
+    public static final long MIN_FILE_DELAY_MILLIS = 6 * 3_600_000L;
+    public static final long MAX_FILE_DELAY_MILLIS = 36 * 3_600_000L;
+
+    /** A per-file roll that HEAL does not stop: the bank's feed misbehaves on its own schedule. */
+    private boolean fileRate(Fault f, String counter) {
+        long roll = rng.nextLong(1_000);
+        boolean hit = roll < swarm.level(f);
+        if (hit) {
+            count(counter);
+        }
+        return hit;
+    }
+
+    /** FILE_LATE: 0, or how long this settlement file is held back. */
+    public long fileDelay() {
+        boolean hit = fileRate(Fault.FILE_LATE, "file.late");
+        long delay = rng.between(MIN_FILE_DELAY_MILLIS, MAX_FILE_DELAY_MILLIS);
+        return hit ? delay : 0;
+    }
+
+    /** FILE_DUP: whether this settlement file is uploaded a second time. */
+    public boolean fileDuplicate() {
+        return fileRate(Fault.FILE_DUP, "file.duplicated");
+    }
+
+    /** FILE_CONFLICT: whether a different file for this date follows once this one is accepted. */
+    public boolean fileConflict() {
+        return fileRate(Fault.FILE_CONFLICT, "file.conflicting");
+    }
+
     /** How long a newly assigned partition takes to start fetching (rebalance and state load). Not a fault. */
     public long assignLatencyMillis() {
         return rng.between(500L, 5_000L);

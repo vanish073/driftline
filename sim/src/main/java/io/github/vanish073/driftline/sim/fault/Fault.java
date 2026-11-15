@@ -1,11 +1,12 @@
 package io.github.vanish073.driftline.sim.fault;
 
 /**
- * The faults the Shift 4 injector can switch on (DESIGN §11.5). The rest of the catalogue (NET_PARTITION,
- * CALL_AMBIGUOUS, WEBHOOK_LOST, STATUS_STALE and the settlement-file faults) arrives with the components it targets.
+ * The faults the injector can switch on (DESIGN §11.5). The rest of the catalogue (NET_PARTITION, CALL_AMBIGUOUS,
+ * WEBHOOK_LOST and STATUS_STALE) arrives with the dispatcher it targets (Shift 8).
  *
  * <p>A <em>rate</em> fault is decided per message or per request, with a probability in permille. An <em>event</em>
- * fault is scheduled at random times of the RUN phase, a few times per traffic day.
+ * fault is scheduled at random times of the RUN phase, a few times per traffic day. The settlement-file faults are
+ * decided per file and model the bank's feed, not Driftline's infrastructure, so they keep happening after HEAL.
  */
 public enum Fault {
     /** A message is lost (rate). */
@@ -27,7 +28,13 @@ public enum Fault {
     /** The log append succeeds but the ack is lost, so ingest answers 503 and the sender retries (rate). */
     PRODUCE_AMBIGUOUS(true),
     /** A merchant's buggy client sends a new version under the previous version's idempotency key (rate). */
-    MERCHANT_KEY_REUSE(true);
+    MERCHANT_KEY_REUSE(true),
+    /** A settlement file is held back for 6 to 36 hours (rate, per file). */
+    FILE_LATE(true),
+    /** A settlement file is uploaded a second time, byte for byte (rate, per file). */
+    FILE_DUP(true),
+    /** After a file was accepted, the bank uploads a different file for the same date (rate, per file). */
+    FILE_CONFLICT(true);
 
     private final boolean rate;
 
