@@ -41,11 +41,13 @@ import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.port.TxBody;
 import io.github.vanish073.driftline.core.port.WatermarkRepo;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -65,9 +67,6 @@ import java.util.TreeMap;
  * lease had, so INV-FENCED is checked against what happened, not against the check itself.
  */
 public final class InMemoryStore implements Store {
-
-    private static final OutboxRepo OUTBOX = new OutboxRepo() { };
-    private static final AuditRepo AUDIT = new AuditRepo() { };
 
     /** A committed row tagged with its merchant, for the simulator's invariants. */
     public record Recorded<T>(MerchantId merchantId, T row) {
@@ -195,6 +194,11 @@ public final class InMemoryStore implements Store {
     private final Table<Key, SettlementRepo.FileEnd> fileEnds = new Table<>();
     private final Table<Key, SettlementRepo.Match> matches = new Table<>();
     private final Table<Key, String> actionOwners = new Table<>();
+    private final Table<Key, BreakRepo.Plan> plans = new Table<>();
+    private final Table<Key, OutboxRepo.Command> commands = new Table<>();
+    private final Table<Key, AuditRepo.Row> auditRows = new Table<>();
+    /** Every break transition after the first, in commit order (for incremental checks). */
+    private final List<Recorded<BreakTransition>> breakTransitionLog = new ArrayList<>();
 
     private final boolean ledgerUniqueOff;
     private final boolean noFencing;
@@ -284,6 +288,26 @@ public final class InMemoryStore implements Store {
         return Collections.unmodifiableList(breakRaiseLog);
     }
 
+    /** Every break transition after the first, in commit order. */
+    public List<Recorded<BreakTransition>> committedBreakTransitions() {
+        return Collections.unmodifiableList(breakTransitionLog);
+    }
+
+    /** The committed plan of a break, if the resolver has planned it. */
+    public Optional<BreakRepo.Plan> committedPlan(MerchantId merchantId, String breakId) {
+        return Optional.ofNullable(plans.committed().get(breakKey(merchantId, breakId)));
+    }
+
+    /** Every committed outbox command, by command id. */
+    public List<OutboxRepo.Command> committedCommands() {
+        return List.copyOf(commands.committed().values());
+    }
+
+    /** Every committed audit row, by sequence number. */
+    public List<AuditRepo.Row> committedAuditRows() {
+        return List.copyOf(auditRows.committed().values());
+    }
+
     /** Every committed settlement match, by merchant and payment id. */
     public List<SettlementRepo.Match> committedMatches() {
         return List.copyOf(matches.committed().values());
@@ -348,6 +372,12 @@ public final class InMemoryStore implements Store {
         private final Table<Key, SettlementRepo.FileEnd>.View fileEndView = fileEnds.view();
         private final Table<Key, SettlementRepo.Match>.View matchView = matches.view();
         private final Table<Key, String>.View ownerView = actionOwners.view();
+        private final Table<Key, BreakRepo.Plan>.View planView = plans.view();
+        private final Table<Key, OutboxRepo.Command>.View commandView = commands.view();
+        private final Table<Key, AuditRepo.Row>.View auditView = auditRows.view();
+        private final List<Recorded<BreakTransition>> pendingBreakTransitions = new ArrayList<>();
+        private final OutboxRepo outboxRepo = new InMemoryOutbox();
+        private final AuditRepo auditRepo = new InMemoryAudit();
 
         private final LedgerRepo ledgerRepo = new InMemoryLedger();
         private final DedupeRepo dedupeRepo = new InMemoryDedupe();
@@ -417,6 +447,10 @@ public final class InMemoryStore implements Store {
             fileEndView.commit();
             matchView.commit();
             ownerView.commit();
+            planView.commit();
+            commandView.commit();
+            auditView.commit();
+            breakTransitionLog.addAll(pendingBreakTransitions);
         }
 
         @Override
@@ -481,12 +515,14 @@ public final class InMemoryStore implements Store {
 
         @Override
         public OutboxRepo outbox() {
-            return OUTBOX;
+            requireOpen();
+            return outboxRepo;
         }
 
         @Override
         public AuditRepo audit() {
-            return AUDIT;
+            requireOpen();
+            return auditRepo;
         }
 
         private final class InMemoryLedger implements LedgerRepo {
@@ -977,8 +1013,9 @@ public final class InMemoryStore implements Store {
                     throw new IllegalArgumentException("break " + breakId + " is already " + to);
                 }
                 int seq = transitions(merchantId, breakId).size() + 1;
-                breakTransitionView.put(new Key(merchantId.value(), breakId, pad(seq)),
-                        new BreakTransition(breakId, seq, Optional.of(b.state()), to, at, reason));
+                BreakTransition t = new BreakTransition(breakId, seq, Optional.of(b.state()), to, at, reason);
+                breakTransitionView.put(new Key(merchantId.value(), breakId, pad(seq)), t);
+                pendingBreakTransitions.add(new Recorded<>(merchantId, t));
                 breakView.put(breakKey(merchantId, breakId), new Break(b.breakId(), b.merchantId(), b.type(),
                         b.subjectKey(), to, b.detectedAt(), b.evidence(), Math.addExact(b.version(), 1)));
             }
@@ -995,6 +1032,152 @@ public final class InMemoryStore implements Store {
             public List<BreakTransition> transitions(MerchantId merchantId, String breakId) {
                 requireOpen();
                 return List.copyOf(breakTransitionView.where(t -> t.breakId().equals(breakId)));
+            }
+
+            @Override
+            public void savePlan(MerchantId merchantId, String breakId, Plan plan) {
+                requireOpen();
+                existing(merchantId, breakId);
+                Optional<Plan> stored = planView.get(breakKey(merchantId, breakId));
+                if (stored.flatMap(Plan::action).isPresent() && !stored.get().action().equals(plan.action())) {
+                    throw new IllegalStateException("break " + breakId + " already has action "
+                            + stored.get().action().get());
+                }
+                planView.put(breakKey(merchantId, breakId), plan);
+            }
+
+            @Override
+            public Optional<Plan> planOf(MerchantId merchantId, String breakId) {
+                requireOpen();
+                return planView.get(breakKey(merchantId, breakId));
+            }
+
+            @Override
+            public List<Break> dueForReview(Instant now, int limit) {
+                requireOpen();
+                List<Break> open = breakView.where(b -> b.state() == BreakState.DETECTED
+                        || b.state() == BreakState.AWAITING_EVIDENCE || b.state() == BreakState.ACTION_PENDING);
+                List<Break> due = new ArrayList<>();
+                for (Break b : open) {
+                    Optional<Plan> plan = planView.get(breakKey(b.merchantId(), b.breakId()));
+                    if (plan.isEmpty() || !plan.get().reviewAt().isAfter(now)) {
+                        due.add(b);
+                    }
+                }
+                due.sort(Comparator.comparing((Break b) -> planView.get(breakKey(b.merchantId(), b.breakId()))
+                                .map(Plan::reviewAt).orElse(Instant.MIN))
+                        .thenComparing(Break::breakId));
+                return List.copyOf(due.subList(0, Math.min(limit, due.size())));
+            }
+
+            @Override
+            public void wake(MerchantId merchantId, String breakId, Instant at) {
+                requireOpen();
+                Key key = breakKey(merchantId, breakId);
+                planView.get(key).filter(p -> p.reviewAt().isAfter(at.truncatedTo(ChronoUnit.MICROS)))
+                        .ifPresent(p -> planView.put(key, p.withReviewAt(at)));
+            }
+        }
+
+        private final class InMemoryOutbox implements OutboxRepo {
+
+            private Key key(String commandId) {
+                return new Key("", commandId, "");
+            }
+
+            @Override
+            public boolean enqueue(Command command) {
+                requireOpen();
+                if (command.status() != CommandStatus.PENDING || command.attempt() != 0
+                        || command.leaseOwner().isPresent()) {
+                    throw new IllegalArgumentException("a new command is PENDING, unclaimed and unleased");
+                }
+                if (breakView.get(breakKey(command.merchantId(), command.breakId())).isEmpty()) {
+                    throw new IllegalArgumentException("no break " + command.breakId());
+                }
+                if (commandView.get(key(command.commandId())).isPresent()) {
+                    return false;
+                }
+                commandView.put(key(command.commandId()), command);
+                return true;
+            }
+
+            @Override
+            public Optional<Command> find(String commandId) {
+                requireOpen();
+                return commandView.get(key(commandId));
+            }
+
+            @Override
+            public List<Command> forBreak(MerchantId merchantId, String breakId) {
+                requireOpen();
+                return List.copyOf(commandView.where(c -> c.merchantId().equals(merchantId)
+                        && c.breakId().equals(breakId)));
+            }
+
+            @Override
+            public List<Command> claim(Instant now, String owner, Instant leaseUntil, Instant retryAt, int limit) {
+                requireOpen();
+                List<Command> due = new ArrayList<>(commandView.where(c -> c.status() != CommandStatus.DONE
+                        && !c.nextAttemptAt().isAfter(now)
+                        && (c.leaseUntil().isEmpty() || c.leaseUntil().get().isBefore(now))));
+                due.sort(Comparator.comparing(Command::nextAttemptAt).thenComparing(Command::commandId));
+                List<Command> out = new ArrayList<>();
+                for (Command c : due.subList(0, Math.min(limit, due.size()))) {
+                    Command claimed = new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(), c.args(),
+                            c.idempotencyKey(), CommandStatus.IN_FLIGHT, Math.addExact(c.attempt(), 1),
+                            Optional.of(owner), Optional.of(leaseUntil), retryAt,
+                            Optional.of(c.firstSentAt().orElse(now)), Optional.empty());
+                    commandView.put(key(c.commandId()), claimed);
+                    out.add(claimed);
+                }
+                return List.copyOf(out);
+            }
+
+            @Override
+            public boolean complete(String commandId, Map<String, String> result) {
+                requireOpen();
+                Command c = commandView.get(key(commandId))
+                        .orElseThrow(() -> new IllegalArgumentException("no command " + commandId));
+                if (c.status() == CommandStatus.DONE) {
+                    return false;
+                }
+                commandView.put(key(commandId), new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(),
+                        c.args(), c.idempotencyKey(), CommandStatus.DONE, c.attempt(), Optional.empty(),
+                        Optional.empty(), c.nextAttemptAt(), c.firstSentAt(), Optional.of(new TreeMap<>(result))));
+                return true;
+            }
+
+            @Override
+            public void retryAt(String commandId, Instant nextAttemptAt) {
+                requireOpen();
+                Command c = commandView.get(key(commandId))
+                        .orElseThrow(() -> new IllegalArgumentException("no command " + commandId));
+                if (c.status() == CommandStatus.DONE) {
+                    return;
+                }
+                commandView.put(key(commandId), new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(),
+                        c.args(), c.idempotencyKey(), CommandStatus.PENDING, c.attempt(), Optional.empty(),
+                        Optional.empty(), nextAttemptAt, c.firstSentAt(), Optional.empty()));
+            }
+        }
+
+        private final class InMemoryAudit implements AuditRepo {
+            @Override
+            public Row append(Entry entry) {
+                requireOpen();
+                List<Row> all = auditView.where(r -> true);
+                String prev = all.isEmpty() ? GENESIS : all.get(all.size() - 1).hash();
+                long seq = all.size() + 1L;
+                Row row = new Row(seq, entry, prev, AuditRepo.hash(prev, entry));
+                auditView.put(new Key("", pad(seq), ""), row);
+                return row;
+            }
+
+            @Override
+            public List<Row> rows() {
+                requireOpen();
+                return List.copyOf(auditView.where(r -> true));
             }
         }
 

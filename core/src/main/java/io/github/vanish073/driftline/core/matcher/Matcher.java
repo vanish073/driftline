@@ -6,6 +6,8 @@ import io.github.vanish073.driftline.core.breaks.BreakType;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.OrderPayload;
 import io.github.vanish073.driftline.core.event.PaymentPayload;
+import io.github.vanish073.driftline.core.event.EventType;
+import io.github.vanish073.driftline.core.event.RefundPayload;
 import io.github.vanish073.driftline.core.event.SettlementFileEndPayload;
 import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.event.Source;
@@ -17,6 +19,8 @@ import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import io.github.vanish073.driftline.core.ledger.PostResult;
 import io.github.vanish073.driftline.core.ledger.PostingRules;
+import io.github.vanish073.driftline.core.ledger.Cause;
+import io.github.vanish073.driftline.core.ledger.CauseType;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.order.OrderEvidence;
 import io.github.vanish073.driftline.core.order.OrderRule;
@@ -169,7 +173,10 @@ public final class Matcher {
                             run.fileEnd(e);
                             applied++;
                         }
-                        case REFUND_PROCESSED, REFUND_FAILED -> notYetHandled++;
+                        case REFUND_PROCESSED, REFUND_FAILED -> {
+                            run.refundOutcome(e);
+                            applied++;
+                        }
                     }
                 }
             }
@@ -501,6 +508,7 @@ public final class Matcher {
             payment(m, paidWith).ifPresent(p -> matchIfPaid(m, after, p, e.eventTime()));
             tx.breaks().find(m, BreakType.DEBITED_NO_ORDER, paidWith.value()).ifPresent(b -> tx.breaks()
                     .addEvidence(m, b.breakId(), "order_paid_later", "v" + after.version() + " at " + e.eventTime()));
+            tx.breaks().find(m, BreakType.DEBITED_NO_ORDER, paidWith.value()).ifPresent(b -> wake(m, b.breakId()));
             if (tx.timers().find(m, Kind.DUP_CHECK, ev.orderId().value()).isEmpty()) {
                 evaluateDuplicates(m, ev.orderId());
             }
@@ -567,6 +575,7 @@ public final class Matcher {
             }
             tx.breaks().find(m, BreakType.DUPLICATE_CAPTURE, kept.paymentId().value()).ifPresent(b -> tx.breaks()
                     .addEvidence(m, b.breakId(), "kept_by_order", "order paid with this payment"));
+            tx.breaks().find(m, BreakType.DUPLICATE_CAPTURE, kept.paymentId().value()).ifPresent(b -> wake(m, b.breakId()));
         }
 
         /** SETTLEMENT_DUE: succeeded, and still not settled once every file up to its due date plus grace is complete. */
@@ -710,6 +719,8 @@ public final class Matcher {
             if (late) {
                 tx.breaks().find(line.merchantId(), BreakType.ORPHAN_SETTLEMENT, line.key()).ifPresent(b ->
                         tx.breaks().addEvidence(line.merchantId(), b.breakId(), "attributed_to", id.value()));
+                tx.breaks().find(line.merchantId(), BreakType.ORPHAN_SETTLEMENT, line.key())
+                        .ifPresent(b -> wake(line.merchantId(), b.breakId()));
             }
         }
 
@@ -761,6 +772,41 @@ public final class Matcher {
                 }
                 advanceSettlement(merchants.terms(m));
             }
+        }
+
+        // ---- refunds (§7.2, §9; Shift 8) ----
+
+        /**
+         * A refund outcome from the gateway: its webhook, or an observation the dispatcher published after a refund call
+         * or lookup (D10). {@code refund.processed} posts the REFUND ledger transaction (once per payment, by its cause),
+         * against SALES if the payment was already matched to an order and against PAYMENTS_CLEARING otherwise; either
+         * outcome is recorded on the payment's action-owner break, which the resolver is woken to look at.
+         */
+        void refundOutcome(EventEnvelope e) {
+            RefundPayload r = (RefundPayload) e.payload();
+            MerchantId m = e.merchantId();
+            PaymentId id = r.paymentId();
+            Optional<String> owner = tx.payments().actionOwner(m, id);
+            if (e.eventType() == EventType.REFUND_PROCESSED) {
+                if (payment(m, id).filter(p -> p.status() == PaymentStatus.SUCCEEDED).isPresent()) {
+                    boolean matched = tx.ledger().find(m, new Cause(CauseType.ORDER_MATCH, id.value())).isPresent();
+                    post(PostingRules.refund(m, id, r.amount(), matched, e.eventTime()));
+                }
+                owner.ifPresent(b -> {
+                    tx.breaks().addEvidence(m, b, "refund_processed", r.amount() + " at " + e.eventTime());
+                    wake(m, b);
+                });
+            } else {
+                owner.ifPresent(b -> {
+                    tx.breaks().addEvidence(m, b, "refund_failed", r.amount() + " at " + e.eventTime());
+                    wake(m, b);
+                });
+            }
+        }
+
+        /** New evidence on a break: the resolver should look at it again now (§8.1). */
+        void wake(MerchantId m, String breakId) {
+            tx.breaks().wake(m, breakId, now);
         }
 
         // ---- batch matching (§6.4) ----

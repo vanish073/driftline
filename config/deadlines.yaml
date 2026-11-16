@@ -1,0 +1,40 @@
+# Deadline rules (DESIGN §8.3). Cited in the README. Core holds the same table in code (DeadlineRule); a test reads
+# this file and fails if the two ever disagree.
+#
+#   from:   T_DATE    = the IST date of the payment's first debit evidence (its success time); the deadline is
+#                       00:00 IST on day T + days + 1 (exclusive), i.e. the end of IST day T + days.
+#           DETECTION = the break's detection time; the deadline is detection + hours.
+#   margin: escalate_by = deadline - margin. The margin must exceed the longest modelled outage plus the gateway's
+#           refund latency (checked by the simulator, INV-DEADLINE).
+#   compensation: rupees per day once the resolution date (IST) is after the deadline date; 0 for internal rules.
+rules:
+  - id: RBI_UPI_P2M_T5
+    from: T_DATE
+    days: 5
+    margin_hours: 24
+    compensation_rupees_per_day: 100
+    source: "RBI/2019-20/67, 20 Sep 2019 (TAT harmonisation): UPI P2M, debited but confirmation not received at the merchant, T+5"
+    applies_to: [DEBITED_NO_ORDER, LATE_SUCCESS]
+  - id: RBI_UPI_P2P_T1
+    from: T_DATE
+    days: 1
+    margin_hours: 24
+    compensation_rupees_per_day: 100
+    source: "RBI/2019-20/67: UPI P2P, debited but the beneficiary not credited, T+1 (outside a merchant's reconciliation; listed for completeness)"
+    applies_to: []
+  - id: INTERNAL_DUP_T1
+    from: T_DATE
+    days: 1
+    margin_hours: 24
+    compensation_rupees_per_day: 0
+    source: "internal policy: refund a duplicate capture by the end of T+1"
+    applies_to: [DUPLICATE_CAPTURE]
+  - id: INTERNAL_ESCALATE_4H
+    from: DETECTION
+    hours: 4
+    margin_hours: 0
+    compensation_rupees_per_day: 0
+    source: "internal policy: settlement breaks, anomalies and alerts reach a person within 4 hours"
+    applies_to: [SHORT_SETTLEMENT, MISSING_SETTLEMENT, ORPHAN_SETTLEMENT, STATUS_CONFLICT, ORDER_ANOMALY,
+                 OVER_SETTLEMENT, FILE_CONFLICT, SETTLEMENT_CONFLICT, INFERRED_MATCH_CHALLENGED, IDEMPOTENCY_CONFLICT,
+                 LEDGER_CONFLICT, FEED_STALL]

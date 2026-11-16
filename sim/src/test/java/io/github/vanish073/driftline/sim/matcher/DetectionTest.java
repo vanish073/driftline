@@ -11,6 +11,7 @@ import io.github.vanish073.driftline.core.event.EventPayload;
 import io.github.vanish073.driftline.core.event.EventType;
 import io.github.vanish073.driftline.core.event.OrderPayload;
 import io.github.vanish073.driftline.core.event.PaymentPayload;
+import io.github.vanish073.driftline.core.event.RefundPayload;
 import io.github.vanish073.driftline.core.event.SettlementFileEndPayload;
 import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.event.Sha256;
@@ -151,6 +152,33 @@ class DetectionTest {
         pay(P1, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(10));
         order(EventType.ORDER_PAID, 2, T0.plusSeconds(11), P1);
         batch(T0.plusSeconds(12));
+    }
+
+    // ---- refund outcomes (Shift 8) --------------------------------------------------------------------------------
+
+    @Test
+    void aProcessedRefundPostsOnceAgainstClearingAndIsRecordedOnTheActionOwner() {
+        order(EventType.ORDER_CREATED, 1, T0, null);
+        order(EventType.ORDER_PENDING_PAYMENT, 2, T0, null);
+        pay(P1, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(10));
+        batch(T0.plusSeconds(11));
+        tick(T0.plus(Duration.ofMinutes(15)));
+        Break owner = found(BreakType.DEBITED_NO_ORDER, "pay_1").orElseThrow();
+        assertThat(owner(P1)).contains(owner.breakId());
+        assertThat(balance(AccountCode.GATEWAY_RECEIVABLE)).isEqualTo(AMOUNT.paise());
+
+        RefundPayload refund = new RefundPayload(P1, AMOUNT);
+        append(Source.GATEWAY, EventType.REFUND_PROCESSED, T0.plus(Duration.ofMinutes(20)), refund);
+        append(Source.GATEWAY, EventType.REFUND_PROCESSED, T0.plus(Duration.ofMinutes(21)), refund);   // the observation
+        batch(T0.plus(Duration.ofMinutes(22)));
+
+        assertThat(store.committedLedger().stream().filter(t -> t.cause().type() == CauseType.REFUND).count())
+                .as("one REFUND transaction, however many times the outcome arrives").isEqualTo(1);
+        assertThat(balance(AccountCode.GATEWAY_RECEIVABLE)).isZero();
+        assertThat(balance(AccountCode.PAYMENTS_CLEARING)).as("never matched to an order: reversed from clearing")
+                .isZero();
+        assertThat(balance(AccountCode.SALES)).isZero();
+        assertThat(found(BreakType.DEBITED_NO_ORDER, "pay_1").orElseThrow().evidence()).containsKey("refund_processed");
     }
 
     // ---- DEBITED_NO_ORDER (ORDER_CHECK) ----------------------------------------------------------------------------

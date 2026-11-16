@@ -18,9 +18,6 @@ import java.sql.Connection;
 /** One database transaction seen through the core's repositories. Unusable once its transaction has ended. */
 final class JdbcTx implements Tx {
 
-    private static final OutboxRepo OUTBOX = new OutboxRepo() { };
-    private static final AuditRepo AUDIT = new AuditRepo() { };
-
     private final Connection connection;
     private final JdbcLedgerRepo ledger;
     private final DedupeRepo dedupeRepo = new JdbcStateRepos.Dedupe(this);
@@ -32,6 +29,8 @@ final class JdbcTx implements Tx {
     private final TimerRepo timerRepo = new JdbcDetectionRepos.Timers(this);
     private final BreakRepo breakRepo = new JdbcDetectionRepos.Breaks(this);
     private final SettlementRepo settlementRepo = new JdbcDetectionRepos.Settlement(this);
+    private final OutboxRepo outboxRepo = new JdbcResolverRepos.Outbox(this);
+    private final AuditRepo auditRepo = new JdbcResolverRepos.Audit(this);
     private boolean open = true;
 
     JdbcTx(Connection connection, BalanceStrategy strategy) {
@@ -100,7 +99,8 @@ final class JdbcTx implements Tx {
 
     @Override
     public OutboxRepo outbox() {
-        return OUTBOX;
+        connection();
+        return outboxRepo;
     }
 
     @Override
@@ -117,6 +117,7 @@ final class JdbcTx implements Tx {
 
     @Override
     public AuditRepo audit() {
-        return AUDIT;
+        connection();
+        return auditRepo;
     }
 }
