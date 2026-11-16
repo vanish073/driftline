@@ -122,6 +122,19 @@ class ResolverTest {
         });
     }
 
+    /** Like {@link #answer}, for every break's not-yet-DONE commands of {@code kind}. */
+    void answerEvery(CommandKind kind, Map<String, String> result, Instant now) {
+        store.transact("dispatch", tx -> {
+            for (Command c : commands(kind)) {
+                if (tx.outbox().find(c.commandId()).filter(x -> x.status() != CommandStatus.DONE).isPresent()) {
+                    tx.outbox().complete(c.commandId(), result);
+                    c.breakId().ifPresent(b -> tx.breaks().wake(M, b, now));
+                }
+            }
+            return null;
+        });
+    }
+
     Command c(CommandKind kind) {
         List<Command> all = commands(kind);
         assertThat(all).as("a %s command", kind).isNotEmpty();
@@ -353,6 +366,38 @@ class ResolverTest {
         assertThat(commands(CommandKind.STATUS_QUERY_PAYMENT)).extracting(cmd -> cmd.args().get("payment_id"))
                 .as("both payments queried").containsExactlyInAnyOrder("pay_2", "pay_1");
         assertThat(c(CommandKind.REFUND).args()).containsEntry("payment_id", "pay_2");
+    }
+
+    @Test
+    void aDuplicateIsNotRefundedUntilTheMerchantPaysTheOrderWithTheOtherPayment() {
+        // BUG-009 (seed 1298): the detector keeps the earliest payment until order.paid says otherwise, and the
+        // merchant may pay the order with the later one
+        order(EventType.ORDER_CREATED, 1, T0, null);
+        pay(P1, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(10));
+        pay(P2, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(20));
+        batch(T0.plusSeconds(21));
+        tick(T0.plus(Duration.ofMinutes(10)));
+        assertThat(brk(BreakType.DUPLICATE_CAPTURE, "pay_2").evidence()).containsEntry("kept", "pay_1");
+        Instant now = T0.plus(Duration.ofMinutes(11));
+        resolve(now);
+        for (int i = 1; i <= 3; i++) {
+            answer(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "SUCCEEDED"), now.plusSeconds(i));
+            resolve(now.plusSeconds(i));
+        }
+        assertThat(commands(CommandKind.REFUND)).as("the order is not paid yet: no refund").isEmpty();
+        assertThat(brk(BreakType.DUPLICATE_CAPTURE, "pay_2").state()).isEqualTo(BreakState.AWAITING_EVIDENCE);
+
+        Instant paid = now.plusSeconds(30);
+        order(EventType.ORDER_PAID, 2, paid, P2);   // the merchant keeps pay_2
+        batch(paid.plusSeconds(1));
+        resolve(paid.plusSeconds(2));
+        for (int i = 3; i <= 8 && commands(CommandKind.REFUND).isEmpty(); i++) {
+            answerEvery(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "SUCCEEDED"), paid.plusSeconds(i));
+            resolve(paid.plusSeconds(i));
+        }
+        assertThat(brk(BreakType.DUPLICATE_CAPTURE, "pay_2").state()).isEqualTo(BreakState.SELF_HEALED);
+        assertThat(commands(CommandKind.REFUND)).singleElement()
+                .satisfies(r -> assertThat(r.args()).containsEntry("payment_id", "pay_1"));
     }
 
     // ---- settlement breaks and anomalies ----

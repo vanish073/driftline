@@ -25,14 +25,12 @@ x-app-env: &app-env
   JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
 
 # The dispatcher (D65): the sandbox serves the gateway, the merchant callback and the ops sink. Its gateway forgets an
-# idempotency key after 5 minutes, so the key TTL and lookup margin match it (the simulator's values, D62).
+# idempotency key after 5 minutes; every refund retry looks the refund up first, so no setting depends on that (BUG-008).
 x-dispatcher-env: &dispatcher-env
   DRIFTLINE_DISPATCHER_GATEWAY_URL: http://sandbox:8085/gateway
   DRIFTLINE_DISPATCHER_MERCHANT_URL: http://sandbox:8085/merchant
   DRIFTLINE_DISPATCHER_OPS_URL: http://sandbox:8085/ops
   DRIFTLINE_DISPATCHER_SERVICE_TOKEN: ${DRIFTLINE_SERVICE_TOKEN:?missing}
-  DRIFTLINE_DISPATCHER_GATEWAY_KEY_TTL: 5m
-  DRIFTLINE_DISPATCHER_LOOKUP_MARGIN: 1m
 
 # Ready means the readiness group is UP on the management port (D21).
 x-ready: &ready

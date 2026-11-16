@@ -8,7 +8,7 @@ public enum Canary {
     DEDUPE_OFF("C01", "skip the dedupe insert"),
     NO_REFUND_KEY("C02", "send refunds without an idempotency key"),
     MARK_BEFORE_SEND("C03", "mark the outbox command done before sending"),
-    SKIP_TTL_LOOKUP("C04", "resend old refunds without a lookup"),
+    SKIP_TTL_LOOKUP("C04", "resend a refund without the lookup"),
     LEDGER_UNIQUE_OFF("C05", "post without the cause uniqueness check"),
     SUCCESS_TO_FAILED("C06", "allow SUCCEEDED to FAILED"),
     PROCESSING_TIME_WATERMARK("C07", "treat missing by wall clock"),

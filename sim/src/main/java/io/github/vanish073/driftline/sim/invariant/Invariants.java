@@ -524,8 +524,10 @@ public final class Invariants {
     /**
      * INV-AMBIGUITY-WITNESSED for the line {@code fileId:lineNo}: it is AMBIGUOUS with two distinct witnesses, and each
      * witness is a set of distinct payments the world captured, whose batch dates lie in the line's window and whose
-     * nets (the contracted fee model) sum to the line's amount. A payment the world never captured but whose failure
-     * was never reported counts as possibly captured, inside the window (D65).
+     * nets (the contracted fee model) sum to the line's amount. A payment whose outcome Driftline has not learned (its
+     * last recorded status is PENDING) counts as possibly captured, inside the window, if Driftline first saw it no
+     * later than the window allows (D69, BUG-007): Driftline cannot rule it out, and nothing else could. A witness
+     * naming a payment whose outcome Driftline has since learned is stale: the line should have been solved again.
      */
     private Optional<Violation> witnessed(MerchantId m, String lineKey, long now) {
         Optional<Line> found = store.committedLines().stream()
@@ -544,14 +546,24 @@ public final class Invariants {
             return Optional.empty();
         }
         LocalDate from = line.settlementDate().minusDays(LOOKBACK_DAYS);
+        // what Driftline knows of each payment: when it first saw it, and its last recorded status
+        TreeMap<String, Instant> firstSeen = new TreeMap<>();
+        TreeMap<String, PaymentStatus> lastStatus = new TreeMap<>();
+        for (InMemoryStore.Recorded<PaymentTransition> t : store.committedPaymentTransitions()) {
+            if (t.merchantId().equals(m)) {
+                String key = t.row().paymentId().value();
+                firstSeen.merge(key, t.row().eventTime(), (a, b) -> a.isBefore(b) ? a : b);
+                lastStatus.put(key, t.row().to());
+            }
+        }
         for (List<PaymentId> witness : w) {
             long sum = 0;
             TreeSet<String> distinct = new TreeSet<>();
             for (PaymentId id : witness) {
                 Optional<FakeGateway.Payment> p = gateway.payment(id);
-                // a payment whose outcome Driftline could not learn is a possible member too (D65): the gateway never
-                // captured it, but never reported its failure either
-                boolean possible = p.isPresent() && !p.get().captured() && !p.get().failureReported();
+                // a payment Driftline still sees as PENDING is a possible member (D69), if it was first seen in time
+                boolean possible = p.isPresent() && lastStatus.get(id.value()) == PaymentStatus.PENDING
+                        && !BatchMatching.batchDate(firstSeen.get(id.value()), cycleDays).isAfter(line.settlementDate());
                 if (p.isEmpty() || !p.get().captured() && !possible || !distinct.add(id.value())) {
                     return Optional.of(new Violation(AMBIGUITY_WITNESSED, m + "/" + lineKey + " witness " + witness
                             + " names " + id + ", not a distinct captured (or possibly captured) payment", now));

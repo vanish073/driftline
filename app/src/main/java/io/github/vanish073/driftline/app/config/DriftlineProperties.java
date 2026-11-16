@@ -67,8 +67,7 @@ public record DriftlineProperties(
 
     /**
      * The dispatcher role (§9.2, D65). The target URLs and the service token (scope {@code observations:write}, sent only
-     * to Driftline's own {@code observationsUrl}) have no defaults: the role refuses to start without them. The key TTL
-     * and lookup margin must match the gateway's contract (§9.2 step 6).
+     * to Driftline's own {@code observationsUrl}) have no defaults: the role refuses to start without them.
      */
     public record Dispatcher(
             URI gatewayUrl,
@@ -81,8 +80,6 @@ public record DriftlineProperties(
             @DefaultValue("30s") Duration callTimeout,
             @DefaultValue("5s") Duration backoffBase,
             @DefaultValue("10m") Duration backoffCap,
-            @DefaultValue("24h") Duration gatewayKeyTtl,
-            @DefaultValue("1h") Duration lookupMargin,
             @DefaultValue("20") int claimLimit) {
 
         /** @throws IllegalStateException naming every missing setting */

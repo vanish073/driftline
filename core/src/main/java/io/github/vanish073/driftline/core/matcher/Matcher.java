@@ -424,6 +424,10 @@ public final class Matcher {
             savePayment(m, after);
             tx.payments().appendTransition(m, new PaymentTransition(ev.paymentId(), before.status(), after.status(),
                     (PaymentRule) d.rule(), e.eventKey(), e.eventTime()));
+            if (before.status() == PaymentStatus.PENDING && !before.conflict()
+                    && (after.status() != PaymentStatus.PENDING || after.conflict())) {
+                solveAgainWithout(m, ev.paymentId());   // BUG-007: it is no longer a possible member of any line
+            }
             if (d.kind() == DecisionKind.CONFLICT) {
                 raise(m, BreakType.STATUS_CONFLICT, ev.paymentId().value(),
                         evidence("rule", ((PaymentRule) d.rule()).name(), "event_key", e.eventKey()), "conflicting records");
@@ -950,8 +954,10 @@ public final class Matcher {
 
         /**
          * Known payments whose outcome Driftline has not learned (PENDING, unsettled, named by no line, not refunded):
-         * any of them may have succeeded and be inside an unreferenced line. Their success time is unknown, so each is
-         * placed on the file's own settlement date, inside every line's window (BUG-006, D65).
+         * any of them may have succeeded and be inside an unreferenced line (BUG-006, D69). Their success time is
+         * unknown, but it is no earlier than the payment's first event, so a payment first seen after the file's window
+         * closed cannot be in it (BUG-007); every other one is placed on the file's own settlement date, inside every
+         * line's window.
          */
         List<BatchMatching.Candidate> possibleMembers(MerchantId m, MerchantTerms terms, LocalDate date) {
             List<BatchMatching.Candidate> out = new ArrayList<>();
@@ -961,15 +967,56 @@ public final class Matcher {
                         || tx.ledger().find(m, new Cause(CauseType.REFUND, p.paymentId().value())).isPresent()) {
                     continue;
                 }
+                Optional<Instant> seen = firstSeen(m, p.paymentId());
+                if (seen.isPresent() && BatchMatching.batchDate(seen.get(), terms.cycleDays()).isAfter(date)) {
+                    continue;
+                }
                 out.add(new BatchMatching.Candidate(p.paymentId(), now, date, terms.fees().expected(p.amount().get()).net()));
             }
             return out;
         }
 
+        /** The event time of a payment's first recorded event: no capture can be earlier. */
+        Optional<Instant> firstSeen(MerchantId m, PaymentId id) {
+            return tx.payments().transitions(m, id).stream().map(PaymentTransition::eventTime)
+                    .min(Comparator.naturalOrder());
+        }
+
+        /**
+         * BUG-007: a payment that was a possible member of unreferenced lines has an outcome now (or a conflict), so an
+         * ambiguity it witnessed may no longer hold. Every AMBIGUOUS line naming it, in a complete file dated from its
+         * first event's batch date to today, goes back to AWAITING_BATCH and is solved again now. A line that becomes
+         * INFERRED releases its suspense; its orphan, already escalated (D68), keeps that state for a person.
+         */
+        void solveAgainWithout(MerchantId m, PaymentId id) {
+            Optional<Instant> seen = firstSeen(m, id);
+            if (seen.isEmpty()) {
+                return;
+            }
+            LocalDate today = IstCalendar.istDate(now);
+            for (LocalDate d = BatchMatching.batchDate(seen.get(), merchants.terms(m).cycleDays()); !d.isAfter(today);
+                 d = d.plusDays(1)) {
+                Optional<FileEnd> file = tx.settlement().completeFile(m, d);
+                if (file.isEmpty()) {
+                    continue;
+                }
+                boolean reopened = false;
+                for (Line l : tx.settlement().lines(m, file.get().fileId())) {
+                    if (l.status() == LineStatus.AMBIGUOUS && l.witnesses().stream().anyMatch(w -> w.contains(id))) {
+                        tx.settlement().saveLine(l.withStatus(LineStatus.AWAITING_BATCH));
+                        reopened = true;
+                    }
+                }
+                if (reopened) {
+                    solveBatch(m, file.get().fileId());
+                }
+            }
+        }
+
         /**
          * An inference is sound only if it is the unique solution over every payment that may be in the line. Solves
          * again with the possible members added; a line whose inference changes is not inferred but AMBIGUOUS, with
-         * the inference and the solution that includes a possible member as its two witnesses (BUG-006, D65).
+         * the inference and the solution that includes a possible member as its two witnesses (BUG-006, D69).
          */
         List<BatchMatching.Outcome> soundAgainstPending(List<BatchMatching.Line> lines, List<BatchMatching.Candidate> pool,
                                                          List<BatchMatching.Candidate> possible,

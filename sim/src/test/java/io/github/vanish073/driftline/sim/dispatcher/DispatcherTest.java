@@ -81,7 +81,10 @@ class DispatcherTest {
         assertThat(leased.nextAttemptAt()).isAfter(T0.plus(timeout));
         assertThat(claim(T0.plus(timeout).minusSeconds(1), "d2")).as("still leased").isEmpty();
 
-        List<OutboundCall> retry = claim(leased.nextAttemptAt(), "d2");
+        List<OutboundCall> lookup = claim(leased.nextAttemptAt(), "d2");
+        assertThat(lookup).extracting(OutboundCall::callId).as("a retry asks first (BUG-008)")
+                .containsExactly("cmd_r.2.lookup");
+        List<OutboundCall> retry = result(lookup.get(0), Map.of("found", "no"), leased.nextAttemptAt().plusSeconds(1), "d2");
         assertThat(retry).extracting(OutboundCall::callId).containsExactly("cmd_r.2");
         assertThat(retry.get(0).idempotencyKey()).as("the same key on every attempt").contains("rfd_key");
     }
@@ -124,27 +127,37 @@ class DispatcherTest {
     }
 
     @Test
-    void anOldRetryLooksUpFirstAndSendsTheRefundOnlyIfNoneExists() {
+    void everyRetryOfARefundLooksUpFirstAndSendsTheRefundOnlyIfNoneExists() {
         refundCommand(T0);
         claim(T0, "d1");
-        Instant late = T0.plus(Duration.ofHours(24));   // past key TTL - margin since the first send
-        List<OutboundCall> second = claim(late, "d2");
+        Instant retry = T0.plus(Duration.ofMinutes(2));   // the first lease has run out, long before any key TTL
+        List<OutboundCall> second = claim(retry, "d2");
         assertThat(second).hasSize(1);
         assertThat(second.get(0).request()).isInstanceOf(CallRequest.RefundLookup.class);
         assertThat(second.get(0).callId()).isEqualTo("cmd_r.2.lookup");
 
-        List<OutboundCall> then = result(second.get(0), Map.of("found", "no"), late.plusSeconds(1), "d2");
+        List<OutboundCall> then = result(second.get(0), Map.of("found", "no"), retry.plusSeconds(1), "d2");
         assertThat(then).extracting(c -> c.request().getClass().getSimpleName()).containsExactly("Refund");
         assertThat(then.get(0).idempotencyKey()).contains("rfd_key");
-        assertThat(result(second.get(0), Map.of("found", "no"), late.plusSeconds(1), "d1"))
+        assertThat(result(second.get(0), Map.of("found", "no"), retry.plusSeconds(1), "d1"))
                 .as("only the lease holder sends").isEmpty();
+    }
+
+    @Test
+    void aRetryLooksUpFirstEvenWhenTheFirstSendWasStampedByAFastClock() {
+        // BUG-008 (seed 8551): the first send was stamped 11 minutes ahead; by the dispatcher's own clock the retry is
+        // seconds after it, though the gateway may have forgotten the key long ago
+        refundCommand(T0);
+        claim(T0.plus(Duration.ofMinutes(11)), "d1");
+        List<OutboundCall> retry = claim(T0.plus(Duration.ofMinutes(12)), "d1.2");
+        assertThat(retry).singleElement().satisfies(c -> assertThat(c.request()).isInstanceOf(CallRequest.RefundLookup.class));
     }
 
     @Test
     void aLookupThatFindsTheRefundCompletesItWithoutSendingAgain() {
         refundCommand(T0);
         claim(T0, "d1");
-        Instant late = T0.plus(Duration.ofHours(24));
+        Instant late = T0.plus(Duration.ofMinutes(2));
         OutboundCall lookup = claim(late, "d2").get(0);
         List<OutboundCall> then = result(lookup, Map.of("found", "yes", "refund_id", "rfd_7",
                 "processed_at", "2026-11-13T06:00:09Z"), late.plusSeconds(1), "d2");
@@ -158,7 +171,7 @@ class DispatcherTest {
         dispatcher = new Dispatcher(Dispatcher.Config.DEFAULT, Canaries.of(Canary.SKIP_TTL_LOOKUP), CrashPoints.NONE);
         refundCommand(T0);
         claim(T0, "d1");
-        assertThat(claim(T0.plus(Duration.ofHours(24)), "d2").get(0).request()).isInstanceOf(CallRequest.Refund.class);
+        assertThat(claim(T0.plus(Duration.ofMinutes(2)), "d2").get(0).request()).isInstanceOf(CallRequest.Refund.class);
 
         DispatcherTest other = new DispatcherTest();
         other.dispatcher = new Dispatcher(Dispatcher.Config.DEFAULT, Canaries.of(Canary.MARK_BEFORE_SEND), CrashPoints.NONE);
@@ -180,8 +193,11 @@ class DispatcherTest {
                 .hasMessage("crash at CP5");
         assertThat(command("cmd_r").status()).as("the result was lost").isEqualTo(CommandStatus.IN_FLIGHT);
         dispatcher = new Dispatcher();
-        OutboundCall retry = claim(command("cmd_r").nextAttemptAt(), "d2").get(0);
-        result(retry, Map.of("status", "PROCESSED"), command("cmd_r").nextAttemptAt().plusSeconds(1), "d2");
+        Instant later = command("cmd_r").nextAttemptAt();
+        OutboundCall lookup = claim(later, "d2").get(0);
+        assertThat(lookup.request()).isInstanceOf(CallRequest.RefundLookup.class);
+        assertThat(result(lookup, Map.of("found", "yes", "refund_id", "rfd_1", "processed_at", "2026-11-13T06:00:01Z"),
+                later.plusSeconds(1), "d2")).as("the refund exists: nothing is sent again").isEmpty();
         assertThat(command("cmd_r").status()).isEqualTo(CommandStatus.DONE);
     }
 

@@ -98,7 +98,13 @@ public final class Simulation {
 
     /** The dispatcher's constants in the simulator: the gateway's key TTL is compressed to 5 minutes (D62). */
     static final Dispatcher.Config DISPATCHER = new Dispatcher.Config(Duration.ofSeconds(30), Duration.ofSeconds(5),
-            Duration.ofMinutes(10), Duration.ofMillis(FakeGateway.KEY_TTL_MILLIS), Duration.ofMinutes(1), 20);
+            Duration.ofMinutes(10), 20);
+    /**
+     * D62's assumption, made explicit: a request reaches the gateway within this long of being sent, well inside the
+     * gateway's key TTL ({@code FakeGateway.KEY_TTL_MILLIS}, 5 min), so an attempt delayed in the network still meets
+     * its key. The network caps gateway-bound delays at it. (Production: a 30 s call timeout against a 24 h TTL.)
+     */
+    static final long GATEWAY_DELIVERY_BOUND_MILLIS = 60_000L;
     /** How many times a forced crash point (dedicated seeds) strikes in one run. */
     static final int FORCED_CRASHES = 3;
 
@@ -175,7 +181,7 @@ public final class Simulation {
         DispatcherNode.Router router = (call, reply) -> {
             Consumer<Map<String, String>> back = facts -> network.send(DispatcherNode.NAME, () -> reply.accept(facts));
             switch (call.target()) {
-                case GATEWAY -> network.send("gateway", DISPATCHER.lookupMargin().toMillis(),
+                case GATEWAY -> network.send("gateway", GATEWAY_DELIVERY_BOUND_MILLIS,
                         () -> gateway.handle(call, back::accept));
                 case MERCHANT -> {
                     FakeMerchant merchant = merchants.get(call.merchantId());

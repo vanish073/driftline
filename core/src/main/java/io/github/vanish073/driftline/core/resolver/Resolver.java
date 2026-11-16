@@ -316,7 +316,7 @@ public final class Resolver {
                 }
             }
             if (b.type() == BreakType.DUPLICATE_CAPTURE) {
-                refund(p, payment.get(), orderId, "a duplicate capture: refund the payment the order is not paid with");
+                duplicate(p, payment.get(), orderId, order, paidWithThis);
                 return;
             }
             if (order.status() == OrderStatus.NONE) {
@@ -412,6 +412,29 @@ public final class Resolver {
                         now.plus(config.requeryAfter()));
                 waitUntil(now.plus(config.requeryAfter()));
             }
+        }
+
+        /**
+         * BUG-009: the detector keeps the payment {@code order.paid} names, or else the earliest (§5.6); until the
+         * merchant has paid the order, that choice is provisional, and the merchant may pay it with this very payment.
+         * So a duplicate is refunded only once the order is paid with another payment, or expired or cancelled (then no
+         * payment pays it, and the kept one has a DEBITED_NO_ORDER of its own). While the order still awaits payment the
+         * break waits for the merchant, who wakes it with any order event, until escalate_by. An order the merchant
+         * never reported is escalated (D15), as in the other refund playbooks.
+         */
+        void duplicate(PaymentId p, PaymentState payment, OrderId orderId, OrderState order, boolean paidWithThis) {
+            if (order.status() == OrderStatus.NONE) {
+                escalate("the merchant has never reported this order (D15)");
+                return;
+            }
+            boolean paidWithOther = order.paidWith().isPresent() && !paidWithThis;
+            if (paidWithOther || order.status() == OrderStatus.EXPIRED || order.status() == OrderStatus.CANCELLED) {
+                refund(p, payment, orderId, "a duplicate capture: the order is " + order.status()
+                        + (paidWithOther ? " with " + order.paidWith().get() : ""));
+                return;
+            }
+            moveTo(BreakState.AWAITING_EVIDENCE, "waiting for the merchant to pay the order with one of its payments");
+            waitUntil(now.plus(config.recheckAfter()));
         }
 
         void refund(PaymentId p, PaymentState payment, OrderId orderId, String why) {

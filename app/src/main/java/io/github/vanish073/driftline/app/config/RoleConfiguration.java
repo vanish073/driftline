@@ -127,7 +127,7 @@ public class RoleConfiguration {
         DriftlineProperties.Dispatcher d = properties.dispatcher();
         d.requireComplete();
         Dispatcher dispatcher = new Dispatcher(new Dispatcher.Config(d.callTimeout(), d.backoffBase(), d.backoffCap(),
-                d.gatewayKeyTtl(), d.lookupMargin(), d.claimLimit()), canaries, crashPoints);
+                d.claimLimit()), canaries, crashPoints);
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
         Map<CallTarget, URI> targets = Map.of(CallTarget.GATEWAY, d.gatewayUrl(), CallTarget.MERCHANT,
                 d.merchantUrl(), CallTarget.OPS, d.opsUrl(), CallTarget.DRIFTLINE, d.observationsUrl());

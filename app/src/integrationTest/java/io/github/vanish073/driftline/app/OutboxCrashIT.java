@@ -62,14 +62,14 @@ import org.springframework.context.ConfigurableApplicationContext;
  * first one's in-flight replies lost, runs until the break is RESOLVED_AUTO. A crash is the crash point throwing, as in
  * the simulator: the transaction in progress rolls back and the incarnation is abandoned.
  *
- * <p>The dispatcher's key TTL (5 min) and lookup margin (1 min) match the sandbox gateway's; its call timeout is 3 s so
- * a lost reply is retried quickly.
+ * <p>The dispatcher's call timeout is 3 s, so a lost reply is retried quickly; every retry of the refund looks it up
+ * first (BUG-008).
  */
 class OutboxCrashIT {
 
     static final String TOPIC = "outbox_crash_it.events";
     static final Dispatcher.Config DISPATCH = new Dispatcher.Config(Duration.ofSeconds(3), Duration.ofMillis(200),
-            Duration.ofSeconds(1), Duration.ofMinutes(5), Duration.ofMinutes(1), 20);
+            Duration.ofSeconds(1), 20);
     static final HttpClient HTTP = HttpClient.newHttpClient();
 
     @TempDir

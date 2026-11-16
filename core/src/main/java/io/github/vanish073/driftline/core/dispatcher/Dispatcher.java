@@ -43,9 +43,12 @@ import java.util.TreeMap;
  *   <li><b>Timeout.</b> A claim sets the lease to {@code callTimeout} and the next attempt after it plus a deterministic
  *       backoff, {@code min(cap, base × 2^attempt) + H(commandId, attempt) mod base}: a call with no result is claimed
  *       again then, with the same idempotency key.</li>
- *   <li><b>Old refunds.</b> A REFUND attempt whose first send is older than {@code gatewayKeyTtl − lookupMargin} sends a
- *       REFUND_LOOKUP first, because the gateway may have forgotten the key; the refund is resent only if no refund
- *       exists, and only while this dispatcher still holds the lease.</li>
+ *   <li><b>Retried refunds.</b> Every REFUND retry sends a REFUND_LOOKUP first, because the gateway may have forgotten
+ *       the key; the refund is resent only if no refund exists, and only while this dispatcher still holds the lease.
+ *       Every retry, not only old ones (BUG-008): judging a key's age needs the dispatcher's clock to have been right at
+ *       the first send, and a clock that was fast then makes an expired key look fresh. The lookup needs no clock: if the
+ *       gateway has forgotten the key, the refund is older than the key TTL, far past the lookup's lag, so it shows;
+ *       if the key is still known, the resend is deduplicated.</li>
  *   <li><b>New facts</b> (a status the matcher has not seen, a refund outcome) are published as observations, so they
  *       enter through Kafka like every other event (D10); their event keys are derived, so repeats are deduplicated.</li>
  * </ul>
@@ -55,24 +58,16 @@ import java.util.TreeMap;
  */
 public final class Dispatcher {
 
-    /**
-     * @param callTimeout   how long a sent call may go unanswered before it is retried
-     * @param gatewayKeyTtl how long the gateway honours an idempotency key
-     * @param lookupMargin  how much earlier than the TTL a retry looks up first
-     */
-    public record Config(Duration callTimeout, Duration backoffBase, Duration backoffCap, Duration gatewayKeyTtl,
-                         Duration lookupMargin, int claimLimit) {
+    /** @param callTimeout how long a sent call may go unanswered before it is retried */
+    public record Config(Duration callTimeout, Duration backoffBase, Duration backoffCap, int claimLimit) {
         public static final Config DEFAULT = new Config(Duration.ofSeconds(30), Duration.ofSeconds(5),
-                Duration.ofMinutes(10), Duration.ofHours(24), Duration.ofHours(1), 20);
+                Duration.ofMinutes(10), 20);
 
         public Config {
-            for (Duration d : new Duration[] {callTimeout, backoffBase, backoffCap, gatewayKeyTtl, lookupMargin}) {
+            for (Duration d : new Duration[] {callTimeout, backoffBase, backoffCap}) {
                 if (d.isNegative() || d.isZero()) {
                     throw new IllegalArgumentException("durations must be positive");
                 }
-            }
-            if (lookupMargin.compareTo(gatewayKeyTtl) >= 0) {
-                throw new IllegalArgumentException("the lookup margin must be shorter than the key TTL");
             }
             if (claimLimit < 1) {
                 throw new IllegalArgumentException("claim at least one command");
@@ -126,15 +121,14 @@ public final class Dispatcher {
             if (markBeforeSend && c.kind() == CommandKind.REFUND) {
                 tx.outbox().complete(c.commandId(), kv("status", "MARKED_BEFORE_SEND"));   // canary C03
             }
-            calls.add(lookupFirst(c, now) ? lookupCall(c) : call(c));
+            calls.add(lookupFirst(c) ? lookupCall(c) : call(c));
         }
         return calls;
     }
 
-    /** §9.2 step 6: is this a REFUND retry old enough that the gateway may have forgotten its key? */
-    boolean lookupFirst(Command c, Instant now) {
-        return !skipTtlLookup && c.kind() == CommandKind.REFUND && c.attempt() >= 2
-                && !c.firstSentAt().orElseThrow().isAfter(now.minus(config.gatewayKeyTtl().minus(config.lookupMargin())));
+    /** §9.2 step 6 (BUG-008): every REFUND retry asks first whether the refund already exists. */
+    boolean lookupFirst(Command c) {
+        return !skipTtlLookup && c.kind() == CommandKind.REFUND && c.attempt() >= 2;
     }
 
     /**

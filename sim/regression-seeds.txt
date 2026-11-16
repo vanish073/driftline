@@ -9,3 +9,8 @@
 437715671286076 pr   # BUG-003: a zombie's epoch bump left the rightful owner fenced and the partition stalled
 5 pr   # BUG-004: a late success paid while its merchant confirmation was pending crashed the resolver
 7 pr   # BUG-005: a duplicate capture whose webhooks were all lost was left unrefunded
+849 pr   # BUG-006: a capture whose success webhook was lost sat in a batch line, and the line was inferred without it
+2490 pr   # BUG-007: a pending payment first seen after a line's window was used as a witness of its ambiguity
+2293 pr   # BUG-007: an ambiguity stayed reported after its pending witness failed
+8551 pr   # BUG-008: a fast dispatcher clock made an expired refund key look fresh; the refund was sent twice
+1298 pr   # BUG-009: a duplicate was refunded before the merchant paid the order, then the merchant paid with it

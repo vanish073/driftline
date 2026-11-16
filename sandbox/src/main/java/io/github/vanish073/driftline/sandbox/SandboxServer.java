@@ -47,7 +47,8 @@ import java.util.concurrent.TimeUnit;
  *       delivers what a call set off (a refund webhook, a merchant's {@code order.paid}).</li>
  * </ul>
  * Every fault stays off (D51): no ambiguous calls, stale statuses or lost webhooks. The gateway forgets an idempotency
- * key after {@code FakeGateway.KEY_TTL_MILLIS} (5 min), so Driftline's dispatcher must be configured with that TTL.
+ * key after {@code FakeGateway.KEY_TTL_MILLIS} (5 min); Driftline's dispatcher looks a refund up before every retry,
+ * so it needs no setting that matches it (BUG-008).
  */
 public final class SandboxServer {
 
