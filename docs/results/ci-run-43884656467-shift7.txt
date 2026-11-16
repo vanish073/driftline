@@ -1,0 +1,154 @@
+# CI evidence for Shift 7 (M4, part 1): PR #4, commit 6439f1b, GitHub Actions run 43884656467
+# https://github.com/vanish073/driftline/actions/runs/43884656467
+# Lines below are copied verbatim from the job logs (gh run view 43884656467 --job <id> --log), filtered to the summary lines.
+
+build (unit, ArchUnit, jqwik)	success
+canaries-quick	success
+claims-lint	success
+e2e-compose (Docker Compose, core profile)	success
+integration (PostgreSQL and Kafka in Testcontainers)	success
+simulation (shard 0 of 4, 2,500 pr seeds)	success
+simulation (shard 1 of 4, 2,500 pr seeds)	success
+simulation (shard 2 of 4, 2,500 pr seeds)	success
+simulation (shard 3 of 4, 2,500 pr seeds)	success
+
+## job 133359433663: canaries-quick
+canaries: profile=pr from=1 budget=500 threads=4 wall=5.1s
+| C01 `DEDUPE_OFF` | skip the dedupe insert | 1 | 1 | INV-EVENT-ONCE | INV-EVENT-ONCE, INV-LEDGER-ONCE |
+| C05 `LEDGER_UNIQUE_OFF` | post without the cause uniqueness check | 1 | 1 | INV-LEDGER-ONCE | INV-LEDGER-ONCE |
+| C06 `SUCCESS_TO_FAILED` | allow SUCCEEDED to FAILED | 117 | 117 | INV-TRANSITIONS-LEGAL | INV-TRANSITIONS-LEGAL, INV-ONE-OUTCOME |
+| C07 `PROCESSING_TIME_WATERMARK` | treat missing by wall clock | 13 | 13 | INV-MISSING-IS-REAL | INV-MISSING-IS-REAL |
+| C08 `FIRST_SOLUTION_WINS` | subset-sum returns the first fit, with no ambiguity check | 3 | 3 | INV-INFERRED-HONEST | INV-INFERRED-HONEST, INV-MISSING-IS-REAL |
+| C09 `NO_FENCING` | commit without the epoch check | 3 | 3 | INV-FENCED | INV-FENCED, INV-LEDGER-ONCE |
+PASS: every canary caught within 500 seeds
+
+## job 133359434015: e2e-compose (Docker Compose, core profile)
+injected DEBITED_NO_ORDER   merchant=m_e2e_01 partition=1 expected=3 webhooks=6 order_events=9 files=3
+injected LATE_SUCCESS       merchant=m_e2e_02 partition=2 expected=4 webhooks=9 order_events=11 files=3
+injected DUPLICATE_CAPTURE  merchant=m_e2e_03 partition=3 expected=3 webhooks=12 order_events=12 files=3
+injected SHORT_SETTLEMENT   merchant=m_e2e_04 partition=4 expected=3 webhooks=6 order_events=12 files=3
+injected MISSING_SETTLEMENT merchant=m_e2e_05 partition=5 expected=3 webhooks=6 order_events=12 files=3
+injected ORPHAN_SETTLEMENT  merchant=m_e2e_06 partition=6 expected=3 webhooks=6 order_events=12 files=3
+detection (from the end of each injection until every expected break was visible):
+  DEBITED_NO_ORDER   1 s
+  LATE_SUCCESS       1 s
+  DUPLICATE_CAPTURE  0 s
+  SHORT_SETTLEMENT   0 s
+  MISSING_SETTLEMENT 2 s
+  ORPHAN_SETTLEMENT  2 s
+one-to-one breaks: 19 expected, all raised; 10 raised early and already healed (D52)
+├─ JUnit Platform Suite ✔
+├─ JUnit Jupiter ✔
+│  └─ ComposeE2eTest ✔
+│     ├─ everyOneToOneBreakIsDetectedEndToEndAndVisibleThroughTheOpsApi() ✔
+│     ├─ aReplayedWebhookIsAcceptedAgainAndChangesNothing() ✔
+│     ├─ aBadSignatureIs401() ✔
+│     ├─ aStaleTimestampIsRejected() ✔
+│     └─ aCrossMerchantTokenIs403() ✔
+└─ JUnit Vintage ✔
+[         5 tests found           ]
+[         5 tests successful      ]
+[         0 tests failed          ]
+
+## job 133359434026: simulation (shard 3 of 4, 2,500 pr seeds)
+base seed 438846564670001, shard 3/4, corpus none
+campaign: profile=pr seeds=438846564677501..438846564680000 (2500) shard=3/4 threads=4 corpus=0 double-run=0
+  oracle.covered.idempotency_conflict = 4
+  oracle.covered.unresolved_batch = 1908
+  oracle.detected = 81008
+  oracle.expected = 82920
+  settlement.batch_lines.world = 5681
+  settlement.line.AMBIGUOUS = 2843
+  settlement.line.BUDGET_EXCEEDED = 187
+  settlement.line.INFERRED = 2651
+  settlement.line.MATCHED = 159634
+  settlement.line.SHORT_EXPLAINED = 4038
+  settlement.line.SHORT_UNEXPLAINED = 3945
+  settlement.line.UNATTRIBUTED = 7959
+wall=24.1s  per-seed=38.62ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133359434139: simulation (shard 1 of 4, 2,500 pr seeds)
+base seed 438846564670001, shard 1/4, corpus none
+campaign: profile=pr seeds=438846564672501..438846564675000 (2500) shard=1/4 threads=4 corpus=0 double-run=0
+  oracle.covered.idempotency_conflict = 4
+  oracle.covered.unresolved_batch = 1870
+  oracle.detected = 79803
+  oracle.expected = 81677
+  settlement.batch_lines.world = 5843
+  settlement.line.AMBIGUOUS = 2937
+  settlement.line.BUDGET_EXCEEDED = 156
+  settlement.line.INFERRED = 2750
+  settlement.line.MATCHED = 157521
+  settlement.line.SHORT_EXPLAINED = 3996
+  settlement.line.SHORT_UNEXPLAINED = 4022
+  settlement.line.UNATTRIBUTED = 7904
+wall=26.2s  per-seed=41.85ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133359434163: simulation (shard 2 of 4, 2,500 pr seeds)
+base seed 438846564670001, shard 2/4, corpus none
+campaign: profile=pr seeds=438846564675001..438846564677500 (2500) shard=2/4 threads=4 corpus=0 double-run=0
+  oracle.covered.idempotency_conflict = 7
+  oracle.covered.unresolved_batch = 1849
+  oracle.detected = 79845
+  oracle.expected = 81701
+  settlement.batch_lines.world = 5568
+  settlement.line.AMBIGUOUS = 2720
+  settlement.line.BUDGET_EXCEEDED = 193
+  settlement.line.INFERRED = 2655
+  settlement.line.MATCHED = 159729
+  settlement.line.SHORT_EXPLAINED = 3792
+  settlement.line.SHORT_UNEXPLAINED = 3974
+  settlement.line.UNATTRIBUTED = 7932
+wall=28.0s  per-seed=44.75ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133359434423: simulation (shard 0 of 4, 2,500 pr seeds)
+base seed 438846564670001, shard 0/4, corpus regression-seeds.txt
+campaign: profile=pr seeds=438846564670001..438846564672500 (2500) shard=0/4 threads=4 corpus=3 double-run=0
+  oracle.covered.idempotency_conflict = 5
+  oracle.covered.unresolved_batch = 1898
+  oracle.detected = 79302
+  oracle.expected = 81205
+  settlement.batch_lines.world = 5757
+  settlement.line.AMBIGUOUS = 2851
+  settlement.line.BUDGET_EXCEEDED = 171
+  settlement.line.INFERRED = 2735
+  settlement.line.MATCHED = 158608
+  settlement.line.SHORT_EXPLAINED = 3886
+  settlement.line.SHORT_UNEXPLAINED = 3764
+  settlement.line.UNATTRIBUTED = 7923
+wall=23.8s  per-seed=38.07ms (on 4 threads)  runs=2503
+PASS: 3 corpus seeds, 2500 campaign seeds, 0 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+  oracle.covered.idempotency_conflict = 1
+  oracle.covered.unresolved_batch = 90
+  oracle.detected = 3446
+  oracle.expected = 3537
+  settlement.batch_lines.world = 209
+  settlement.line.AMBIGUOUS = 111
+  settlement.line.BUDGET_EXCEEDED = 7
+  settlement.line.INFERRED = 91
+  settlement.line.MATCHED = 7128
+  settlement.line.SHORT_EXPLAINED = 178
+  settlement.line.SHORT_UNEXPLAINED = 191
+  settlement.line.UNATTRIBUTED = 332
+wall=5.6s  per-seed=112.32ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+  oracle.covered.idempotency_conflict = 1
+  oracle.covered.unresolved_batch = 90
+  oracle.detected = 3446
+  oracle.expected = 3537
+  settlement.batch_lines.world = 209
+  settlement.line.AMBIGUOUS = 111
+  settlement.line.BUDGET_EXCEEDED = 7
+  settlement.line.INFERRED = 91
+  settlement.line.MATCHED = 7128
+  settlement.line.SHORT_EXPLAINED = 178
+  settlement.line.SHORT_UNEXPLAINED = 191
+  settlement.line.UNATTRIBUTED = 332
+wall=5.5s  per-seed=110.06ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+identical digests across JVMs: 100 seeds
