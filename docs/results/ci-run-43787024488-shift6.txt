@@ -1,0 +1,92 @@
+# CI evidence for the Shift 6 (M3) exit: PR #3, commit a726b0d, GitHub Actions run 43787024488
+# https://github.com/vanish073/driftline/actions/runs/43787024488
+# Lines below are copied verbatim from the job logs (gh run view 43787024488 --job <id> --log), filtered to the summary lines.
+
+build (unit, ArchUnit, jqwik)	pass	1m47s
+canaries-quick	pass	40s
+claims-lint	pass	4s
+e2e-compose (Docker Compose, core profile)	pass	1m37s
+integration (PostgreSQL and Kafka in Testcontainers)	pass	1m41s
+simulation (shard 0 of 4, 2,500 pr seeds)	pass	1m19s
+simulation (shard 1 of 4, 2,500 pr seeds)	pass	1m12s
+simulation (shard 2 of 4, 2,500 pr seeds)	pass	1m6s
+simulation (shard 3 of 4, 2,500 pr seeds)	pass	1m28s
+
+## job 133036843992: simulation (shard 0 of 4, 2,500 pr seeds)
+base seed 437870244880001, shard 0/4, corpus regression-seeds.txt
+campaign: profile=pr seeds=437870244880001..437870244882500 (2500) shard=0/4 threads=4 corpus=3 double-run=0
+wall=22.7s  per-seed=36.24ms (on 4 threads)  runs=2503
+PASS: 3 corpus seeds, 2500 campaign seeds, 0 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+wall=5.6s  per-seed=111.20ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+campaign: profile=pr seeds=1..100 (100) shard=0/1 threads=4 corpus=0 double-run=100
+wall=5.5s  per-seed=110.68ms (on 4 threads)  runs=200
+PASS: 0 corpus seeds, 100 campaign seeds, 100 double-runs
+identical digests across JVMs: 100 seeds
+
+## job 133036844038: e2e-compose (Docker Compose, core profile)
+injected DEBITED_NO_ORDER   merchant=m_e2e_01 partition=1 expected=3 webhooks=6 order_events=9 files=3
+injected LATE_SUCCESS       merchant=m_e2e_02 partition=2 expected=4 webhooks=9 order_events=11 files=3
+injected DUPLICATE_CAPTURE  merchant=m_e2e_03 partition=3 expected=3 webhooks=12 order_events=12 files=3
+injected SHORT_SETTLEMENT   merchant=m_e2e_04 partition=4 expected=3 webhooks=6 order_events=12 files=3
+injected MISSING_SETTLEMENT merchant=m_e2e_05 partition=5 expected=3 webhooks=6 order_events=12 files=3
+injected ORPHAN_SETTLEMENT  merchant=m_e2e_06 partition=6 expected=3 webhooks=6 order_events=12 files=3
+detection (from the end of each injection until every expected break was visible):
+  DEBITED_NO_ORDER   1 s
+  LATE_SUCCESS       1 s
+  DUPLICATE_CAPTURE  0 s
+  SHORT_SETTLEMENT   0 s
+  MISSING_SETTLEMENT 0 s
+  ORPHAN_SETTLEMENT  2 s
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_02/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_03/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_03/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_2_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_05/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_05/pay_2_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_06/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_06/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_06/pay_2_a
+one-to-one breaks: 19 expected, all raised; 11 raised early and already healed (D52)
+├─ JUnit Platform Suite ✔
+├─ JUnit Jupiter ✔
+│  └─ ComposeE2eTest ✔
+│     ├─ everyOneToOneBreakIsDetectedEndToEndAndVisibleThroughTheOpsApi() ✔
+│     ├─ aReplayedWebhookIsAcceptedAgainAndChangesNothing() ✔
+│     ├─ aBadSignatureIs401() ✔
+│     ├─ aStaleTimestampIsRejected() ✔
+│     └─ aCrossMerchantTokenIs403() ✔
+└─ JUnit Vintage ✔
+[         5 tests found           ]
+[         5 tests successful      ]
+[         0 tests failed          ]
+
+## job 133036844052: simulation (shard 3 of 4, 2,500 pr seeds)
+base seed 437870244880001, shard 3/4, corpus none
+campaign: profile=pr seeds=437870244887501..437870244890000 (2500) shard=3/4 threads=4 corpus=0 double-run=0
+wall=39.8s  per-seed=63.71ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133036844070: simulation (shard 1 of 4, 2,500 pr seeds)
+base seed 437870244880001, shard 1/4, corpus none
+campaign: profile=pr seeds=437870244882501..437870244885000 (2500) shard=1/4 threads=4 corpus=0 double-run=0
+wall=25.3s  per-seed=40.47ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133036844084: simulation (shard 2 of 4, 2,500 pr seeds)
+base seed 437870244880001, shard 2/4, corpus none
+campaign: profile=pr seeds=437870244885001..437870244887500 (2500) shard=2/4 threads=4 corpus=0 double-run=0
+wall=23.0s  per-seed=36.83ms (on 4 threads)  runs=2500
+PASS: 0 corpus seeds, 2500 campaign seeds, 0 double-runs
+
+## job 133036844295: canaries-quick
+canaries: profile=pr from=1 budget=500 threads=4 wall=2.6s
+| C01 `DEDUPE_OFF` | skip the dedupe insert | 1 | 1 | INV-EVENT-ONCE | INV-EVENT-ONCE, INV-LEDGER-ONCE |
+| C05 `LEDGER_UNIQUE_OFF` | post without the cause uniqueness check | 1 | 1 | INV-LEDGER-ONCE | INV-LEDGER-ONCE |
+| C06 `SUCCESS_TO_FAILED` | allow SUCCEEDED to FAILED | 22 | 22 | INV-TRANSITIONS-LEGAL | INV-TRANSITIONS-LEGAL, INV-ONE-OUTCOME |
+| C07 `PROCESSING_TIME_WATERMARK` | treat missing by wall clock | 13 | 13 | INV-MISSING-IS-REAL | INV-MISSING-IS-REAL |
+| C09 `NO_FENCING` | commit without the epoch check | 3 | 3 | INV-FENCED | INV-FENCED, INV-LEDGER-ONCE |
+PASS: every canary caught within 500 seeds

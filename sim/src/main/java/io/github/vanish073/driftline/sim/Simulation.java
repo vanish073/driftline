@@ -306,8 +306,11 @@ public final class Simulation {
         trace.line(scheduler.now(), "kernel", "HEAL");
     }
 
-    /** Plays one order's scenario from its start time; every delay comes from the workload stream. */
-    private static void play(PlannedOrder o, Scheduler scheduler, SplitMix64 rng, FakeGateway gateway, FakeMerchant merchant) {
+    /**
+     * Plays one order's scenario from its start time; every delay comes from the workload stream. The sandbox calls it
+     * too, so the Compose world plays the very same scenarios as the simulator (DESIGN §21.10, D51).
+     */
+    public static void play(PlannedOrder o, Scheduler scheduler, SplitMix64 rng, FakeGateway gateway, FakeMerchant merchant) {
         Scenario scenario = o.scenario();
         merchant.createOrder(o.orderId(), o.amount(), scenario != Scenario.ABANDONED);
         if (scenario == Scenario.ABANDONED) {

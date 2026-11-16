@@ -311,6 +311,22 @@ public abstract class DetectionStoreContract {
     }
 
     @Test
+    void aBreakIsFoundByItsIdAloneWhateverItsMerchant() {
+        Break mine = Break.detected(m, BreakType.DEBITED_NO_ORDER, "pay_1", T0, Map.of("k", "v"));
+        Break theirs = Break.detected(other, BreakType.DEBITED_NO_ORDER, "pay_1", T0, Map.of());
+        run(t -> {
+            t.breaks().raise(mine, "test");
+            t.breaks().raise(theirs, "test");
+            assertThat(t.breaks().byId(mine.breakId())).as("visible inside the transaction").contains(mine);
+        });
+        assertThat(one(t -> t.breaks().byId(mine.breakId()))).contains(mine);
+        assertThat(one(t -> t.breaks().byId(theirs.breakId()))).contains(theirs);
+        assertThat(one(t -> t.breaks().byId("no-such-break"))).isEmpty();
+        rolledBack(t -> t.breaks().addEvidence(m, mine.breakId(), "k", "changed"));
+        assertThat(one(t -> t.breaks().byId(mine.breakId()))).contains(mine);
+    }
+
+    @Test
     void aRolledBackBreakIsForgotten() {
         Break b = Break.detected(m, BreakType.DUPLICATE_CAPTURE, "pay_3", T0, Map.of());
         rolledBack(t -> t.breaks().raise(b, "dup"));

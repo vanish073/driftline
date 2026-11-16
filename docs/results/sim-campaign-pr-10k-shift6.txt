@@ -1,0 +1,73 @@
+# command: ./gradlew -q :sim:campaign --args="--profile pr --from 1 --count 10000 --threads 8 --double-run 100"
+# base commit: ac8f4be plus the uncommitted BUG-003 fix; date: 2026-11-15T23:05Z; 155 s
+# machine: WSL2, 12 cores, 3915 MB RAM with 632 MB of swap in use at the start, openjdk version "21.0.13.0.3" 2026-10-24
+campaign: profile=pr seeds=1..10000 (10000) shard=0/1 threads=8 corpus=3 double-run=100
+totals over 10000 campaign seeds:
+  breaks.DEBITED_NO_ORDER = 121519
+  breaks.DUPLICATE_CAPTURE = 52763
+  breaks.FEED_STALL = 23774
+  breaks.FILE_CONFLICT = 17079
+  breaks.IDEMPOTENCY_CONFLICT = 177221
+  breaks.LATE_SUCCESS = 62642
+  breaks.MISSING_SETTLEMENT = 31619
+  breaks.ORPHAN_SETTLEMENT = 31592
+  breaks.SHORT_SETTLEMENT = 31461
+  breaks.late_evidence = 21
+  coordinator.reassignments = 36228
+  fault.clock.jumps = 25134
+  fault.file.conflicting = 17344
+  fault.file.duplicated = 17496
+  fault.file.late = 29729
+  fault.ingest.ambiguous = 288467
+  fault.ingest.crashes = 6440
+  fault.matcher.crashes = 11064
+  fault.matcher.crashes.mid_batch = 4618
+  fault.matcher.fenced = 13002
+  fault.matcher.pauses = 17987
+  fault.merchant.keys.reused = 154970
+  fault.net.delayed = 1186309
+  fault.net.dropped = 633614
+  fault.net.duplicated = 598005
+  fault.planned.ClockJump = 25134
+  fault.planned.Crash = 25666
+  fault.planned.Pause = 25512
+  fault.planned.StoreDown = 25268
+  fault.store.down.windows = 25268
+  fault.store.retries = 641369
+  fault.worker.crashes = 6405
+  ingest.accepted = 6875561
+  ingest.rejected = 12117
+  keyed_state.hits = 7659925
+  keyed_state.misses = 3964658
+  ledger.transactions = 2697530
+  log.records = 8197997
+  oracle.detected = 325394
+  oracle.expected = 325411
+  orders = 1050644
+  quarantined = 177221
+  rule.payment.FAILURE_BEFORE_SUCCESS = 113
+  rule.payment.FIRST_EVIDENCE = 1040620
+  rule.payment.LATE_SUCCESS = 62529
+  rule.payment.PENDING_AFTER_OUTCOME = 47793
+  rule.payment.PENDING_RESOLVED = 992827
+  scenario.ABANDONED = 62782
+  scenario.DEBITED_NO_ORDER = 52766
+  scenario.DUPLICATE_CAPTURE = 52758
+  scenario.LATE_SUCCESS = 62642
+  scenario.MISSING_SETTLEMENT = 31619
+  scenario.NORMAL = 641483
+  scenario.ORPHAN_SETTLEMENT = 31592
+  scenario.PAYMENT_FAILED = 83541
+  scenario.SHORT_SETTLEMENT = 31461
+  settlement.files = 200304
+  settlement.lines = 925460
+  settlement.matched = 925460
+  settlement.worker.accepted = 197588
+  settlement.worker.conflicts = 17079
+  settlement.worker.duplicates = 20664
+  steps = 37194050
+  store.commits = 8034088
+  transitions.order = 3723367
+  transitions.payment = 2143882
+wall=149.9s  per-seed=118.67ms (on 8 threads)  runs=10103
+PASS: 3 corpus seeds, 10000 campaign seeds, 100 double-runs

@@ -62,6 +62,11 @@ public final class Coordinator {
         return member == null ? Optional.empty() : Optional.ofNullable(instances.get(instanceOf(member)));
     }
 
+    /** Whether {@code partition} is currently assigned to exactly this member id (Kafka's {@code assignment()}). */
+    boolean assignedTo(String memberId, int partition) {
+        return memberId.equals(owners.get(partition));
+    }
+
     /** Wakes the owner of {@code partition}: new records were appended. */
     public void wake(int partition) {
         ownerOf(partition).ifPresent(i -> i.wake(partition));

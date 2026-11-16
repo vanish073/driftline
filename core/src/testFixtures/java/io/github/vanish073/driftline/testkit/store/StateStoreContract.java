@@ -173,6 +173,10 @@ public abstract class StateStoreContract {
         return tx(t -> t.partitions().acquire(partition, owner));
     }
 
+    private List<QuarantineRepo.Undecodable> undecodable(int p) {
+        return tx(t -> t.quarantine().undecodable(p));
+    }
+
     private List<QuarantineRepo.Entry> quarantined(MerchantId merchant) {
         return tx(t -> t.quarantine().forMerchant(merchant));
     }
@@ -272,6 +276,43 @@ public abstract class StateStoreContract {
         });
         assertThat(quarantined(m)).containsExactly(early, late);
         assertThat(quarantined(MerchantId.of("m-nobody"))).isEmpty();
+    }
+
+    @Test
+    void anUndecodableRecordKeepsItsBytesAndTakesItsLogPositionOnce() {
+        QuarantineRepo.Undecodable garbage = new QuarantineRepo.Undecodable(partition, 7, "not valid JSON",
+                new byte[] {(byte) 0xff, 0x00, 0x7b});
+        QuarantineRepo.Undecodable earlier = new QuarantineRepo.Undecodable(partition, 3, "schema_version 9",
+                "{}".getBytes(StandardCharsets.UTF_8));
+        tx(t -> {
+            t.quarantine().addUndecodable(garbage);
+            t.quarantine().addUndecodable(earlier);
+            t.quarantine().addUndecodable(new QuarantineRepo.Undecodable(partition, 7, "a second try", new byte[] {1}));
+            assertThat(t.quarantine().undecodable(partition)).as("visible inside the transaction")
+                    .containsExactly(earlier, garbage);
+            return null;
+        });
+        // A reused-key row for a position an undecodable record already holds changes nothing, and vice versa.
+        tx(t -> {
+            t.quarantine().add(new QuarantineRepo.Entry(partition, 7, m, Source.GATEWAY, "evt_x", HASH_A,
+                    QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT));
+            t.quarantine().addUndecodable(garbage);
+            return null;
+        });
+        assertThat(undecodable(partition)).containsExactly(earlier, garbage);
+        assertThat(undecodable(partition + 1)).isEmpty();
+        assertThat(quarantined(m)).as("undecodable rows belong to no merchant").isEmpty();
+        assertThat(undecodable(partition).get(1).raw())
+                .containsExactly((byte) 0xff, 0x00, 0x7b);
+    }
+
+    @Test
+    void aRolledBackUndecodableRecordIsForgotten() {
+        assertThatThrownBy(() -> tx(t -> {
+            t.quarantine().addUndecodable(new QuarantineRepo.Undecodable(partition, 1, "bad", new byte[] {2}));
+            throw new IllegalStateException("crash before commit");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(undecodable(partition)).isEmpty();
     }
 
     @Test

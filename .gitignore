@@ -26,3 +26,6 @@ Thumbs.db
 .env
 *.pem
 *.key
+
+# Compose dev files: generated secrets and logs (scripts/e2e.sh)
+deploy/compose/.dev/

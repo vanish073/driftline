@@ -47,6 +47,12 @@ public final class MatcherInstance {
     public static final int MAX_BATCH = 100;
     static final long POLL_DELAY_MILLIS = 50;
     static final long STORE_RETRY_MILLIS = 1_000;
+    /**
+     * D50, BUG-003: a fenced partition that the coordinator still assigns to this member after three session timeouts
+     * is acquired again, as the production driver's {@code reacquireAfter} does. Without it, a zombie's epoch bump on a
+     * partition it no longer owns left the rightful owner fenced, and the partition stalled forever.
+     */
+    static final long REACQUIRE_AFTER_MILLIS = 3 * Coordinator.SESSION_TIMEOUT_MILLIS;
     /** The shortest wait before a tick, so a timer that is not due yet never spins. */
     static final long MIN_TICK_DELAY_MILLIS = 1_000;
 
@@ -367,6 +373,17 @@ public final class MatcherInstance {
             active = false;
             consumers.remove(partition);
             matcher.ownershipChanged(partition);
+            String member = memberId();
+            schedule(REACQUIRE_AFTER_MILLIS, () -> {
+                if (memberId().equals(member) && !consumers.containsKey(partition)
+                        && coordinator.assignedTo(member, partition)) {
+                    trace.line(scheduler.now(), name, "still assigned p" + partition + " after being fenced: acquires again");
+                    faults.count("matcher.reacquired");
+                    PartitionConsumer again = new PartitionConsumer(partition);
+                    consumers.put(partition, again);
+                    again.acquire();
+                }
+            });
         }
 
         void wake() {

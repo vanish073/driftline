@@ -1,0 +1,48 @@
+# scripts/e2e.sh, 2026-11-15T22:21:30Z, commit c8aeab0+uncommitted
+# host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3 GB RAM; Compose profile core
+injected DEBITED_NO_ORDER   merchant=m_e2e_01 partition=1 expected=3 webhooks=6 order_events=9 files=3
+injected LATE_SUCCESS       merchant=m_e2e_02 partition=2 expected=4 webhooks=9 order_events=11 files=3
+injected DUPLICATE_CAPTURE  merchant=m_e2e_03 partition=3 expected=3 webhooks=12 order_events=12 files=3
+injected SHORT_SETTLEMENT   merchant=m_e2e_04 partition=4 expected=3 webhooks=6 order_events=12 files=3
+injected MISSING_SETTLEMENT merchant=m_e2e_05 partition=5 expected=3 webhooks=6 order_events=12 files=3
+injected ORPHAN_SETTLEMENT  merchant=m_e2e_06 partition=6 expected=3 webhooks=6 order_events=12 files=3
+detection (from the end of each injection until every expected break was visible):
+  DEBITED_NO_ORDER   3 s
+  LATE_SUCCESS       2 s
+  DUPLICATE_CAPTURE  2 s
+  SHORT_SETTLEMENT   1 s
+  MISSING_SETTLEMENT 0 s
+  ORPHAN_SETTLEMENT  2 s
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_02/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_03/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_0_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_05/pay_1_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_05/pay_2_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_06/pay_0_a
+one-to-one breaks: 19 expected, all raised; 7 raised early and already healed (D52)
+╷
+├─ JUnit Platform Suite ✔
+├─ JUnit Jupiter ✔
+│  └─ ComposeE2eTest ✔
+│     ├─ everyOneToOneBreakIsDetectedEndToEndAndVisibleThroughTheOpsApi() ✔
+│     ├─ aReplayedWebhookIsAcceptedAgainAndChangesNothing() ✔
+│     ├─ aBadSignatureIs401() ✔
+│     ├─ aStaleTimestampIsRejected() ✔
+│     └─ aCrossMerchantTokenIs403() ✔
+└─ JUnit Vintage ✔
+
+Test run finished after 10039 ms
+[         4 containers found      ]
+[         0 containers skipped    ]
+[         4 containers started    ]
+[         0 containers aborted    ]
+[         4 containers successful ]
+[         0 containers failed     ]
+[         5 tests found           ]
+[         0 tests skipped         ]
+[         5 tests started         ]
+[         0 tests aborted         ]
+[         5 tests successful      ]
+[         0 tests failed          ]
+

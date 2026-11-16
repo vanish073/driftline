@@ -445,6 +445,12 @@ final class JdbcDetectionRepos {
         }
 
         @Override
+        public Optional<Break> byId(String breakId) {
+            List<Break> found = list(SELECT + " WHERE break_id = ?", breakId);
+            return found.isEmpty() ? Optional.empty() : Optional.of(found.get(0));
+        }
+
+        @Override
         public List<Break> forMerchant(MerchantId merchantId) {
             return list(SELECT + " WHERE merchant_id = ? ORDER BY type COLLATE \"C\", subject_key COLLATE \"C\"",
                     merchantId.value());
