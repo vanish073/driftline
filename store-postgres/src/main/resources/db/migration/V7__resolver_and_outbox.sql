@@ -46,7 +46,7 @@ CREATE TRIGGER breaks_action_set_once BEFORE UPDATE ON breaks
 CREATE TABLE outbox (
     command_id      text        PRIMARY KEY,
     merchant_id     text        NOT NULL,
-    break_id        text        NOT NULL REFERENCES breaks (break_id),
+    break_id        text        REFERENCES breaks (break_id),   -- NULL only for a pending-order probe (§9.2)
     kind            text        NOT NULL CHECK (kind IN ('STATUS_QUERY_PAYMENT', 'STATUS_QUERY_ORDER', 'REFUND',
                                                          'REFUND_LOOKUP', 'MERCHANT_CONFIRM', 'PUBLISH_OBSERVATION',
                                                          'ESCALATION_NOTIFY')),
@@ -65,7 +65,7 @@ CREATE TABLE outbox (
     CHECK ((attempt = 0) = (first_sent_at IS NULL))
 );
 CREATE INDEX outbox_due ON outbox (next_attempt_at, command_id COLLATE "C") WHERE status <> 'DONE';
-CREATE INDEX outbox_by_break ON outbox (merchant_id, break_id, command_id COLLATE "C");
+CREATE INDEX outbox_by_break ON outbox (merchant_id, break_id, command_id COLLATE "C") WHERE break_id IS NOT NULL;
 
 -- A DONE command is a recorded fact: it never changes again, and no command is ever deleted.
 CREATE FUNCTION driftline_outbox_done_is_final() RETURNS trigger LANGUAGE plpgsql AS $$

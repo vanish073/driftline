@@ -43,13 +43,14 @@ public interface OutboxRepo {
      * One command. {@code args} and {@code result} are small sorted maps of strings, like break evidence: the call's
      * inputs (payment id, amount, order id) and the facts that came back.
      *
+     * @param breakId     the break the command serves; empty for a pending-order probe, which has no break yet
      * @param attempt     how many times it has been claimed
      * @param firstSentAt when it was first claimed to be sent; a REFUND older than the gateway's key TTL is looked up
      *                    before it is sent again (§9.2 step 6)
      *
      * <p>Instants are kept to the microsecond, as PostgreSQL stores them.
      */
-    record Command(String commandId, MerchantId merchantId, String breakId, CommandKind kind,
+    record Command(String commandId, MerchantId merchantId, Optional<String> breakId, CommandKind kind,
                    SortedMap<String, String> args, Optional<String> idempotencyKey, CommandStatus status, int attempt,
                    Optional<String> leaseOwner, Optional<Instant> leaseUntil, Instant nextAttemptAt,
                    Optional<Instant> firstSentAt, Optional<SortedMap<String, String>> result) {
@@ -57,7 +58,8 @@ public interface OutboxRepo {
         public Command {
             IdRules.requireToken("commandId", commandId);
             Objects.requireNonNull(merchantId, "merchantId");
-            IdRules.requireToken("breakId", breakId);
+            Objects.requireNonNull(breakId, "breakId");
+            breakId.ifPresent(b -> IdRules.requireToken("breakId", b));
             Objects.requireNonNull(kind, "kind");
             args = frozen(args);
             Objects.requireNonNull(idempotencyKey, "idempotencyKey");
@@ -85,8 +87,8 @@ public interface OutboxRepo {
             }
         }
 
-        /** A new command, PENDING from {@code at}. */
-        public static Command pending(String commandId, MerchantId merchantId, String breakId, CommandKind kind,
+        /** A new command, PENDING from {@code at}; {@code breakId} is empty for a pending-order probe (§9.2). */
+        public static Command pending(String commandId, MerchantId merchantId, Optional<String> breakId, CommandKind kind,
                                       Map<String, String> args, Optional<String> idempotencyKey, Instant at) {
             return new Command(commandId, merchantId, breakId, kind, new TreeMap<>(args), idempotencyKey,
                     CommandStatus.PENDING, 0, Optional.empty(), Optional.empty(), at, Optional.empty(), Optional.empty());
@@ -104,7 +106,10 @@ public interface OutboxRepo {
     }
 
     /**
-     * Stores a new command (it must be PENDING with no attempt), unless one with that id exists.
+     * Stores a new command (it must be PENDING with no attempt), unless one with that id exists. A command that names a
+     * break needs that break to exist.
+     *
+     * @throws IllegalArgumentException if it names a break that does not exist
      *
      * @return true if it was stored; false if the id was already there, which changes nothing
      */

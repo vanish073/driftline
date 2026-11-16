@@ -136,7 +136,7 @@ public abstract class ResolverStoreContract {
     // ---- the outbox -------------------------------------------------------------------------------------------------
 
     private Command command(Break b, String id, Instant at) {
-        return Command.pending(id, M, b.breakId(), CommandKind.REFUND, Map.of("payment_id", "pay_1", "amount", "499.00"),
+        return Command.pending(id, M, Optional.of(b.breakId()), CommandKind.REFUND, Map.of("payment_id", "pay_1", "amount", "499.00"),
                 Optional.of("rfd-key-1"), at);
     }
 
@@ -148,8 +148,12 @@ public abstract class ResolverStoreContract {
         assertThat(yes(t -> t.outbox().enqueue(c))).isFalse();
         assertThat(one(t -> t.outbox().find("cmd_1"))).contains(c);
         assertThat(one(t -> t.outbox().find("cmd_none"))).isEmpty();
-        assertThatThrownBy(() -> run(t -> t.outbox().enqueue(Command.pending("cmd_2", M, "brk_none",
+        assertThatThrownBy(() -> run(t -> t.outbox().enqueue(Command.pending("cmd_2", M, Optional.of("brk_none"),
                 CommandKind.REFUND, Map.of(), Optional.empty(), T0)))).isInstanceOf(IllegalArgumentException.class);
+        Command probe = Command.pending("cmd_probe", M, Optional.empty(), CommandKind.STATUS_QUERY_PAYMENT,
+                Map.of("payment_id", "pay_9"), Optional.empty(), T0);
+        assertThat(yes(t -> t.outbox().enqueue(probe))).as("a pending-order probe has no break").isTrue();
+        assertThat(one(t -> t.outbox().find("cmd_probe"))).contains(probe);
     }
 
     @Test

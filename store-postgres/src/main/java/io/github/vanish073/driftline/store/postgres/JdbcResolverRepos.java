@@ -80,7 +80,7 @@ final class JdbcResolverRepos {
             Optional<SortedMap<String, String>> result = rs.getBoolean("has_result")
                     ? Optional.of(map(rs, "result")) : Optional.empty();
             return new Command(rs.getString("command_id"), MerchantId.of(rs.getString("merchant_id")),
-                    rs.getString("break_id"), CommandKind.valueOf(rs.getString("kind")), map(rs, "args"),
+                    Optional.ofNullable(rs.getString("break_id")), CommandKind.valueOf(rs.getString("kind")), map(rs, "args"),
                     Optional.ofNullable(rs.getString("idempotency_key")), CommandStatus.valueOf(rs.getString("status")),
                     rs.getInt("attempt"), Optional.ofNullable(rs.getString("lease_owner")),
                     optionalInstant(rs, "lease_until"), instant(rs, "next_attempt_at"),
@@ -109,8 +109,9 @@ final class JdbcResolverRepos {
             if (command.status() != CommandStatus.PENDING || command.attempt() != 0 || command.leaseOwner().isPresent()) {
                 throw new IllegalArgumentException("a new command is PENDING, unclaimed and unleased");
             }
-            if (tx.breaks().byId(command.breakId()).filter(b -> b.merchantId().equals(command.merchantId())).isEmpty()) {
-                throw new IllegalArgumentException("no break " + command.breakId());
+            if (command.breakId().isPresent() && tx.breaks().byId(command.breakId().get())
+                    .filter(b -> b.merchantId().equals(command.merchantId())).isEmpty()) {
+                throw new IllegalArgumentException("no break " + command.breakId().get());
             }
             Connection c = tx.connection();
             try (PreparedStatement ps = c.prepareStatement("""
@@ -121,7 +122,7 @@ final class JdbcResolverRepos {
                     """)) {
                 ps.setString(1, command.commandId());
                 ps.setString(2, command.merchantId().value());
-                ps.setString(3, command.breakId());
+                ps.setString(3, command.breakId().orElse(null));
                 ps.setString(4, command.kind().name());
                 setMap(c, ps, 5, command.args());
                 ps.setString(7, command.idempotencyKey().orElse(null));

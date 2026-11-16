@@ -1092,8 +1092,9 @@ public final class InMemoryStore implements Store {
                         || command.leaseOwner().isPresent()) {
                     throw new IllegalArgumentException("a new command is PENDING, unclaimed and unleased");
                 }
-                if (breakView.get(breakKey(command.merchantId(), command.breakId())).isEmpty()) {
-                    throw new IllegalArgumentException("no break " + command.breakId());
+                if (command.breakId().isPresent()
+                        && breakView.get(breakKey(command.merchantId(), command.breakId().get())).isEmpty()) {
+                    throw new IllegalArgumentException("no break " + command.breakId().get());
                 }
                 if (commandView.get(key(command.commandId())).isPresent()) {
                     return false;
@@ -1112,7 +1113,7 @@ public final class InMemoryStore implements Store {
             public List<Command> forBreak(MerchantId merchantId, String breakId) {
                 requireOpen();
                 return List.copyOf(commandView.where(c -> c.merchantId().equals(merchantId)
-                        && c.breakId().equals(breakId)));
+                        && c.breakId().filter(breakId::equals).isPresent()));
             }
 
             @Override

@@ -38,7 +38,7 @@ class OutboxDatabaseGuardsIT {
             Break b = Break.detected(M, BreakType.DEBITED_NO_ORDER, "pay_1", T0, Map.of());
             tx.breaks().raise(b, "setup");
             for (int i = 0; i < commands; i++) {
-                tx.outbox().enqueue(Command.pending(String.format("cmd_%03d", i), M, b.breakId(),
+                tx.outbox().enqueue(Command.pending(String.format("cmd_%03d", i), M, Optional.of(b.breakId()),
                         CommandKind.STATUS_QUERY_PAYMENT, Map.of("payment_id", "pay_1"), Optional.empty(), T0));
             }
             return null;

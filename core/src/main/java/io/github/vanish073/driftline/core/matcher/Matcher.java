@@ -501,6 +501,12 @@ public final class Matcher {
                         "contradictory order history");
                 return;
             }
+            if (d.kind() == DecisionKind.APPLIED) {
+                // the resolver waits on order state (expiry, order.paid): wake every payment's action owner (§8.2)
+                for (PaymentState p : tx.payments().forOrder(m, ev.orderId())) {
+                    tx.payments().actionOwner(m, p.paymentId()).ifPresent(owner -> wake(m, owner));
+                }
+            }
             if (d.kind() != DecisionKind.APPLIED || after.paidWith().isEmpty()) {
                 return;
             }
