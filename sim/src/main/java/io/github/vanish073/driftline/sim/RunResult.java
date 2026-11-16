@@ -1,6 +1,7 @@
 package io.github.vanish073.driftline.sim;
 
 import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.CrashPoint;
 import io.github.vanish073.driftline.core.hooks.Canary;
 import io.github.vanish073.driftline.sim.invariant.Violation;
 import java.util.List;
@@ -11,7 +12,7 @@ import java.util.Optional;
  * The outcome of one seed: its trace digest, its counters, its swarm vector and, if any, the first violated
  * invariant.
  */
-public record RunResult(long seed, Profile profile, Canaries canaries, String swarm, long steps, long virtualMillis,
+public record RunResult(long seed, Profile profile, Canaries canaries, Optional<CrashPoint> forcedCrash, String swarm, long steps, long virtualMillis,
                         String digest, Optional<Violation> violation, Map<String, Long> stats, List<String> traceTail,
                         List<String> trace) {
 
@@ -25,6 +26,7 @@ public record RunResult(long seed, Profile profile, Canaries canaries, String sw
         for (Canary c : canaries.enabled()) {
             args.append(" --canary ").append(c.code());
         }
+        forcedCrash.ifPresent(cp -> args.append(" --crash ").append(cp.name()));
         return args.toString();
     }
 

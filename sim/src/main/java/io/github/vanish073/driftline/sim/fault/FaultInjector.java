@@ -81,6 +81,26 @@ public final class FaultInjector {
         return rate(Fault.MERCHANT_KEY_REUSE, "merchant.keys.reused", eligible);
     }
 
+    /** CALL_AMBIGUOUS: the gateway applied this refund, and its response is lost. */
+    public boolean callAmbiguous() {
+        return rate(Fault.CALL_AMBIGUOUS, "gateway.ambiguous");
+    }
+
+    /** WEBHOOK_LOST: the gateway gives up on this webhook and never delivers it. */
+    public boolean webhookLost() {
+        return rate(Fault.WEBHOOK_LOST, "gateway.webhooks.lost");
+    }
+
+    public static final long MIN_STATUS_LAG_MILLIS = 60_000L;
+    public static final long MAX_STATUS_LAG_MILLIS = 10 * 60_000L;
+
+    /** STATUS_STALE: 0, or how far behind reality this status answer is. */
+    public long statusLagMillis() {
+        boolean hit = rate(Fault.STATUS_STALE, "gateway.status.stale");
+        long lag = rng.between(MIN_STATUS_LAG_MILLIS, MAX_STATUS_LAG_MILLIS);
+        return hit ? lag : 0;
+    }
+
     /** Extra delay for one message: 0, or a heavy-tailed amount when NET_DELAY strikes. */
     public long extraDelay() {
         boolean hit = rate(Fault.NET_DELAY, "net.delayed");

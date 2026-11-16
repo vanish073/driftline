@@ -184,6 +184,22 @@ public final class Dispatcher {
                             OrderId.of(facts.get("order_id")), Money.parse(facts.get("amount"))), now);
                 }
             }
+            case STATUS_QUERY_ORDER -> {
+                // payments as payment_1, status_1, amount_1, at_1, ... up to count
+                int count = Integer.parseInt(facts.getOrDefault("count", "0"));
+                OrderId order = OrderId.of(c.args().get("order_id"));
+                for (int i = 1; i <= count; i++) {
+                    String status = facts.getOrDefault("status_" + i, "");
+                    PaymentId p = PaymentId.of(facts.get("payment_" + i));
+                    Optional<PaymentStatus> known = tx.payments().find(m, p).map(PaymentState::status);
+                    if ((status.equals("SUCCEEDED") || status.equals("FAILED"))
+                            && known.filter(k -> k.name().equals(status)).isEmpty()) {
+                        EventType type = status.equals("SUCCEEDED") ? EventType.PAYMENT_SUCCEEDED : EventType.PAYMENT_FAILED;
+                        observe(tx, c, type, Instant.parse(facts.get("at_" + i)), new PaymentPayload(p, order,
+                                Money.parse(facts.get("amount_" + i))), now);
+                    }
+                }
+            }
             case REFUND -> {
                 String status = facts.getOrDefault("status", "");
                 if (status.equals("PROCESSED") || status.equals("FAILED")) {
@@ -262,7 +278,8 @@ public final class Dispatcher {
             case ESCALATION_NOTIFY -> new OutboundCall(callId(c, ""), c.merchantId(), CallTarget.OPS, Optional.empty(),
                     new CallRequest.EscalationNotify(c.breakId().orElseThrow(), BreakType.valueOf(a.get("type")),
                             a.get("subject"), a.get("reason")));
-            case STATUS_QUERY_ORDER -> throw new IllegalStateException("STATUS_QUERY_ORDER is not used in v1");
+            case STATUS_QUERY_ORDER -> new OutboundCall(callId(c, ""), c.merchantId(), CallTarget.GATEWAY,
+                    Optional.empty(), new CallRequest.StatusQueryOrder(OrderId.of(a.get("order_id"))));
         };
     }
 

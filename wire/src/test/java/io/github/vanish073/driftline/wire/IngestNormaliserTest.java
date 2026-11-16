@@ -6,11 +6,13 @@ import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.EventType;
 import io.github.vanish073.driftline.core.event.OrderPayload;
 import io.github.vanish073.driftline.core.event.PaymentPayload;
+import io.github.vanish073.driftline.core.event.RefundPayload;
 import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.wire.hmac.WebhookSignature;
 import io.github.vanish073.driftline.wire.ingest.IngestNormaliser;
 import io.github.vanish073.driftline.wire.ingest.IngestResult;
@@ -101,5 +103,24 @@ class IngestNormaliserTest {
         assertThat(e.traceparent()).isEmpty();
         assertThat(IngestNormaliser.orderEvent(M, body, Optional.of("bad key"), NOW, Optional.empty()))
                 .isInstanceOfSatisfying(IngestResult.Rejected.class, r -> assertThat(r.status()).isEqualTo(400));
+    }
+
+    @Test
+    void anObservationBecomesAGatewayEnvelopeWithItsDerivedKeyAndARepeatHashesTheSame() {
+        CallRequest.Observation o = new CallRequest.Observation(EventType.REFUND_PROCESSED, "obs_abc", AT,
+                new RefundPayload(PaymentId.of("pay_1"), Money.ofPaise(49_900)));
+        IngestResult.Accepted a = (IngestResult.Accepted) IngestNormaliser.observation(M, o, NOW);
+        EventEnvelope e = a.envelope();
+        assertThat(e.source()).isEqualTo(Source.GATEWAY);
+        assertThat(e.eventKey()).isEqualTo("obs_abc");
+        assertThat(e.eventTime()).isEqualTo(AT);
+        assertThat(e.partition()).isEqualTo(3);
+        IngestResult.Accepted again = (IngestResult.Accepted) IngestNormaliser.observation(M, o, NOW.plusSeconds(9));
+        assertThat(again.envelope().payloadSha256()).as("a repeat is a duplicate, never a reused key")
+                .isEqualTo(e.payloadSha256());
+        CallRequest.Observation other = new CallRequest.Observation(EventType.REFUND_PROCESSED, "obs_abc", AT,
+                new RefundPayload(PaymentId.of("pay_1"), Money.ofPaise(49_901)));
+        assertThat(((IngestResult.Accepted) IngestNormaliser.observation(M, other, NOW)).envelope().payloadSha256())
+                .isNotEqualTo(e.payloadSha256());
     }
 }

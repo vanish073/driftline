@@ -7,3 +7,5 @@
 361 pr   # BUG-001: a quarantined merchant event left a duplicate-captured order un-escalated
 143 pr   # BUG-002: the settlement worker re-emitted a file it had refused
 437715671286076 pr   # BUG-003: a zombie's epoch bump left the rightful owner fenced and the partition stalled
+5 pr   # BUG-004: a late success paid while its merchant confirmation was pending crashed the resolver
+7 pr   # BUG-005: a duplicate capture whose webhooks were all lost was left unrefunded

@@ -15,7 +15,7 @@ public enum Canary {
     FIRST_SOLUTION_WINS("C08", "subset-sum returns the first fit, with no ambiguity check"),
     NO_FENCING("C09", "commit without the epoch check"),
     IGNORE_ESCALATE_BY("C10", "never escalate on time"),
-    BREAK_SCOPED_REFUND_KEY("C11", "refund key per break instead of per payment");
+    BREAK_SCOPED_REFUND_KEY("C11", "refund key per break, and each break acts for itself (both halves of D11 off)");
 
     private final String code;
     private final String plantedBug;

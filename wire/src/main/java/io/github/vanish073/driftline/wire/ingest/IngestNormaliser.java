@@ -1,14 +1,18 @@
 package io.github.vanish073.driftline.wire.ingest;
 
 import io.github.vanish073.driftline.core.event.EventEnvelope;
+import io.github.vanish073.driftline.core.event.PaymentPayload;
+import io.github.vanish073.driftline.core.event.RefundPayload;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.id.IdRules;
+import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.wire.hmac.WebhookSignature;
 import io.github.vanish073.driftline.wire.order.OrderEventCodec;
 import io.github.vanish073.driftline.wire.order.OrderEventMessage;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhook;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhookCodec;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -65,6 +69,30 @@ public final class IngestNormaliser {
         } catch (IllegalArgumentException e) {   // includes MalformedJson
             return new IngestResult.Rejected(400, e.getMessage());
         }
+    }
+
+    /**
+     * {@code POST /internal/v1/observations}: a fact the dispatcher learned by asking (D10), already typed, so there is
+     * no signature to check; it enters as a GATEWAY event with its derived key. {@code payloadSha256} hashes a canonical
+     * text of the observation, so a repeat is a DUPLICATE and never a reused key.
+     */
+    public static IngestResult observation(MerchantContext merchant, CallRequest.Observation o, Instant receivedAt) {
+        StringBuilder canonical = new StringBuilder().append(o.eventType().wireName()).append('|').append(o.eventKey())
+                .append('|').append(o.eventTime()).append('|');
+        switch (o.payload()) {
+            case PaymentPayload p -> canonical.append(p.paymentId().value()).append('|').append(p.orderId().value())
+                    .append('|').append(p.amount().paise());
+            case RefundPayload r -> canonical.append(r.paymentId().value()).append('|').append(r.amount().paise());
+            default -> {
+                return new IngestResult.Rejected(400, "an observation carries a payment or a refund");
+            }
+        }
+        if (!o.eventType().allows(Source.GATEWAY)) {
+            return new IngestResult.Rejected(400, o.eventType().wireName() + " is not a gateway event");
+        }
+        return new IngestResult.Accepted(new EventEnvelope(EventEnvelope.SCHEMA_VERSION, merchant.merchantId(),
+                merchant.partition(), Source.GATEWAY, o.eventKey(), o.eventType(), o.eventTime(), receivedAt,
+                Sha256.of(canonical.toString().getBytes(StandardCharsets.UTF_8)), o.payload(), Optional.empty()));
     }
 
     private static Optional<String> validTraceparent(Optional<String> traceparent) {

@@ -27,7 +27,7 @@ class PrSampleTest {
         e.put(Fault.NET_DUP, List.of("fault.net.duplicated"));
         e.put(Fault.NET_DELAY, List.of("fault.net.delayed"));
         e.put(Fault.NODE_CRASH, List.of("fault.matcher.crashes", "fault.matcher.crashes.mid_batch", "fault.ingest.crashes",
-                "fault.worker.crashes"));
+                "fault.worker.crashes", "fault.resolver.crashes", "fault.dispatcher.crashes"));
         e.put(Fault.NODE_PAUSE, List.of("fault.matcher.pauses", "fault.matcher.fenced", "coordinator.reassignments"));
         e.put(Fault.CLOCK_JUMP, List.of("fault.clock.jumps"));
         e.put(Fault.STORE_DOWN, List.of("fault.store.down.windows", "fault.store.retries"));
@@ -36,6 +36,9 @@ class PrSampleTest {
         e.put(Fault.FILE_LATE, List.of("fault.file.late", "breaks.FEED_STALL"));
         e.put(Fault.FILE_DUP, List.of("fault.file.duplicated", "settlement.worker.duplicates"));
         e.put(Fault.FILE_CONFLICT, List.of("fault.file.conflicting", "settlement.worker.conflicts", "breaks.FILE_CONFLICT"));
+        e.put(Fault.CALL_AMBIGUOUS, List.of("fault.gateway.ambiguous", "fault.gateway.keys.replayed"));
+        e.put(Fault.WEBHOOK_LOST, List.of("fault.gateway.webhooks.lost", "outbox.STATUS_QUERY_ORDER"));
+        e.put(Fault.STATUS_STALE, List.of("fault.gateway.status.stale", "breaks.STATUS_CONFLICT"));
         return e;
     }
 

@@ -19,9 +19,9 @@ import java.util.Objects;
  *                         (§6.4); equal to {@code graceDays}, so every file a payment could be settled in is complete
  *                         when its SETTLEMENT_DUE fires
  * @param solveBudgetOps   the batch solver's budget in operations, never time (D7); also its memory bound in bytes
- * @param probeAfter       how long after a payment goes PENDING, in gateway event time, the pending-order probe asks
- *                         the gateway for its status if no outcome has arrived (§9.2, WEBHOOK_LOST)
- * @param maxProbes        how many probes a payment that stays PENDING gets, {@code probeAfter} apart
+ * @param probeAfter       how long after an order's first event, in event time, the pending-order probe asks the
+ *                         gateway about it if it is still not paid with a known success (§9.2, WEBHOOK_LOST)
+ * @param maxProbes        how many probes such an order gets, {@code probeAfter} apart
  */
 public record MatcherConfig(Duration boundGateway, Duration boundMerchant, Duration idleTimeout, Duration skewAllowance,
                             Duration orderGrace, int graceDays, Duration expectedArrival, Duration stallTimeout,

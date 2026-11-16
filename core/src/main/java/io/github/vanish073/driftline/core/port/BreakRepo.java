@@ -105,6 +105,13 @@ public interface BreakRepo {
     List<Break> dueForReview(Instant now, int limit);
 
     /**
+     * When the resolver next has work: the earliest {@code reviewAt} of a planned break in DETECTED, AWAITING_EVIDENCE
+     * or ACTION_PENDING, or the earliest detection time of such a break not planned yet; empty if there is none. Drivers
+     * sleep until then instead of polling.
+     */
+    Optional<Instant> nextReviewAt();
+
+    /**
      * Asks the resolver to look at a planned break again no later than {@code at} (new evidence, a command result). An
      * unplanned break is already due, so nothing changes.
      */

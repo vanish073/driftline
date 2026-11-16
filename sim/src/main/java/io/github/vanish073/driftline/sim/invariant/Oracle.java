@@ -23,12 +23,13 @@ import java.util.TreeSet;
  * {@code "TYPE merchant/subject"}, the same key as a Driftline break.
  *
  * <ul>
- *   <li>LATE_SUCCESS: the gateway reported a failure, then captured the payment.</li>
+ *   <li>LATE_SUCCESS: the gateway reported a failure, then captured the payment. A failure whose only webhook was
+ *       lost (WEBHOOK_LOST) was never reported, and no API reveals it, so that payment is an ordinary success.</li>
  *   <li>DEBITED_NO_ORDER: captured, and the merchant's final order is paid with no payment at all.</li>
  *   <li>DUPLICATE_CAPTURE: an order with two or more captured payments; every one but the kept one (the payment the
  *       order is paid with, else the earliest capture, then the lower id) is a break.</li>
  *   <li>MISSING_SETTLEMENT: captured, and not settled in any file up to its due date plus grace, provided the world
- *       produced files that far.</li>
+ *       produced files that far; a payment refunded before it was settled is never settled, so it is not missing.</li>
  *   <li>SHORT_SETTLEMENT and ORPHAN_SETTLEMENT: every short line and every extra line the bank wrote.</li>
  * </ul>
  */
@@ -57,7 +58,7 @@ public final class Oracle {
             MerchantId m = p.merchant();
             String id = p.id().value();
             capturedByOrder.computeIfAbsent(m.value() + "/" + p.order().value(), k -> new ArrayList<>()).add(p);
-            if (p.failedBeforeCapture()) {
+            if (p.failedBeforeCapture() && p.failureReported()) {
                 out.add(key(BreakType.LATE_SUCCESS, m, id));
             }
             Optional<PaymentId> paidWith = merchants.get(m).order(p.order()).flatMap(FakeMerchant.Order::paidWith);
@@ -67,7 +68,8 @@ public final class Oracle {
             Instant captured = epoch.plusMillis(p.capturedAtMillis());
             LocalDate deadline = lastOnTimeDate(captured, cycleDays, graceDays);
             boolean onTime = p.settledOn().filter(d -> !d.isAfter(deadline)).isPresent();
-            if (!onTime && !deadline.isAfter(lastFileDate)) {
+            boolean refundedUnsettled = !p.refunds().isEmpty() && p.settledOn().isEmpty();   // never settled, by design
+            if (!onTime && !refundedUnsettled && !deadline.isAfter(lastFileDate)) {
                 out.add(key(BreakType.MISSING_SETTLEMENT, m, id));
             }
         }

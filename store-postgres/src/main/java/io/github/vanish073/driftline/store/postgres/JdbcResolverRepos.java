@@ -179,6 +179,18 @@ final class JdbcResolverRepos {
         }
 
         @Override
+        public Optional<Instant> nextAttemptAt() {
+            try (PreparedStatement ps = tx.connection().prepareStatement(
+                    "SELECT min(next_attempt_at) AS next FROM outbox WHERE status <> 'DONE'");
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return optionalInstant(rs, "next");
+            } catch (SQLException e) {
+                throw SqlErrors.translate("next attempt", e);
+            }
+        }
+
+        @Override
         public boolean complete(String commandId, Map<String, String> result) {
             Command c = list(SELECT + " WHERE command_id = ? FOR UPDATE", commandId).stream().findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("no command " + commandId));

@@ -237,8 +237,10 @@ class ResolverTest {
         resolver = new Resolver(Resolver.Config.DEFAULT, Canaries.of(Canary.IGNORE_ESCALATE_BY), CrashPoints.NONE);
         Break b = debitedNoOrder();
         resolve(T0.plus(Duration.ofMinutes(16)));
-        resolve(plan(b).escalateBy().plusSeconds(1));
+        Instant past = plan(b).escalateBy().plusSeconds(1);
+        resolve(past);
         assertThat(brk(BreakType.DEBITED_NO_ORDER, "pay_1").state()).isNotEqualTo(BreakState.ESCALATED);
+        assertThat(plan(b).reviewAt()).as("the deadline is forgotten, not spun on").isAfter(past);
     }
 
     @Test
@@ -258,7 +260,7 @@ class ResolverTest {
     }
 
     @Test
-    void canariesC02AndC11ChangeOnlyTheRefundKey() {
+    void canaryC02SendsTheRefundWithNoKey() {
         resolver = new Resolver(Resolver.Config.DEFAULT, Canaries.of(Canary.NO_REFUND_KEY), CrashPoints.NONE);
         debitedNoOrder();
         order(EventType.ORDER_EXPIRED, 3, T0.plus(Duration.ofMinutes(16)), null);
@@ -314,6 +316,22 @@ class ResolverTest {
         assertThat(commands(CommandKind.REFUND)).isEmpty();
     }
 
+    @Test
+    void aLateSuccessPaidWhileTheMerchantConfirmIsPendingResolvesAutomatically() {
+        // BUG-004: ACTION_PENDING -> SELF_HEALED is not in the lifecycle; Driftline had already acted
+        lateSuccess();
+        Instant now = T0.plus(Duration.ofMinutes(2));
+        resolve(now);
+        answer(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "SUCCEEDED"), now.plusSeconds(1));
+        resolve(now.plusSeconds(1));
+        assertThat(brk(BreakType.LATE_SUCCESS, "pay_1").state()).isEqualTo(BreakState.ACTION_PENDING);
+        order(EventType.ORDER_PAID, 3, now.plusSeconds(2), P1);   // the merchant took it on its own; no answer yet
+        batch(now.plusSeconds(2));
+        resolve(now.plusSeconds(2));
+        assertThat(brk(BreakType.LATE_SUCCESS, "pay_1").state()).isEqualTo(BreakState.RESOLVED_AUTO);
+        assertThat(commands(CommandKind.REFUND)).isEmpty();
+    }
+
     // ---- DUPLICATE_CAPTURE ----
 
     @Test
@@ -364,6 +382,31 @@ class ResolverTest {
         assertThat(resolve(T0.plus(Duration.ofHours(1))).decisions()).as("not due before escalate_by").isEmpty();
         resolve(T0.plus(Duration.ofHours(4)));
         assertThat(brk(BreakType.ORPHAN_SETTLEMENT, "stl_1:2").state()).isEqualTo(BreakState.ESCALATED);
+    }
+
+    @Test
+    void anOrphanNamingAPaymentAsksTheGatewayAboutItAndAsksAgainWhileTheAnswerIsNotFinal() {
+        // D64: the reference may be a capture whose webhooks were all lost
+        Break b = store.transact("raise", tx -> {
+            Break x = Break.detected(M, BreakType.ORPHAN_SETTLEMENT, "stl_1:4", T0,
+                    Map.of("reason", "UNKNOWN_REFERENCE", "reference", "pay_9", "amount", "499.00"));
+            tx.breaks().raise(x, "test");
+            return x;
+        });
+        resolve(T0.plusSeconds(1));
+        assertThat(commands(CommandKind.STATUS_QUERY_PAYMENT)).singleElement()
+                .satisfies(c -> assertThat(c.args()).containsEntry("payment_id", "pay_9"));
+        assertThat(brk(BreakType.ORPHAN_SETTLEMENT, "stl_1:4").state()).isEqualTo(BreakState.AWAITING_EVIDENCE);
+
+        answer(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "PENDING"), T0.plusSeconds(2));
+        resolve(T0.plusSeconds(2));
+        assertThat(commands(CommandKind.STATUS_QUERY_PAYMENT)).as("a stale answer is asked again").hasSize(2);
+        assertThat(plan(b).reviewAt()).isEqualTo(T0.plusSeconds(2).plus(Resolver.Config.DEFAULT.requeryAfter()));
+
+        answer(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "SUCCEEDED"), T0.plus(Duration.ofMinutes(3)));
+        resolve(T0.plus(Duration.ofMinutes(3)));
+        assertThat(commands(CommandKind.STATUS_QUERY_PAYMENT)).as("a final answer is not asked again").hasSize(2);
+        assertThat(plan(b).reviewAt()).as("then it waits for attribution").isEqualTo(plan(b).escalateBy());
     }
 
     @Test

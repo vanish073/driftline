@@ -9,6 +9,8 @@ Each row's seed is also added to `sim/regression-seeds.txt`, which every CI run 
 | BUG-001 | 2026-11-15 | 5 | 361 · `pr` · 64a5874 + Shift 5 work | INV-DETECTED | The world implied DUPLICATE_CAPTURE for `pay_46_a`; Driftline flagged `pay_46_b`, the payment the merchant had actually paid and fulfilled the order with, and escalated nothing | A merchant client reusing idempotency keys made Driftline quarantine `order.paid` and `order.fulfilled`. The matcher never learned which payment paid the order, kept the earliest capture, and the quarantine row was not tied to the order, so nothing marked the order's breaks as untrustworthy | Quarantining a record now also raises an IDEMPOTENCY_CONFLICT anomaly naming its order and payment (DESIGN §10.3, §8.2), and INV-DETECTED accepts that escalation for the order's DEBITED_NO_ORDER and DUPLICATE_CAPTURE (D41) · Shift 5 commit | No: it needs a reused key to land on exactly the event that says which payment paid a duplicate-captured order |
 | BUG-002 | 2026-11-15 | 5 | 143 · `pr` · 64a5874 + Shift 5 work | none at first (a stats mismatch: 1,810 FILE_CONFLICT breaks for 1,797 refused uploads in 1,000 seeds); now INV-NO-ANOMALY | The settlement worker emitted a file it had refused as a conflict; the matcher's own guard caught its lines and raised FILE_CONFLICT | A network duplicate of a refused upload is a DUPLICATE receipt, and the worker re-emitted every duplicate without checking that the stored receipt was ACCEPTED | A duplicate of a REJECTED_CONFLICT receipt is treated as a conflict and never emitted; a FILE_CONFLICT raised by the matcher (not the worker) is now an INV-NO-ANOMALY violation, verified to fail on seed 143 without the fix · Shift 5 commit | Yes, once written: `SettlementWorkerNodeTest` now covers it. Nobody had thought to upload a refused file twice |
 | BUG-003 | 2026-11-15 | 6 | 437715671286076 · `pr` · c8aeab0 (also fails there; found by PR #3's CI, run 43771567128) | INV-DRAINED | Partition 0 stopped at offset 230 of 306 and never moved again, though the coordinator still assigned it to a live matcher | Both matchers paused together and both expired. matcher-a came back first, rejoined and acquired p0 (epoch 2). matcher-b then woke and ran an assignment of p0 delivered to its expired member id, bumping the epoch to 3 before its heartbeat told it to rejoin. matcher-a, the rightful owner, was fenced on its next commit, dropped p0, and the simulator's matcher node had no rule to take it back. The production driver already has that rule (D50) | The simulator's matcher node now acquires a fenced partition again when the coordinator still assigns it to the same member after three session timeouts, as `PartitionDriver` does (D53). Verified: the seed fails without the fix (on `main` and on the branch) and passes with it, resuming at offset 230 under epoch 4 · Shift 6 commit | No: it needs two pauses that overlap, end in a particular order, and straddle an assignment. The regression seed covers the simulator, and a new `PartitionDriverIT` test covers the production rule, which had no test |
+| BUG-004 | 2026-11-16 | 8 | 5 · `pr` · 03b0654 + Shift 8 phase 4 work (seed 21 fails the same way) | none: the resolver threw (SIM-STEP-THREW) | `ACTION_PENDING -> SELF_HEALED is not in the lifecycle` for a LATE_SUCCESS break, and the resolver stopped | The resolver asked the merchant to confirm a late success (ACTION_PENDING). The merchant's own `order.paid` with that payment reached the matcher before the merchant's answer. On the next review the playbook saw the order paid with this payment and, with no accepted confirmation on record, closed the break SELF_HEALED. D60 leaves that move out on purpose: once Driftline has acted, the fix is not the world's alone | A break that has acted and finds its order paid with this payment closes RESOLVED_AUTO ("paid while a confirmation was pending"). The fake merchant also answers a confirmation of the payment its order is already paid with as ACCEPTED (an idempotent no-op), as a real merchant API would. Verified: seeds 5 and 21 fail with the fix reverted and pass with it · Shift 8 phase 4 commit | Yes, and it should have: the playbook's tests covered "accepted, then paid" and "rejected", not "paid before any answer". `ResolverTest.aLateSuccessPaidWhileTheMerchantConfirmIsPendingResolvesAutomatically` now does |
+| BUG-005 | 2026-11-16 | 8 | 7 · `pr` · 03b0654 + Shift 8 phase 4 work (seeds 17 and 35 fail the same way) | INV-CUSTOMER-WHOLE | A duplicate capture was never refunded: `m_0/pay_46_b was debited, but its order was not fulfilled with it, it was not refunded, and no break about it was escalated` | Every webhook of the second payment was lost (WEBHOOK_LOST) and the order was paid with the first, so the pending-order probe rightly skipped the order (D61). The payment's only trace was a referenced settlement line, raised as ORPHAN_SETTLEMENT (UNKNOWN_REFERENCE). The orphan playbook only waited for attribution and escalated the line after 4 h, though the line named the payment and the gateway could have been asked | The orphan playbook asks the gateway about the line's reference (STATUS_QUERY_PAYMENT, re-asked while the answer is not final, D64). The dispatcher publishes the outcome as an observation, the matcher attributes the line and raises the DUPLICATE_CAPTURE, and the resolver refunds it. Verified: seeds 7, 17 and 35 fail with the query disabled and pass with it · Shift 8 phase 4 commit | No: it needs a payment whose webhooks are all lost, on an order already paid with another payment. `ResolverTest.anOrphanNamingAPaymentAsksTheGatewayAboutItAndAsksAgainWhileTheAnswerIsNotFinal` now covers the playbook step |
 
 ## Entry template (detailed write-up below the table)
 
@@ -81,6 +83,50 @@ Each row's seed is also added to `sim/regression-seeds.txt`, which every CI run 
 - Fix: the same rule in the simulator's `MatcherInstance` (D53). With it, matcher-a acquires p0 again 30 s after being fenced, at epoch 4, and resumes at offset 230.
 - Why ordinary tests missed it: it needs two overlapping pauses that end in a particular order and straddle an assignment. `PartitionDriverIT` proved a zombie is fenced, but nothing tested the production driver's re-acquire branch either.
 - Regression: seed 437715671286076 added to `sim/regression-seeds.txt`; `PartitionDriverIT.aFencedPartitionStillAssignedHereIsAcquiredAgainAndNothingIsLost` now covers the production rule (an epoch bumped behind a running driver: fenced, acquired again, every event applied once).
+
+### BUG-004: a late success paid while its merchant confirmation was pending crashed the resolver
+- Found: 2026-11-16, Shift 8 (phase 4, the first campaign with the resolver and dispatcher in the simulator), seed 5, profile `pr`, commit 03b0654 plus uncommitted phase 4 work, swarm `NET_DUP=135‰ NET_DELAY=271‰ NODE_PAUSE=2/day STORE_DOWN=1/day FILE_DUP=239‰ FILE_CONFLICT=63‰ CALL_AMBIGUOUS=112‰ WEBHOOK_LOST=41‰ STATUS_STALE=258‰`. Seed 21 fails the same way.
+- Repro (before the fix): `./gradlew :sim:run --args="--seed 5 --profile pr --trace"`
+- Invariant: none was violated first; the resolver threw (SIM-STEP-THREW), on the lifecycle guard of D60.
+- What happened (trace excerpt):
+  ```
+  000146708887 gateway payment.succeeded pay_121_a 3655.69
+  000146709099 matcher-b p0 epoch 2 batch @850 applied=1 ... raised=LATE_SUCCESS(pay_121_a)
+  000146709149 resolver reviews brk_l2zbcejd3nfno23hninsg6lml3->AWAITING_EVIDENCE
+  000146710155 dispatcher records cmd_spslm62sipleru4cz4ccwnc4wv.1 {..., status=SUCCEEDED}
+  000146710205 resolver reviews brk_l2zbcejd3nfno23hninsg6lml3->ACTION_PENDING
+  000146710214 merchant:m_1 order.paid ord_121 v3
+  000146710255 dispatcher sends cmd_k73xwclleorg6tt6cordm6sdri.1 MerchantConfirm to MERCHANT
+  000146710272 matcher-b p0 epoch 2 batch @851 applied=1 ...
+  000146710304 merchant:m_1 confirm ord_121 with pay_121_a: REJECTED
+  000146710322 kernel VIOLATION SIM-STEP-THREW: resolver: java.lang.IllegalStateException:
+               brk_l2zbcejd3nfno23hninsg6lml3: ACTION_PENDING -> SELF_HEALED is not in the lifecycle
+  ```
+- Root cause: the LATE_SUCCESS playbook's "the order is paid with this payment" branch had two outcomes, RESOLVED_AUTO after an accepted confirmation and SELF_HEALED otherwise. It did not consider a break that had already asked the merchant (ACTION_PENDING) and found the order paid before the answer arrived. The fake merchant made it worse: it answered REJECTED to a confirmation of the very payment its order was already paid with.
+- Fix: in that branch, a break whose state cannot move to SELF_HEALED (it has acted) closes RESOLVED_AUTO. The fake merchant answers ACCEPTED when the order is already paid with the confirmed payment.
+- Why ordinary tests missed it: the playbook's tests answered the confirmation before the order changed. The race needs the merchant's own `order.paid` to overtake its answer.
+- Regression: seed 5 added to `sim/regression-seeds.txt`; `ResolverTest.aLateSuccessPaidWhileTheMerchantConfirmIsPendingResolvesAutomatically`.
+
+### BUG-005: a duplicate capture whose webhooks were all lost was left unrefunded
+- Found: 2026-11-16, Shift 8 (phase 4), seed 7, profile `pr`, commit 03b0654 plus uncommitted phase 4 work, swarm `NODE_PAUSE=1/day CLOCK_JUMP=3/day STORE_DOWN=1/day PRODUCE_AMBIGUOUS=127‰ MERCHANT_KEY_REUSE=30‰ FILE_DUP=167‰ WEBHOOK_LOST=31‰`. Seeds 17 and 35 fail the same way.
+- Repro (before the fix): `./gradlew :sim:run --args="--seed 7 --profile pr --trace"`
+- Invariant: INV-CUSTOMER-WHOLE.
+- What happened (trace excerpt):
+  ```
+  000168195834 gateway payment.pending pay_46_a 927.45 (webhook given up on)
+  000168202710 gateway payment.succeeded pay_46_a 927.45
+  000168202910 merchant:m_0 order.paid ord_46 v3
+  000168211514 gateway payment.pending pay_46_b 927.45 (webhook given up on)
+  000168218390 gateway payment.succeeded pay_46_b 927.45 (webhook given up on)
+  000168218585 merchant:m_0 ignores payment pay_46_b for ord_46 in order.paid
+  000208800126 matcher-b p0 epoch 2 batch @711 ... raised=... ORPHAN_SETTLEMENT(stl_m_0_20261115:8) ...
+  000770400050 kernel VIOLATION INV-CUSTOMER-WHOLE: m_0/pay_46_b was debited, but its order was not
+               fulfilled with it, it was not refunded, and no break about it was escalated
+  ```
+- Root cause: Driftline could learn of pay_46_b only from the bank's line naming it. The ORPHAN_SETTLEMENT playbook held the money in suspense and waited for attribution, which could only come from a webhook that would never arrive, then escalated the line, not the customer's double charge.
+- Fix: D64. The orphan playbook asks the gateway about the reference; a new outcome enters as an observation (D10) and heals the orphan, and the DUPLICATE_CAPTURE it implies is raised and refunded.
+- Why ordinary tests missed it: the probe (D61) was tested for unpaid orders; a lost duplicate on a paid order reaches Driftline only through settlement.
+- Regression: seed 7 added to `sim/regression-seeds.txt`; a `ResolverTest` case for the reference query.
 
 ## Hunting targets (subtle areas to aim the simulator at; these are *not* bugs)
 

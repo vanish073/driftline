@@ -1,13 +1,17 @@
 package io.github.vanish073.driftline.sim;
 
 import io.github.vanish073.driftline.core.breaks.Break;
+import io.github.vanish073.driftline.core.dispatcher.Dispatcher;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.hooks.Canaries;
+import io.github.vanish073.driftline.core.hooks.CrashPoint;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.matcher.MatcherConfig;
 import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
+import io.github.vanish073.driftline.core.port.CallRequest;
+import io.github.vanish073.driftline.core.resolver.Resolver;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import io.github.vanish073.driftline.core.time.IstCalendar;
 import io.github.vanish073.driftline.sim.fault.FaultEvent;
@@ -21,8 +25,11 @@ import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.kernel.SimNetwork;
 import io.github.vanish073.driftline.sim.kernel.Trace;
 import io.github.vanish073.driftline.sim.node.Coordinator;
+import io.github.vanish073.driftline.sim.node.DispatcherNode;
+import io.github.vanish073.driftline.sim.node.ForcedCrash;
 import io.github.vanish073.driftline.sim.node.IngestNode;
 import io.github.vanish073.driftline.sim.node.MatcherInstance;
+import io.github.vanish073.driftline.sim.node.ResolverNode;
 import io.github.vanish073.driftline.sim.node.SettlementWorkerNode;
 import io.github.vanish073.driftline.sim.random.SplitMix64;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
@@ -30,18 +37,22 @@ import io.github.vanish073.driftline.sim.world.FakeBank;
 import io.github.vanish073.driftline.sim.world.FakeGateway;
 import io.github.vanish073.driftline.sim.world.FakeMerchant;
 import io.github.vanish073.driftline.sim.world.PlannedOrder;
+import io.github.vanish073.driftline.sim.world.Request;
 import io.github.vanish073.driftline.sim.world.Scenario;
 import io.github.vanish073.driftline.sim.world.SettlementFeed;
 import io.github.vanish073.driftline.sim.world.Workload;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 
 /**
  * One deterministic run (DESIGN §11). Everything is driven by the seed through separate streams (§11.2): the
@@ -78,6 +89,25 @@ public final class Simulation {
     }
 
     public static RunResult run(long seed, Profile profile, Canaries canaries, boolean keepTrace) {
+        return run(seed, profile, canaries, keepTrace, Optional.empty());
+    }
+
+    /** The resolver and dispatcher nodes of a run (Shift 8). */
+    record ResolutionNodes(ResolverNode resolver, DispatcherNode dispatcher) {
+    }
+
+    /** The dispatcher's constants in the simulator: the gateway's key TTL is compressed to 5 minutes (D62). */
+    static final Dispatcher.Config DISPATCHER = new Dispatcher.Config(Duration.ofSeconds(30), Duration.ofSeconds(5),
+            Duration.ofMinutes(10), Duration.ofMillis(FakeGateway.KEY_TTL_MILLIS), Duration.ofMinutes(1), 20);
+    /** How many times a forced crash point (dedicated seeds) strikes in one run. */
+    static final int FORCED_CRASHES = 3;
+
+    /**
+     * @param forcedCrash a crash point to force on purpose (Shift 8 Prove): the node that reaches it crashes the first
+     *                    {@link #FORCED_CRASHES} times
+     */
+    public static RunResult run(long seed, Profile profile, Canaries canaries, boolean keepTrace,
+                                Optional<CrashPoint> forcedCrash) {
         SplitMix64 workloadRng = SplitMix64.stream(seed, "workload");
         SplitMix64 networkRng = SplitMix64.stream(seed, "network");
         Swarm swarm = profile.faults ? Swarm.draw(SplitMix64.stream(seed, "swarm")) : Swarm.NONE;
@@ -134,7 +164,45 @@ public final class Simulation {
                 coordinator, faults, trace);
         SettlementFeed feed = new SettlementFeed(scheduler, network, faults, trace, worker);
         FakeGateway gateway = new FakeGateway(scheduler, network, bank, ingest, trace, secrets, merchants,
-                SplitMix64.stream(seed, "bank"), feed, FakeGateway.BATCH_DAY_PERCENT);
+                SplitMix64.stream(seed, "bank"), feed, FakeGateway.BATCH_DAY_PERCENT, faults);
+        if (forcedCrash.filter(cp -> cp.ordinal() > CrashPoint.CP5.ordinal()).isPresent()) {
+            throw new IllegalArgumentException(forcedCrash.get() + " is armed by NODE_CRASH faults; only CP1-CP5 are forced");
+        }
+        ForcedCrash forced = forcedCrash.isPresent() ? new ForcedCrash(forcedCrash, FORCED_CRASHES) : ForcedCrash.none();
+        ResolverNode resolverNode = new ResolverNode(scheduler, new SimClock(scheduler), store, trace, faults,
+                Resolver.Config.DEFAULT, canaries, forced);
+        long[] opsNotices = {0};
+        DispatcherNode.Router router = (call, reply) -> {
+            Consumer<Map<String, String>> back = facts -> network.send(DispatcherNode.NAME, () -> reply.accept(facts));
+            switch (call.target()) {
+                case GATEWAY -> network.send("gateway", DISPATCHER.lookupMargin().toMillis(),
+                        () -> gateway.handle(call, back::accept));
+                case MERCHANT -> {
+                    FakeMerchant merchant = merchants.get(call.merchantId());
+                    network.send("merchant:" + call.merchantId(), () -> back.accept(
+                            merchant.confirm((CallRequest.MerchantConfirm) call.request(), call.idempotencyKey())));
+                }
+                case DRIFTLINE -> network.send(IngestNode.NAME, () -> ingest.receive(new Request.Observation(
+                        call.merchantId(), (CallRequest.Observation) call.request()), status -> {
+                            if (status == 202) {
+                                back.accept(status("ACCEPTED"));
+                            }
+                        }));
+                case OPS -> network.send("ops", () -> {
+                    opsNotices[0]++;
+                    back.accept(status("DELIVERED"));
+                });
+            }
+        };
+        DispatcherNode dispatcherNode = new DispatcherNode(scheduler, new SimClock(scheduler), store, trace, faults,
+                DISPATCHER, canaries, router, forced);
+        resolverNode.dispatcherWake(dispatcherNode::wake);
+        dispatcherNode.resolverWake(resolverNode::wake);
+        matchers.values().forEach(m -> m.afterCommit(() -> {
+            resolverNode.wake();
+            dispatcherNode.wake();
+        }));
+        ResolutionNodes resolution = new ResolutionNodes(resolverNode, dispatcherNode);
         LocalDate lastFileDate = IstCalendar.istDate(EPOCH).plusDays(profile.trafficDays + profile.drainDays);
         invariants.world(gateway, feed, merchants, EPOCH, CYCLE_DAYS, config.graceDays(), lastFileDate);
 
@@ -144,8 +212,12 @@ public final class Simulation {
         clocks.put(IngestNode.NAME, ingest.clock());
         clocks.put(SettlementWorkerNode.NAME, worker.clock());
         matchers.forEach((name, m) -> clocks.put(name, m.clock()));
-        scheduleFaults(faults, scheduler, trace, store, ingest, worker, matchers, clocks, runMillis, profile.trafficDays);
-        scheduler.at(runMillis, "kernel", () -> heal(faults, scheduler, trace, store, ingest, worker, matchers, clocks));
+        clocks.put(ResolverNode.NAME, resolverNode.clock());
+        clocks.put(DispatcherNode.NAME, dispatcherNode.clock());
+        scheduleFaults(faults, scheduler, trace, store, ingest, worker, matchers, resolution, clocks, runMillis,
+                profile.trafficDays);
+        scheduler.at(runMillis, "kernel", () -> heal(faults, scheduler, trace, store, ingest, worker, matchers,
+                resolution, clocks));
         coordinator.start();
 
         int orderCount = workloadRng.between(profile.minOrders, profile.maxOrders);
@@ -214,6 +286,24 @@ public final class Simulation {
             }
         }
         stats.put("oracle.expected", (long) invariants.expected().size());
+        stats.put("oracle.covered.escalated_line", invariants.coveredByEscalatedLine());
+        stats.put("resolver.decisions", resolverNode.decisions());
+        stats.put("dispatcher.sent", dispatcherNode.sent());
+        stats.put("dispatcher.results", dispatcherNode.results());
+        stats.put("ops.notices", opsNotices[0]);
+        stats.put("gateway.webhooks.lost", gateway.lostWebhooks());
+        stats.put("forced.crashes", (long) forced.taken());
+        for (var c : store.committedCommands()) {
+            stats.merge("outbox." + c.kind().name(), 1L, Long::sum);
+        }
+        long refunds = 0;
+        for (FakeGateway.Payment p : gateway.payments().values()) {
+            refunds += p.refunds().size();
+        }
+        stats.put("gateway.refunds", refunds);
+        for (Break b : store.committedBreaks()) {
+            stats.merge("resolution." + b.type().name() + "." + b.state().name(), 1L, Long::sum);
+        }
         stats.put("oracle.detected", (long) invariants.detected().size());
         stats.put("oracle.covered.idempotency_conflict", invariants.coveredByIdempotencyConflict());
         stats.put("oracle.covered.unresolved_batch", invariants.coveredByUnresolvedBatch());
@@ -232,8 +322,15 @@ public final class Simulation {
         }
         stats.put("log.records", records);
         faults.counters().forEach((k, v) -> stats.put("fault." + k, v));
-        return new RunResult(seed, profile, canaries, swarm.toString(), scheduler.steps(), scheduler.now(),
+        return new RunResult(seed, profile, canaries, forcedCrash, swarm.toString(), scheduler.steps(), scheduler.now(),
                 trace.digestHex(), violation, stats, trace.tail(), trace.all());
+    }
+
+    /** A one-fact answer, {@code status → value} (no Map.of in the simulator: its order is salted per JVM). */
+    private static TreeMap<String, String> status(String value) {
+        TreeMap<String, String> out = new TreeMap<>();
+        out.put("status", value);
+        return out;
     }
 
     private static TreeSet<String> reusedKeys(TreeMap<MerchantId, FakeMerchant> merchants) {
@@ -245,7 +342,7 @@ public final class Simulation {
     /** Schedules the planned event faults and the per-node clock skews of the RUN phase. */
     private static void scheduleFaults(FaultInjector faults, Scheduler scheduler, Trace trace, InMemoryStore store,
                                        IngestNode ingest, SettlementWorkerNode worker,
-                                       TreeMap<String, MatcherInstance> matchers,
+                                       TreeMap<String, MatcherInstance> matchers, ResolutionNodes resolution,
                                        TreeMap<String, SimClock> clocks, long runMillis, int trafficDays) {
         TreeMap<String, Long> skews = faults.skews(new ArrayList<>(clocks.keySet()));
         skews.forEach((node, offset) -> clocks.get(node).setOffsetMillis(offset));
@@ -255,6 +352,8 @@ public final class Simulation {
         List<String> crashable = new ArrayList<>(MATCHERS);
         crashable.add(IngestNode.NAME);
         crashable.add(SettlementWorkerNode.NAME);
+        crashable.add(ResolverNode.NAME);
+        crashable.add(DispatcherNode.NAME);
         List<FaultEvent> plan = faults.plan(runMillis, trafficDays, crashable, MATCHERS, new ArrayList<>(clocks.keySet()));
         int[] storeDown = {0};
         for (FaultEvent event : plan) {
@@ -265,6 +364,20 @@ public final class Simulation {
                 switch (event) {
                     case FaultEvent.Crash c when c.node().equals(IngestNode.NAME) -> ingest.crash(c.downtimeMillis());
                     case FaultEvent.Crash c when c.node().equals(SettlementWorkerNode.NAME) -> worker.crash(c.downtimeMillis());
+                    case FaultEvent.Crash c when c.node().equals(ResolverNode.NAME) -> {
+                        if (c.midBatch()) {
+                            resolution.resolver().armCrash(c.downtimeMillis());
+                        } else {
+                            resolution.resolver().crash(c.downtimeMillis());
+                        }
+                    }
+                    case FaultEvent.Crash c when c.node().equals(DispatcherNode.NAME) -> {
+                        if (c.midBatch()) {
+                            resolution.dispatcher().armCrash(c.downtimeMillis());
+                        } else {
+                            resolution.dispatcher().crash(c.downtimeMillis());
+                        }
+                    }
                     case FaultEvent.Crash c when c.midBatch() -> matchers.get(c.node()).armCrash(c.downtimeMillis());
                     case FaultEvent.Crash c -> matchers.get(c.node()).crash(c.downtimeMillis());
                     case FaultEvent.Pause p -> matchers.get(p.node()).armPause(p.durationMillis());
@@ -302,13 +415,15 @@ public final class Simulation {
     /** HEAL (§11.6): stop faults, bring every node and the store back, resynchronise clocks. */
     private static void heal(FaultInjector faults, Scheduler scheduler, Trace trace, InMemoryStore store,
                              IngestNode ingest, SettlementWorkerNode worker, TreeMap<String, MatcherInstance> matchers,
-                             TreeMap<String, SimClock> clocks) {
+                             ResolutionNodes resolution, TreeMap<String, SimClock> clocks) {
         faults.heal();
         store.setUnavailable(false);
         clocks.values().forEach(c -> c.setOffsetMillis(0));
         ingest.heal();
         worker.heal();
         matchers.values().forEach(MatcherInstance::heal);
+        resolution.resolver().heal();
+        resolution.dispatcher().heal();
         trace.line(scheduler.now(), "kernel", "HEAL");
     }
 

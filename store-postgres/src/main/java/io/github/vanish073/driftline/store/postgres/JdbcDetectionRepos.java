@@ -526,6 +526,20 @@ final class JdbcDetectionRepos {
         }
 
         @Override
+        public Optional<Instant> nextReviewAt() {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    SELECT min(coalesce(review_at, detected_at)) AS next FROM breaks
+                     WHERE state IN ('DETECTED', 'AWAITING_EVIDENCE', 'ACTION_PENDING')
+                    """);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return optionalInstant(rs, "next");
+            } catch (SQLException e) {
+                throw SqlErrors.translate("next review", e);
+            }
+        }
+
+        @Override
         public void wake(MerchantId merchantId, String breakId, Instant at) {
             try (PreparedStatement ps = tx.connection().prepareStatement("""
                     UPDATE breaks SET review_at = ? WHERE merchant_id = ? AND break_id = ? AND review_at > ?

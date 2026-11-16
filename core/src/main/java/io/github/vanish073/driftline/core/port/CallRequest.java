@@ -23,6 +23,16 @@ public sealed interface CallRequest {
         }
     }
 
+    /**
+     * {@code STATUS_QUERY_ORDER}: every payment the gateway holds for an order, with its status (a read): the
+     * pending-order probe, which recovers payments whose webhooks were lost (§9.2, D61).
+     */
+    record StatusQueryOrder(OrderId orderId) implements CallRequest {
+        public StatusQueryOrder {
+            Objects.requireNonNull(orderId, "orderId");
+        }
+    }
+
     /** {@code REFUND}: a full refund of a captured payment (v1 has full refunds only). */
     record Refund(PaymentId paymentId, OrderId orderId, Money amount) implements CallRequest {
         public Refund {

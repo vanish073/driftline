@@ -1072,6 +1072,21 @@ public final class InMemoryStore implements Store {
             }
 
             @Override
+            public Optional<Instant> nextReviewAt() {
+                requireOpen();
+                Optional<Instant> next = Optional.empty();
+                for (Break b : breakView.where(x -> x.state() == BreakState.DETECTED
+                        || x.state() == BreakState.AWAITING_EVIDENCE || x.state() == BreakState.ACTION_PENDING)) {
+                    Instant at = planView.get(breakKey(b.merchantId(), b.breakId())).map(Plan::reviewAt)
+                            .orElse(b.detectedAt());
+                    if (next.isEmpty() || at.isBefore(next.get())) {
+                        next = Optional.of(at);
+                    }
+                }
+                return next;
+            }
+
+            @Override
             public void wake(MerchantId merchantId, String breakId, Instant at) {
                 requireOpen();
                 Key key = breakKey(merchantId, breakId);
@@ -1139,6 +1154,13 @@ public final class InMemoryStore implements Store {
                     out.add(claimed);
                 }
                 return List.copyOf(out);
+            }
+
+            @Override
+            public Optional<Instant> nextAttemptAt() {
+                requireOpen();
+                return commandView.where(c -> c.status() != CommandStatus.DONE).stream().map(Command::nextAttemptAt)
+                        .min(Comparator.naturalOrder());
             }
 
             @Override

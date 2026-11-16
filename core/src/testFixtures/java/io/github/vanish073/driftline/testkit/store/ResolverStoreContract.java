@@ -125,6 +125,8 @@ public abstract class ResolverStoreContract {
                 .containsExactly(unplanned.breakId(), sooner.breakId(), later.breakId());
         assertThat(many(t -> t.breaks().dueForReview(T0.plusSeconds(30), 2))).hasSize(2);
 
+        assertThat(one(t -> t.breaks().nextReviewAt())).as("an unplanned break is due from its detection")
+                .contains(T0);
         run(t -> t.breaks().wake(M, future.breakId(), T0.plusSeconds(5)));
         assertThat(one(t -> t.breaks().planOf(M, future.breakId())).orElseThrow().reviewAt())
                 .isEqualTo(T0.plusSeconds(5));
@@ -197,6 +199,8 @@ public abstract class ResolverStoreContract {
         assertThat(a.nextAttemptAt()).isEqualTo(third.plusSeconds(200));
         assertThat(many(t -> t.outbox().forBreak(M, b.breakId()))).extracting(Command::commandId)
                 .containsExactly("cmd_0", "cmd_a", "cmd_b", "cmd_later");
+        assertThat(one(t -> t.outbox().nextAttemptAt())).as("the earliest not-DONE next attempt")
+                .contains(third.plusSeconds(200));
     }
 
     @Test
@@ -210,6 +214,7 @@ public abstract class ResolverStoreContract {
         assertThat(done.status()).isEqualTo(CommandStatus.DONE);
         assertThat(done.result().orElseThrow()).containsEntry("status", "PROCESSED").containsEntry("refund_id", "rfd_9");
         assertThat(done.leaseOwner()).isEmpty();
+        assertThat(one(t -> t.outbox().nextAttemptAt())).as("nothing left to send").isEmpty();
         run(t -> t.outbox().retryAt("cmd_1", T0));
         assertThat(one(t -> t.outbox().find("cmd_1"))).contains(done);
         assertThat(many(t -> t.outbox().claim(T0.plusSeconds(3_600), "d2", T0.plusSeconds(3_630),

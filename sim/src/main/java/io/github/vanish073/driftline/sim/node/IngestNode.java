@@ -91,6 +91,7 @@ public final class IngestNode implements Ingress {
             case Request.Webhook w -> IngestNormaliser.webhook(merchant, w.body(), w.signature(), clock.now(), Optional.empty());
             case Request.OrderEvent o ->
                     IngestNormaliser.orderEvent(merchant, o.body(), o.idempotencyKey(), clock.now(), Optional.empty());
+            case Request.Observation o -> IngestNormaliser.observation(merchant, o.observation(), clock.now());
         };
         switch (result) {
             case IngestResult.Accepted a -> {

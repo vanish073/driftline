@@ -38,8 +38,18 @@ class FaultInjectorTest {
                 }
                 on.merge(f, 1, Integer::sum);
                 if (f.isRate()) {
-                    int max = f == Fault.FILE_LATE ? 500 : 300;   // up to 50% of files late, 30% of messages
-                    assertThat(s.level(f)).as(f.name()).isBetween(10, max);
+                    int min = switch (f) {
+                        case WEBHOOK_LOST -> 5;
+                        case STATUS_STALE -> 50;
+                        default -> 10;
+                    };
+                    int max = switch (f) {
+                        case FILE_LATE -> 500;      // up to 50% of files late
+                        case WEBHOOK_LOST -> 50;    // a gateway gives up on at most 5% of webhooks
+                        case STATUS_STALE -> 400;   // up to 40% of status answers lag
+                        default -> 300;             // up to 30% of messages
+                    };
+                    assertThat(s.level(f)).as(f.name()).isBetween(min, max);
                 } else if (f == Fault.CLOCK_SKEW) {
                     assertThat(s.level(f)).isEqualTo(1);
                 } else {

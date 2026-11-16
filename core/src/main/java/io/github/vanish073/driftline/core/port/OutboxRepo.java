@@ -134,6 +134,12 @@ public interface OutboxRepo {
     List<Command> claim(Instant now, String owner, Instant leaseUntil, Function<Command, Instant> retryAt, int limit);
 
     /**
+     * When the dispatcher next has work: the earliest {@code nextAttemptAt} of a command that is not DONE (a leased
+     * command's next attempt is already after its lease); empty if there is none.
+     */
+    Optional<Instant> nextAttemptAt();
+
+    /**
      * Records the command's result and makes it DONE, unless it is already DONE: the first result wins, whatever
      * attempt or dispatcher produced it.
      *

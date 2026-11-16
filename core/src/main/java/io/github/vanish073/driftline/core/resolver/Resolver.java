@@ -179,8 +179,12 @@ public final class Resolver {
                     if (b.evidence().containsKey("attributed_to")) {
                         close(BreakState.SELF_HEALED, "attributed to " + b.evidence().get("attributed_to"));
                     } else {
+                        // D64: a line naming a payment Driftline does not know may be a capture whose webhooks were
+                        // lost; ask the gateway, whose answer is published as an observation and attributes the line
+                        Optional<PaymentId> ref = Optional.ofNullable(b.evidence().get("reference")).map(PaymentId::of);
                         moveTo(BreakState.AWAITING_EVIDENCE, "waiting for attribution until escalate_by");
                         waitUntil(plan.escalateBy());
+                        ref.ifPresent(this::askAboutReference);   // may look again sooner, for a re-query
                     }
                 }
                 default -> escalate("evidence gathered; " + b.type() + " is for a person (§8.2)");
@@ -192,7 +196,8 @@ public final class Resolver {
         void refundPlaybook() {
             PaymentId p = PaymentId.of(b.subjectKey());
             Optional<String> owner = tx.payments().actionOwner(m, p);
-            if (owner.isPresent() && !owner.get().equals(b.breakId())) {
+            // C11 plants both halves of D11 off: a break-scoped key, and every break acting for itself
+            if (!breakScopedRefundKey && owner.isPresent() && !owner.get().equals(b.breakId())) {
                 if (BreakLifecycle.allowed(state, BreakState.LINKED)) {
                     close(BreakState.LINKED, "follows " + owner.get());   // D11: the owner acts for the payment
                 } else {
@@ -224,6 +229,9 @@ public final class Resolver {
                     escalate("the order was paid with this payment after its refund was decided");
                 } else if (b.type() == BreakType.LATE_SUCCESS && confirmAccepted()) {
                     close(BreakState.RESOLVED_AUTO, "the merchant accepted the late success and the order is paid");
+                } else if (!BreakLifecycle.allowed(state, BreakState.SELF_HEALED)) {
+                    // BUG-004: Driftline already asked the merchant to confirm, so the fix is not the world's alone
+                    close(BreakState.RESOLVED_AUTO, "the order is paid with this payment while a confirmation was pending");
                 } else {
                     close(BreakState.SELF_HEALED, "the order is paid with this payment");
                 }
@@ -344,6 +352,30 @@ public final class Resolver {
             return Confirmation.WAITING;
         }
 
+        /**
+         * Asks the gateway about an orphan's reference: once, and again after {@code requeryAfter} while the answer is
+         * not final (a stale status API may still say pending), up to {@code maxStatusQueries}. The answer itself is
+         * not used here: the dispatcher publishes a new outcome, the matcher attributes the line, and this break
+         * heals.
+         */
+        void askAboutReference(PaymentId p) {
+            List<Command> queries = commands.stream()
+                    .filter(c -> c.kind() == CommandKind.STATUS_QUERY_PAYMENT && p.value().equals(c.args().get("payment_id")))
+                    .sorted(Comparator.comparingInt(Review::seq)).toList();
+            if (queries.isEmpty()) {
+                enqueue(CommandKind.STATUS_QUERY_PAYMENT, kv("payment_id", p.value()), Optional.empty(), now);
+                return;
+            }
+            Command last = queries.get(queries.size() - 1);
+            String status = last.result().map(r -> r.getOrDefault("status", "")).orElse("");
+            boolean finalAnswer = status.equals("SUCCEEDED") || status.equals("FAILED");
+            if (last.status() == CommandStatus.DONE && !finalAnswer && queries.size() < config.maxStatusQueries()) {
+                enqueue(CommandKind.STATUS_QUERY_PAYMENT, kv("payment_id", p.value()), Optional.empty(),
+                        now.plus(config.requeryAfter()));
+                waitUntil(now.plus(config.requeryAfter()));
+            }
+        }
+
         void refund(PaymentId p, PaymentState payment, OrderId orderId, String why) {
             Optional<String> key = noRefundKey ? Optional.empty()
                     : Optional.of(breakScopedRefundKey ? "rfd_" + DerivedId.of("refund", b.breakId()).value()
@@ -409,6 +441,10 @@ public final class Resolver {
         /** Look again at {@code at}, but never after escalate_by. */
         void waitUntil(Instant at) {
             Instant review = at.isAfter(plan.escalateBy()) ? plan.escalateBy() : at;
+            if (ignoreEscalateBy) {
+                // C10: the deadline is forgotten, so a break keeps being looked at, never escalated on time
+                review = at.isAfter(now) ? at : now.plus(config.recheckAfter());
+            }
             plan = plan.withReviewAt(review);
             save();
         }

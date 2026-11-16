@@ -7,6 +7,7 @@ import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.sim.fault.FaultInjector;
 import io.github.vanish073.driftline.sim.kernel.Scheduler;
 import io.github.vanish073.driftline.sim.kernel.SimNetwork;
@@ -69,6 +70,7 @@ public final class FakeMerchant {
     private final List<Delivery> deliveries = new ArrayList<>();
     private final FaultInjector faults;
     private final TreeSet<String> reusedKeys = new TreeSet<>();
+    private final TreeMap<String, TreeMap<String, String>> confirms = new TreeMap<>();
 
     public FakeMerchant(MerchantId merchantId, Scheduler scheduler, SimNetwork network, Ingress ingress, Trace trace,
                         FaultInjector faults) {
@@ -109,6 +111,35 @@ public final class FakeMerchant {
         } else {
             trace.line(scheduler.now(), node, "ignores payment " + payment + " for " + id + " in " + order.status.wireName());
         }
+    }
+
+    /**
+     * The confirm API (DESIGN §8.2, §11.4): Driftline asks the merchant to accept a late success. ACCEPTED only while the
+     * order still awaits payment, has not expired and has this amount: then the order is paid with the payment and
+     * fulfilled; REJECTED otherwise (an expired order is never fulfilled late). Idempotent by key, as a merchant's API
+     * would be: a repeated key gets the first answer.
+     */
+    public TreeMap<String, String> confirm(CallRequest.MerchantConfirm c, Optional<String> key) {
+        if (key.isPresent() && confirms.containsKey(key.get())) {
+            return new TreeMap<>(confirms.get(key.get()));
+        }
+        Order order = orders.get(c.orderId());
+        boolean awaiting = order != null
+                && (order.status == EventType.ORDER_CREATED || order.status == EventType.ORDER_PENDING_PAYMENT);
+        boolean paidWithIt = order != null && order.paidWith.filter(c.paymentId()::equals).isPresent();
+        TreeMap<String, String> answer = new TreeMap<>();
+        if (paidWithIt) {
+            answer.put("status", "ACCEPTED");   // already paid with this very payment: confirming it again is a no-op
+        } else if (awaiting && scheduler.instant().isBefore(order.expiresAt) && order.amount.equals(c.amount())) {
+            advance(order, EventType.ORDER_PAID, Optional.of(c.paymentId()));
+            scheduler.after(FULFIL_AFTER_MILLIS, node, () -> advance(order, EventType.ORDER_FULFILLED, order.paidWith));
+            answer.put("status", "ACCEPTED");
+        } else {
+            answer.put("status", "REJECTED");
+        }
+        trace.line(scheduler.now(), node, "confirm " + c.orderId() + " with " + c.paymentId() + ": " + answer.get("status"));
+        key.ifPresent(k -> confirms.put(k, new TreeMap<>(answer)));
+        return answer;
     }
 
     private void expireIfUnpaid(Order order) {
