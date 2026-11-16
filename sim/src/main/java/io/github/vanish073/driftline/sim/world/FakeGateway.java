@@ -224,6 +224,8 @@ public final class FakeGateway {
     /** The share of a merchant's settlement dates that are batch days in the simulator. */
     public static final int BATCH_DAY_PERCENT = 30;
     private final int batchDayPercent;
+    /** Sandbox only: always two lines on a batch day ({@link #splitBatchesInTwo}). */
+    private boolean twoBatchLines;
 
     /**
      * @param rng the {@code bank} stream: which merchants itemise fees, and the amounts of short and extra lines
@@ -517,7 +519,7 @@ public final class FakeGateway {
                               List<SettlementLinePayload> lines) {
         List<List<Payment>> groups = new ArrayList<>();
         groups.add(new ArrayList<>());
-        if (batched.size() >= 2 && rng.nextLong(2) == 0) {
+        if (batched.size() >= 2 && (twoBatchLines || rng.nextLong(2) == 0)) {
             groups.add(new ArrayList<>());
             for (Payment p : batched) {
                 groups.get((int) rng.nextLong(2)).add(p);
@@ -555,6 +557,15 @@ public final class FakeGateway {
                     Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(batch), "batch payout"));
             batchLines.put(m + "/" + fileId + ":" + lineNo, members);
         }
+    }
+
+    /**
+     * The sandbox's ambiguous-line injection (D68): every batch day is paid in two lines, never one. With three or more
+     * equal amounts, each line then fits several subsets of the day's payments, so neither has a unique solution. The
+     * simulator never calls this, so its seeds are unchanged.
+     */
+    public void splitBatchesInTwo() {
+        this.twoBatchLines = true;
     }
 
     /** {@code merchant/fileId:lineNo} of each unreferenced batch line → the payment ids it pays (ground truth). */

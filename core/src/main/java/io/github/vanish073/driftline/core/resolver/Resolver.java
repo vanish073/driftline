@@ -24,18 +24,22 @@ import io.github.vanish073.driftline.core.port.BreakRepo.Plan;
 import io.github.vanish073.driftline.core.port.OutboxRepo.Command;
 import io.github.vanish073.driftline.core.port.OutboxRepo.CommandKind;
 import io.github.vanish073.driftline.core.port.OutboxRepo.CommandStatus;
+import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.Tx;
+import io.github.vanish073.driftline.core.settlement.BatchMatching;
 import io.github.vanish073.driftline.core.time.IstCalendar;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * The resolver (DESIGN §8): it reviews due breaks and, for each, chooses the next step of its playbook (§8.2) in the
@@ -50,7 +54,8 @@ import java.util.TreeMap;
  *   <li>It never guesses (D14): contradictory gateway records, an order it does not know (D15), an order with an open
  *       IDEMPOTENCY_CONFLICT (D41), or a gateway that still disagrees after {@code maxStatusQueries} queries are
  *       escalated. No external action rests on an inferred settlement match (D56): the refund playbooks read only
- *       payment and order state.</li>
+ *       payment and order state. An unreferenced line batch matching could not resolve (ambiguous, no solution, over
+ *       budget, out of range, zero) is escalated at once, an ambiguous one with its two witnesses in the reason.</li>
  *   <li>Every break is resolved or escalated by its {@code escalate_by} (§8.3).</li>
  * </ul>
  *
@@ -58,6 +63,10 @@ import java.util.TreeMap;
  * the next review decides again from scratch.
  */
 public final class Resolver {
+
+    /** The reasons of an unreferenced line batch matching could not resolve: every outcome but INFERRED (D56). */
+    static final List<String> UNRESOLVED_BATCH = Arrays.stream(BatchMatching.Kind.values())
+            .filter(k -> k != BatchMatching.Kind.INFERRED).map(Enum::name).toList();
 
     /**
      * @param maxStatusQueries how many status queries may disagree with Driftline before STATUS_CONFLICT (§8.2 step 3)
@@ -176,8 +185,14 @@ public final class Resolver {
             switch (b.type()) {
                 case DEBITED_NO_ORDER, LATE_SUCCESS, DUPLICATE_CAPTURE -> refundPlaybook();
                 case ORPHAN_SETTLEMENT -> {
+                    String reason = b.evidence().getOrDefault("reason", "");
                     if (b.evidence().containsKey("attributed_to")) {
                         close(BreakState.SELF_HEALED, "attributed to " + b.evidence().get("attributed_to"));
+                    } else if (UNRESOLVED_BATCH.contains(reason)) {
+                        // Shift 7 carry-over (D56): batch matching never guesses, so a line it could not resolve
+                        // needs a person now, with its witnesses, rather than waiting for an attribution that only a
+                        // person can make; the line and its witnesses stay with the break in the ops API
+                        escalate("unreferenced line " + reason + witnesses());
                     } else {
                         // D64: a line naming a payment Driftline does not know may be a capture whose webhooks were
                         // lost; ask the gateway, whose answer is published as an observation and attributes the line
@@ -189,6 +204,29 @@ public final class Resolver {
                 }
                 default -> escalate("evidence gathered; " + b.type() + " is for a person (§8.2)");
             }
+        }
+
+        /** An ambiguous line's two witnesses, as text for the escalation (the line keeps them whole). */
+        String witnesses() {
+            int colon = b.subjectKey().lastIndexOf(':');
+            if (colon < 1) {
+                return "";
+            }
+            Optional<SettlementRepo.Line> line;
+            try {
+                line = tx.settlement().line(m, b.subjectKey().substring(0, colon),
+                        Integer.parseInt(b.subjectKey().substring(colon + 1)));
+            } catch (NumberFormatException e) {
+                return "";
+            }
+            return line.filter(l -> l.witnesses().size() == 2)
+                    .map(l -> "; two subsets fit, for example " + join(l.witnesses().get(0)) + " and "
+                            + join(l.witnesses().get(1)))
+                    .orElse("");
+        }
+
+        static String join(List<PaymentId> payments) {
+            return payments.stream().map(PaymentId::value).collect(Collectors.joining("+"));
         }
 
         // ---- the refund playbooks (§8.2): DEBITED_NO_ORDER, LATE_SUCCESS, DUPLICATE_CAPTURE ----

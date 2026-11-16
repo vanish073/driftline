@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -44,9 +45,23 @@ final class Injection {
     static final int CUSTOMERS = 10;
     private static final long CUSTOMER_FUNDS_PAISE = 1_000_000_000L;
 
-    /** What was injected and what Driftline must now show. */
+    /** What was injected and what Driftline must now show, with the world kept for the gateway and merchant APIs. */
     record Report(MerchantId merchantId, Scenario scenario, int count, LocalDate lastFileDate, TreeSet<String> expected,
-                  long webhooks, long orderEvents, long files, long notAccepted) {
+                  long webhooks, long orderEvents, long files, long notAccepted, World world,
+                  TreeSet<String> batchLines) {
+    }
+
+    /**
+     * One played world, kept alive after the injection (D65): Driftline's dispatcher asks its gateway about payments and
+     * refunds, and its merchant to confirm late successes. Its virtual clock ends in the past; {@link #advanceTo} brings
+     * it to real time before each call, so refunds and key ages are stamped with the real time of the call.
+     */
+    record World(MerchantId merchantId, Scheduler scheduler, FakeGateway gateway, FakeMerchant merchant) {
+
+        /** Runs what is due by {@code now} and sets the world's clock to it (never backwards). */
+        void advanceTo(Instant now) {
+            scheduler.advanceTo(Math.max(scheduler.now(), now.toEpochMilli() - scheduler.epoch().toEpochMilli()));
+        }
     }
 
     private Injection() {
@@ -58,6 +73,26 @@ final class Injection {
      */
     static Report run(BootstrapFile.Merchant merchant, Scenario scenario, int count, HttpDriftline driftline,
                       LocalDate today) {
+        return play(merchant, scenario, count, driftline, today, Optional.empty(), false);
+    }
+
+    /** The price of every order in an ambiguous-batch injection: a catalogue price, as in the simulator (D57). */
+    static final Money CATALOGUE_PRICE = Money.ofPaise(49_900);
+
+    /**
+     * The ambiguous-line injection (D68): {@code count} (at least 3) NORMAL orders at one catalogue price, paid on a
+     * batch day in two unreferenced lines. Each line is the exact sum of its payments' nets, and several subsets of the
+     * day's equal payments fit each line, so batch matching must report both lines AMBIGUOUS, each with two witnesses.
+     */
+    static Report ambiguousBatch(BootstrapFile.Merchant merchant, int count, HttpDriftline driftline, LocalDate today) {
+        if (count < 3) {
+            throw new IllegalArgumentException("an ambiguous batch needs at least 3 equal payments");
+        }
+        return play(merchant, Scenario.NORMAL, count, driftline, today, Optional.of(CATALOGUE_PRICE), true);
+    }
+
+    private static Report play(BootstrapFile.Merchant merchant, Scenario scenario, int count, HttpDriftline driftline,
+                               LocalDate today, Optional<Money> price, boolean ambiguousBatch) {
         Objects.requireNonNull(scenario, "scenario");
         if (count < 1 || count > 50) {
             throw new IllegalArgumentException("count must be 1 to 50");
@@ -68,7 +103,7 @@ final class Injection {
             throw new IllegalArgumentException("the pool's first settlement date must be at least " + FILE_DAYS
                     + " days before today, so every file lies in the past");
         }
-        long seed = seed(merchant.id(), scenario);
+        long seed = seed(merchant.id(), ambiguousBatch ? "AMBIGUOUS_BATCH" : scenario.name());
         Instant epoch = IstCalendar.startOfIstDay(first.minusDays(1));
         Scheduler scheduler = new Scheduler(epoch);
         Trace trace = new Trace(false);
@@ -88,12 +123,16 @@ final class Injection {
         secrets.put(m, merchant.secret().getBytes(StandardCharsets.US_ASCII));
         SettlementFeed feed = new SettlementFeed(scheduler, network, faults, trace, driftline);
         FakeGateway gateway = new FakeGateway(scheduler, network, bank, driftline, trace, secrets, merchants,
-                SplitMix64.stream(seed, "bank"), feed, 0, faults);
+                SplitMix64.stream(seed, "bank"), feed, ambiguousBatch ? 100 : 0, faults);
+        if (ambiguousBatch) {
+            gateway.splitBatchesInTwo();
+        }
 
         long tenAm = 10 * 3_600_000L;
         for (int i = 0; i < count; i++) {
             PlannedOrder order = new PlannedOrder(m, OrderId.of("ord_" + i), "customer:" + (i % CUSTOMERS),
-                    Money.ofPaise(workload.between(10_000L, 500_000L)), tenAm + i * 120_000L, scenario);
+                    price.orElseGet(() -> Money.ofPaise(workload.between(10_000L, 500_000L))), tenAm + i * 120_000L,
+                    scenario);
             scheduler.at(order.createdAtMillis(), "workload",
                     () -> Simulation.play(order, scheduler, workload, gateway, merchants.get(m)));
         }
@@ -108,12 +147,13 @@ final class Injection {
         }
         TreeSet<String> expected = Oracle.expected(gateway, merchants, epoch, CYCLE_DAYS, GRACE_DAYS, lastFileDate);
         return new Report(m, scenario, count, lastFileDate, expected, driftline.webhooks.get(),
-                driftline.orderEvents.get(), driftline.files.get(), driftline.notAccepted.get());
+                driftline.orderEvents.get(), driftline.files.get(), driftline.notAccepted.get(),
+                new World(m, scheduler, gateway, merchants.get(m)), new TreeSet<>(gateway.batchLines().keySet()));
     }
 
     /** The same merchant and scenario always play the same world. */
-    private static long seed(MerchantId merchant, Scenario scenario) {
-        return Long.parseLong(Sha256.of((merchant.value() + "/" + scenario.name()).getBytes(StandardCharsets.UTF_8))
+    private static long seed(MerchantId merchant, String injection) {
+        return Long.parseLong(Sha256.of((merchant.value() + "/" + injection).getBytes(StandardCharsets.UTF_8))
                 .hex().substring(0, 15), 16);
     }
 

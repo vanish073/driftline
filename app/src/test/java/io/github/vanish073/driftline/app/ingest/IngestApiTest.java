@@ -298,4 +298,57 @@ class IngestApiTest {
                 .andExpect(status().isBadRequest());
         verify(inbox, never()).store(any(), any(), any());
     }
+
+    // ---- observations (D10, D65) ----------------------------------------------------------------------------------
+
+    static final String SERVICE_TOKEN = "test-token-service";
+    static final String TOKEN_A_OBSERVER = "test-token-a_observer";
+
+    static byte[] observation(String merchant) {
+        return ("{\"merchant_id\":\"" + merchant + "\",\"type\":\"payment.succeeded\",\"event_key\":\"obs_abc\","
+                + "\"occurred_at\":\"2026-11-15T09:00:00Z\","
+                + "\"payment\":{\"id\":\"pay_1\",\"order_id\":\"ord_1\",\"amount_paise\":49900}}")
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void anObservationWithTheServiceTokenIsAppendedAsAGatewayEventUnderItsDerivedKey() throws Exception {
+        token(SERVICE_TOKEN, Optional.empty(), List.of("observations:write"));
+        mvc.perform(post("/internal/v1/observations").content(observation("m_b"))
+                        .header("Authorization", "Bearer " + SERVICE_TOKEN))
+                .andExpect(status().isAccepted())
+                .andExpect(content().json("{\"accepted\":true,\"key\":\"obs_abc\"}", JsonCompareMode.STRICT));
+        EventEnvelope e = published().get(0);
+        assertThat(e.merchantId()).isEqualTo(B);
+        assertThat(e.partition()).isEqualTo(2);
+        assertThat(e.source()).isEqualTo(Source.GATEWAY);
+        assertThat(e.eventType()).isEqualTo(EventType.PAYMENT_SUCCEEDED);
+        assertThat(e.eventTime()).isEqualTo(Instant.parse("2026-11-15T09:00:00Z"));
+    }
+
+    @Test
+    void anObservationNeedsTheObservationsScopeAndAMerchantTokenOnlyItsOwnMerchant() throws Exception {
+        token(TOKEN_A_OBSERVER, Optional.of(A), List.of("observations:write"));
+        mvc.perform(post("/internal/v1/observations").content(observation("m_a"))
+                        .header("Authorization", "Bearer " + TOKEN_A))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/internal/v1/observations").content(observation("m_b"))
+                        .header("Authorization", "Bearer " + TOKEN_A_OBSERVER))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/internal/v1/observations").content(observation("m_a")))
+                .andExpect(status().isUnauthorized());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void aMalformedObservationIs400AndAnUnknownMerchant404() throws Exception {
+        token(SERVICE_TOKEN, Optional.empty(), List.of("observations:write"));
+        mvc.perform(post("/internal/v1/observations").content("{\"merchant_id\":\"m_a\"}")
+                        .header("Authorization", "Bearer " + SERVICE_TOKEN))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/internal/v1/observations").content(observation("m_nobody"))
+                        .header("Authorization", "Bearer " + SERVICE_TOKEN))
+                .andExpect(status().isNotFound());
+        verify(publisher, never()).publish(any());
+    }
 }

@@ -22,9 +22,9 @@ import java.util.function.Consumer;
  * sending node learns it, exactly like a {@code CallResult} in the simulator. The caller owns timeouts beyond the
  * per-request one.
  *
- * <p>Requests are encoded by a {@link CallCodec} per {@link CallRequest} type. The call kinds and their codecs arrive
- * with the dispatcher in Shift 8 (§9.1, D27); until then no codec is registered, and a call with no codec comes back
- * at once as an error outcome rather than being dropped.
+ * <p>Requests are encoded by a {@link CallCodec} per {@link CallRequest} type; the dispatcher registers one for every
+ * kind ({@code CallCodecs}, D65). A call with no codec or no base URI comes back at once as an error outcome rather
+ * than being dropped.
  */
 public final class HttpNetwork implements Network {
 

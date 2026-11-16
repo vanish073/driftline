@@ -32,7 +32,8 @@ dependencies {
 testing {
     suites {
         // Real PostgreSQL and Kafka in Testcontainers (DESIGN §11.9): the start-up smoke test under the production heap
-        // cap, the partition driver (rebalance, zombie fencing, crash mid-batch, replay) and ingest through Kafka.
+        // cap, the partition driver (rebalance, zombie fencing, crash mid-batch, replay), ingest through Kafka, and the
+        // outbox crash points CP1-CP5 against the sandbox gateway.
         register<JvmTestSuite>("integrationTest") {
             useJUnitJupiter()
             dependencies {
@@ -41,6 +42,8 @@ testing {
                 implementation(project(":core"))
                 implementation(project(":wire"))
                 implementation(project(":store-postgres"))
+                // OutboxCrashIT runs the sandbox's gateway in-process (the simulator's world models over HTTP, D65)
+                implementation(project(":sandbox"))
                 implementation(libs.spring.boot.starter.test)
                 implementation(libs.kafka.clients)
                 implementation(libs.boot.testcontainers.kafka)

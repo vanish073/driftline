@@ -3,14 +3,18 @@ package io.github.vanish073.driftline.app.ingest;
 import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.security.MerchantAccess;
 import io.github.vanish073.driftline.core.id.MerchantId;
+import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
+import io.github.vanish073.driftline.wire.call.CallWire;
 import io.github.vanish073.driftline.wire.hmac.WebhookSignature;
 import io.github.vanish073.driftline.wire.ingest.IngestNormaliser;
 import io.github.vanish073.driftline.wire.ingest.IngestResult;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
+import io.github.vanish073.driftline.wire.json.MalformedJson;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFileParser;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -118,6 +123,36 @@ public class IngestController {
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");
         }
+    }
+
+    /**
+     * {@code POST /internal/v1/observations} (§9.1, D10, D65): a fact the dispatcher learned by asking enters through
+     * Kafka like every other event. The service token needs {@code observations:write}; the merchant is named in the
+     * body, and a merchant-bound token may post only for its own merchant.
+     */
+    @PostMapping(CallWire.OBSERVATIONS_PATH)
+    @PreAuthorize("hasAuthority('SCOPE_observations:write')")
+    public ResponseEntity<Map<String, Object>> observation(HttpServletRequest request, Authentication authentication)
+            throws IOException {
+        Optional<byte[]> body = BoundedBody.read(request, WebhookSignature.MAX_BODY_BYTES);
+        if (body.isEmpty()) {
+            return error(413, "body larger than " + WebhookSignature.MAX_BODY_BYTES + " bytes");
+        }
+        CallWire.Incoming incoming;
+        try {
+            incoming = CallWire.parseObservation(body.get());
+        } catch (MalformedJson e) {
+            return error(400, e.getMessage());
+        }
+        if (!new MerchantAccess().allows(authentication, incoming.merchantId().value())) {
+            return error(403, "this token may not post for that merchant");
+        }
+        Optional<MerchantContext> merchant = merchants.context(incoming.merchantId());
+        if (merchant.isEmpty()) {
+            return error(404, "unknown merchant");
+        }
+        return accept(IngestNormaliser.observation(merchant.get(), (CallRequest.Observation) incoming.request(),
+                clock.now()));
     }
 
     private Optional<MerchantContext> merchant(String merchantId) {

@@ -371,8 +371,11 @@ class ResolverTest {
 
     @Test
     void anOrphanWaitsForAttributionUntilEscalateByThenEscalates() {
+        // a referenced line (an unresolved batch line is escalated at once: UnresolvedBatchLineTest); no reference key,
+        // so this is only the wait, not the reference query of D64 (next test)
         Break b = store.transact("raise", tx -> {
-            Break x = Break.detected(M, BreakType.ORPHAN_SETTLEMENT, "stl_1:2", T0, Map.of("reason", "AMBIGUOUS"));
+            Break x = Break.detected(M, BreakType.ORPHAN_SETTLEMENT, "stl_1:2", T0,
+                    Map.of("reason", "UNKNOWN_REFERENCE"));
             tx.breaks().raise(x, "test");
             return x;
         });

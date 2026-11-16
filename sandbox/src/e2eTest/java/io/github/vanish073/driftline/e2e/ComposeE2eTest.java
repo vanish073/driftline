@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,9 +41,12 @@ import org.junit.jupiter.api.TestMethodOrder;
  * against the running stack; every break the simulator's Oracle expects must then be visible through the ops API
  * within the time limit, and no other one-to-one break may appear for that merchant except one that already carries
  * the evidence that heals it (D52: the injected world lies behind the watermarks, so a check can fire before the
- * merchant's event of the next poll chunk arrives). Then the ingest security
- * checks: a replayed webhook is harmless, a bad signature is 401, a stale timestamp is rejected, a cross-merchant
- * token is 403.
+ * merchant's event of the next poll chunk arrives). Milestone M4 (Shift 8): every one of those breaks is then handled
+ * by the resolver and the dispatcher against the sandbox's gateway, merchant and ops APIs (refunded, posted as fees,
+ * held in suspense or escalated), no payment is refunded twice, an escalated break is resolved by hand through the
+ * audited API, and a batch line that two sets of payments fit is reported as AMBIGUOUS with both witnesses and
+ * escalated (D68). Then the ingest security checks: a replayed webhook is harmless, a bad signature is 401, a stale
+ * timestamp is rejected, a cross-merchant token is 403.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ComposeE2eTest {
@@ -68,10 +72,13 @@ class ComposeE2eTest {
     record Injected(String type, String merchant, TreeSet<String> expected, Instant at) {
     }
 
+    /** What test 1 injected; the handling tests (M4) follow those breaks. */
+    static final List<Injected> INJECTED = new ArrayList<>();
+
     @Test
     @Order(1)
     void everyOneToOneBreakIsDetectedEndToEndAndVisibleThroughTheOpsApi() throws InterruptedException {
-        List<Injected> injected = new java.util.ArrayList<>();
+        List<Injected> injected = INJECTED;
         for (String type : ONE_TO_ONE) {
             HttpResponse<String> r = Api.send(HttpRequest.newBuilder(Api.SANDBOX.resolve("/v1/inject?type=" + type
                     + "&count=" + PER_TYPE)).POST(HttpRequest.BodyPublishers.noBody()));
@@ -137,6 +144,165 @@ class ComposeE2eTest {
         assertThat(detectedAfter).as("every type detected within the limit").hasSize(injected.size());
     }
 
+    // ---- M4: every break handled (Shift 8) -------------------------------------------------------------------------
+
+    /**
+     * The states that count as handled for each type, in a world that lies days in the past (D51): a refund closes
+     * DEBITED_NO_ORDER and LATE_SUCCESS (whose order expired long ago, so the merchant rejects the late success and
+     * the customer is refunded); DUPLICATE_CAPTURE is past its T+1 escalate_by, so it is escalated with its
+     * compensation exposure; an itemised SHORT_SETTLEMENT is posted as fees, any other is escalated; MISSING_SETTLEMENT
+     * is escalated; an ORPHAN_SETTLEMENT's money waits in suspense for attribution until escalate_by (4 h). A late
+     * success the merchant accepts and fulfils needs an order that has not expired, so the simulator proves that path.
+     */
+    static final Map<String, List<String>> HANDLED_AS = Map.of(
+            "DEBITED_NO_ORDER", List.of("RESOLVED_AUTO", "SELF_HEALED", "LINKED"),
+            "LATE_SUCCESS", List.of("RESOLVED_AUTO", "SELF_HEALED", "LINKED"),
+            "DUPLICATE_CAPTURE", List.of("ESCALATED", "RESOLVED_AUTO", "SELF_HEALED", "LINKED"),
+            "SHORT_SETTLEMENT", List.of("RESOLVED_AUTO", "ESCALATED"),
+            "MISSING_SETTLEMENT", List.of("ESCALATED"),
+            "ORPHAN_SETTLEMENT", List.of("AWAITING_EVIDENCE", "SELF_HEALED", "ESCALATED"));
+    static final List<String> REFUND_TYPES = List.of("DEBITED_NO_ORDER", "LATE_SUCCESS", "DUPLICATE_CAPTURE");
+
+    /** {@code "TYPE merchant/subject" → break} for every one-to-one break, with its id and state. */
+    static TreeMap<String, Map<String, String>> oneToOneBreaks() {
+        HttpResponse<String> r = Api.get("/v1/breaks", Api.POOL.opsToken());
+        assertThat(r.statusCode()).isEqualTo(200);
+        TreeMap<String, Map<String, String>> out = new TreeMap<>();
+        for (Map<String, String> b : Api.breaks(r.body())) {
+            if (ONE_TO_ONE.contains(b.get("type"))) {
+                out.put(b.get("type") + " " + b.get("merchant_id") + "/" + b.get("subject_key"), b);
+            }
+        }
+        return out;
+    }
+
+    static JsonObject sandboxStats() {
+        HttpResponse<String> r = Api.send(HttpRequest.newBuilder(Api.SANDBOX.resolve("/v1/stats")).GET());
+        assertThat(r.statusCode()).isEqualTo(200);
+        return StrictJson.parse(r.body().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The reason of a break's last transition, from {@code GET /v1/breaks/{id}}. */
+    static String lastReason(String breakId) {
+        String body = Api.get("/v1/breaks/" + breakId, Api.POOL.opsToken()).body();
+        int at = body.lastIndexOf("\"reason\":\"");
+        return at < 0 ? "" : body.substring(at + 10, body.indexOf('"', at + 10));
+    }
+
+    @Test
+    @Order(2)
+    void everyInjectedBreakIsHandledAndNoPaymentIsRefundedTwice() throws InterruptedException {
+        assertThat(INJECTED).as("test 1 injected every type").hasSize(ONE_TO_ONE.size());
+        TreeSet<String> expected = new TreeSet<>();
+        INJECTED.forEach(i -> expected.addAll(i.expected()));
+        Instant deadline = Instant.now().plus(DETECTION_LIMIT);
+        TreeMap<String, Map<String, String>> breaks = oneToOneBreaks();
+        while (!allHandled(expected, breaks) && Instant.now().isBefore(deadline)) {
+            Thread.sleep(2_000);
+            breaks = oneToOneBreaks();
+        }
+        TreeMap<String, TreeMap<String, Integer>> byType = new TreeMap<>();
+        long refunded = 0;
+        long escalated = 0;
+        for (String key : expected) {
+            String type = key.substring(0, key.indexOf(' '));
+            Map<String, String> b = breaks.get(key);
+            assertThat(b).as("%s is visible", key).isNotNull();
+            assertThat(HANDLED_AS.get(type)).as("%s is handled (state %s)", key, b.get("state")).contains(b.get("state"));
+            byType.computeIfAbsent(type, t -> new TreeMap<>()).merge(b.get("state"), 1, Integer::sum);
+            if (REFUND_TYPES.contains(type) && b.get("state").equals("RESOLVED_AUTO")
+                    && lastReason(b.get("break_id")).equals("refund confirmed")) {
+                refunded++;
+            }
+            if (b.get("state").equals("ESCALATED")) {
+                escalated++;
+            }
+        }
+        System.out.println("handled (state counts per type, for every break the world implies):");
+        byType.forEach((type, states) -> System.out.printf("  %-18s %s%n", type, states));
+        assertThat(byType.keySet()).as("all six types handled").containsExactlyInAnyOrderElementsOf(ONE_TO_ONE);
+        assertThat(refunded).as("breaks closed by a confirmed refund").isPositive();
+
+        Instant notices = Instant.now().plusSeconds(60);
+        JsonObject stats = sandboxStats();
+        while ((stats.integer("refunds") < refunded || stats.integer("escalations") < escalated)
+                && Instant.now().isBefore(notices)) {
+            Thread.sleep(1_000);
+            stats = sandboxStats();
+        }
+        System.out.printf("sandbox: %d refunds executed for %d payments (%d refunded more than once); "
+                        + "%d escalation notices; %d breaks closed by a confirmed refund, %d escalated%n",
+                stats.integer("refunds"), stats.integer("payments_refunded"),
+                stats.integer("payments_refunded_more_than_once"), stats.integer("escalations"), refunded, escalated);
+        assertThat(stats.integer("payments_refunded_more_than_once")).as("no payment refunded twice").isZero();
+        assertThat(stats.integer("refunds")).as("one refund per break closed by a refund").isEqualTo(refunded);
+        assertThat(stats.integer("escalations")).as("every escalation reached the ops sink")
+                .isGreaterThanOrEqualTo(escalated);
+    }
+
+    @Test
+    @Order(4)
+    void anAmbiguousBatchLineIsReportedAsAmbiguousWithTwoWitnessesAndEscalated() throws InterruptedException {
+        HttpResponse<String> r = Api.send(HttpRequest.newBuilder(Api.SANDBOX.resolve("/v1/inject?type=AMBIGUOUS_BATCH"
+                + "&count=4")).POST(HttpRequest.BodyPublishers.noBody()));
+        assertThat(r.statusCode()).as(r.body()).isEqualTo(200);
+        JsonObject report = StrictJson.parse(r.body().getBytes(StandardCharsets.UTF_8));
+        String merchant = report.string("merchant_id");
+        List<String> lines = Arrays.stream(report.string("batch_lines").split(";"))
+                .map(k -> k.substring(k.indexOf('/') + 1)).toList();   // "m/fileId:lineNo" -> the break's subject
+        assertThat(lines).as("two unreferenced lines").hasSize(2);
+        Instant deadline = Instant.now().plus(DETECTION_LIMIT);
+        Map<String, String> breakIds = new TreeMap<>();
+        while (breakIds.size() < lines.size() && Instant.now().isBefore(deadline)) {
+            Thread.sleep(2_000);
+            for (Map<String, String> b : Api.breaks(Api.get("/v1/breaks?type=ORPHAN_SETTLEMENT&merchantId=" + merchant,
+                    Api.POOL.opsToken()).body())) {
+                if (lines.contains(b.get("subject_key")) && b.get("state").equals("ESCALATED")) {
+                    breakIds.put(b.get("subject_key"), b.get("break_id"));
+                }
+            }
+        }
+        assertThat(breakIds.keySet()).as("each line raised as an orphan and escalated").containsExactlyInAnyOrderElementsOf(lines);
+        for (Map.Entry<String, String> e : breakIds.entrySet()) {
+            String detail = Api.get("/v1/breaks/" + e.getValue(), Api.POOL.opsToken()).body();
+            assertThat(detail).as(e.getKey()).contains("\"reason\":\"AMBIGUOUS\"")
+                    .contains("\"status\":\"AMBIGUOUS\"").contains("\"witnesses\":[[")
+                    .contains("two subsets fit, for example");
+            System.out.printf("ambiguous line %s/%s: escalated with its witnesses; %s%n", merchant, e.getKey(),
+                    lastReason(e.getValue()));
+        }
+    }
+
+    static boolean allHandled(TreeSet<String> expected, TreeMap<String, Map<String, String>> breaks) {
+        return expected.stream().allMatch(k -> {
+            Map<String, String> b = breaks.get(k);
+            return b != null && HANDLED_AS.get(k.substring(0, k.indexOf(' '))).contains(b.get("state"));
+        });
+    }
+
+    @Test
+    @Order(3)
+    void anEscalatedBreakIsResolvedByHandThroughTheAuditedApi() {
+        Map<String, String> escalated = oneToOneBreaks().values().stream()
+                .filter(b -> b.get("state").equals("ESCALATED")).findFirst()
+                .orElseThrow(() -> new AssertionError("no escalated break to resolve"));
+        String path = "/v1/breaks/" + escalated.get("break_id") + "/resolve";
+        HttpRequest.BodyPublisher note = HttpRequest.BodyPublishers
+                .ofString("{\"note\":\"e2e: checked with the bank by hand\"}");
+        HttpResponse<String> merchant = Api.send(Api.driftline(path)
+                .header("Authorization", "Bearer " + Api.POOL.merchants().get(0).token()).POST(note));
+        assertThat(merchant.statusCode()).as("a merchant token has no breaks:resolve").isEqualTo(403);
+        HttpResponse<String> done = Api.send(Api.driftline(path)
+                .header("Authorization", "Bearer " + Api.POOL.opsToken()).POST(note));
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(200);
+        assertThat(done.body()).contains("\"state\":\"RESOLVED_MANUAL\"").contains("\"audit_seq\":");
+        HttpResponse<String> again = Api.send(Api.driftline(path)
+                .header("Authorization", "Bearer " + Api.POOL.opsToken()).POST(note));
+        assertThat(again.statusCode()).as("a closed break cannot be closed again").isEqualTo(409);
+        System.out.printf("resolved by hand: %s %s/%s -> %s%n", escalated.get("type"), escalated.get("merchant_id"),
+                escalated.get("subject_key"), done.body().trim());
+    }
+
     /** How many raised one-to-one breaks the world does not imply lack the evidence that heals them. */
     static long unhealedExtras(TreeMap<String, TreeMap<String, String>> raised, List<Injected> injected) {
         long n = 0;
@@ -188,7 +354,7 @@ class ComposeE2eTest {
     }
 
     @Test
-    @Order(2)
+    @Order(5)
     void aReplayedWebhookIsAcceptedAgainAndChangesNothing() throws InterruptedException {
         byte[] body = webhook("evt_e2e_replay", "pay_e2e_replay");
         HttpResponse<String> first = postWebhook(A, body, sign(A, Instant.now(), body));
@@ -210,7 +376,7 @@ class ComposeE2eTest {
     }
 
     @Test
-    @Order(3)
+    @Order(6)
     void aBadSignatureIs401() {
         byte[] body = webhook("evt_e2e_bad", "pay_e2e_bad");
         String signature = sign(A, Instant.now(), body);
@@ -222,7 +388,7 @@ class ComposeE2eTest {
     }
 
     @Test
-    @Order(4)
+    @Order(7)
     void aStaleTimestampIsRejected() {
         byte[] body = webhook("evt_e2e_stale", "pay_e2e_stale");
         HttpResponse<String> stale = postWebhook(A, body, sign(A, Instant.now().minusSeconds(600), body));
@@ -231,7 +397,7 @@ class ComposeE2eTest {
     }
 
     @Test
-    @Order(5)
+    @Order(8)
     void aCrossMerchantTokenIs403() {
         byte[] order = OrderEventCodec.encode(new OrderEventMessage(EventType.ORDER_CREATED, Instant.now().minusSeconds(60)
                 .truncatedTo(ChronoUnit.SECONDS), new OrderPayload(OrderId.of("ord_e2e_x"), 1, Money.ofPaise(100),

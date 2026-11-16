@@ -24,7 +24,7 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
  * are open but served only on the management port, which is never exposed outside the cluster (D21).
  */
 @Configuration
-@Profile("!" + Roles.MIGRATE)
+@Profile(Roles.SERVICE)
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfiguration {

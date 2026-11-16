@@ -1,5 +1,6 @@
 # Driftline on one laptop (DESIGN §15.1, §15.2). Profile `core`: PostgreSQL, Kafka (KRaft, one node), the one-shot
-# migration and topic services, Driftline with every role in one JVM, and the sandbox. Every image is pinned by digest;
+# migration and topic services, Driftline with every role in one JVM (ingest, matcher, settlement worker, resolver,
+# dispatcher), and the sandbox, which also serves the gateway, merchant and ops APIs the dispatcher calls. Every image is pinned by digest;
 # every service has a memory cap sized for the 4 GB WSL machine. scripts/e2e.sh generates the env file and the
 # bootstrap file (random secrets, never committed) under deploy/compose/.dev/ and runs the e2e suite against it.
 # Ports published to the host: 8080 (ingest and ops API) and 8085 (sandbox control API). Actuator (9091) stays inside
@@ -11,6 +12,35 @@ x-app-image: &app-image
     context: ../..
     dockerfile: deploy/docker/app.Dockerfile
   image: driftline-app:dev
+
+# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key and the dev bootstrap.
+x-app-env: &app-env
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+  SPRING_DATASOURCE_USERNAME: driftline
+  SPRING_DATASOURCE_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
+  DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  DRIFTLINE_SECRETS_ACTIVE_KID: dev
+  DRIFTLINE_SECRETS_KEYS_DEV: ${DRIFTLINE_SECRETS_KEY:?missing}
+  DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
+  JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
+
+# The dispatcher (D65): the sandbox serves the gateway, the merchant callback and the ops sink. Its gateway forgets an
+# idempotency key after 5 minutes, so the key TTL and lookup margin match it (the simulator's values, D62).
+x-dispatcher-env: &dispatcher-env
+  DRIFTLINE_DISPATCHER_GATEWAY_URL: http://sandbox:8085/gateway
+  DRIFTLINE_DISPATCHER_MERCHANT_URL: http://sandbox:8085/merchant
+  DRIFTLINE_DISPATCHER_OPS_URL: http://sandbox:8085/ops
+  DRIFTLINE_DISPATCHER_SERVICE_TOKEN: ${DRIFTLINE_SERVICE_TOKEN:?missing}
+  DRIFTLINE_DISPATCHER_GATEWAY_KEY_TTL: 5m
+  DRIFTLINE_DISPATCHER_LOOKUP_MARGIN: 1m
+
+# Ready means the readiness group is UP on the management port (D21).
+x-ready: &ready
+  test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9091 && printf \"GET /actuator/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'"]
+  interval: 3s
+  timeout: 3s
+  retries: 60
+  start_period: 20s
 
 services:
   postgres:
@@ -96,28 +126,69 @@ services:
       kafka-init:
         condition: service_completed_successfully
     environment:
-      DRIFTLINE_ROLE: all
+      <<: [*app-env, *dispatcher-env]
+      # `all` for the e2e suite; scripts/chaos.sh sets ingest,settlement-worker,resolver and runs the matcher and the
+      # dispatcher in containers of their own (profile `chaos`), so it can kill them.
+      DRIFTLINE_ROLE: ${DRIFTLINE_CORE_ROLE:-all}
       DRIFTLINE_INSTANCE_ID: driftline-compose
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
-      SPRING_DATASOURCE_USERNAME: driftline
-      SPRING_DATASOURCE_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
-      DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      DRIFTLINE_SECRETS_ACTIVE_KID: dev
-      DRIFTLINE_SECRETS_KEYS_DEV: ${DRIFTLINE_SECRETS_KEY:?missing}
-      DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
-      JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
+      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://127.0.0.1:8080
     volumes:
       - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
     ports:
       - "127.0.0.1:8080:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9091 && printf \"GET /actuator/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'"]
-      interval: 3s
-      timeout: 3s
-      retries: 60
-      start_period: 20s
+    healthcheck: *ready
     stop_grace_period: 30s
     mem_limit: 512m
+
+  # Profile `chaos` (scripts/chaos.sh): the roles the chaos run kills at random during traffic.
+  matcher:
+    profiles: [chaos]
+    <<: *app-image
+    depends_on:
+      driftline:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      DRIFTLINE_ROLE: matcher
+      DRIFTLINE_INSTANCE_ID: matcher-compose
+    volumes:
+      - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+    healthcheck: *ready
+    stop_grace_period: 30s
+    mem_limit: 448m
+
+  dispatcher:
+    profiles: [chaos]
+    <<: *app-image
+    depends_on:
+      driftline:
+        condition: service_healthy
+    environment:
+      <<: [*app-env, *dispatcher-env]
+      DRIFTLINE_ROLE: dispatcher
+      DRIFTLINE_INSTANCE_ID: dispatcher-compose
+      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://driftline:8080
+    volumes:
+      - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+    healthcheck: *ready
+    stop_grace_period: 30s
+    mem_limit: 448m
+
+  # `driftline verify` (profile `verify`, run once by scripts/chaos.sh): read-only SQL checks of the books against the
+  # world, plus the sandbox's refund count; exits non-zero on any violation.
+  verify:
+    profiles: [verify]
+    <<: *app-image
+    environment:
+      DRIFTLINE_ROLE: verify
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+      SPRING_DATASOURCE_USERNAME: driftline
+      SPRING_DATASOURCE_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
+      DRIFTLINE_VERIFY_SANDBOX_URL: http://sandbox:8085
+      DRIFTLINE_VERIFY_WAIT_FOR: ${VERIFY_WAIT_FOR:-5m}
+      JAVA_TOOL_OPTIONS: "-Xmx128m -XX:+UseSerialGC -Xss512k"
+    restart: "no"
+    mem_limit: 256m
 
   sandbox:
     profiles: [core]

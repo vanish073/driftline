@@ -1,6 +1,7 @@
 package io.github.vanish073.driftline.app.ops;
 
 import io.github.vanish073.driftline.app.Roles;
+import io.github.vanish073.driftline.app.ingest.BoundedBody;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.security.MerchantAccess;
 import io.github.vanish073.driftline.core.breaks.Break;
@@ -15,11 +16,17 @@ import io.github.vanish073.driftline.core.order.OrderState;
 import io.github.vanish073.driftline.core.order.OrderTransition;
 import io.github.vanish073.driftline.core.payment.PaymentState;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
+import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.Store;
+import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.core.port.Tx;
+import io.github.vanish073.driftline.core.resolver.ManualResolution;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
+import io.github.vanish073.driftline.wire.json.StrictJson;
+import jakarta.servlet.http.HttpServletRequest;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -33,6 +40,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,18 +49,69 @@ import org.springframework.web.bind.annotation.RestController;
  * that line with its witnesses), a payment's timeline, and the exception list as CSV (§6.4: ambiguous lines are
  * reported as ambiguous, with both witnesses). Read-only, each request in one Store transaction. A merchant token sees
  * only its merchant; another merchant's break answers 404, so a token cannot even learn that it exists. An ops token
- * sees every merchant. Resolving breaks arrives with the resolver (Shift 8).
+ * sees every merchant. {@code POST /v1/breaks/{id}/resolve} closes an ESCALATED break by hand, with its audit row
+ * ({@link ManualResolution}); it needs {@code breaks:resolve}.
  */
 @RestController
 @Profile(Roles.INGEST)
 public class OpsController {
 
+    static final int MAX_RESOLVE_BODY = 4_096;
+
     private final Store store;
     private final MerchantRegistry merchants;
+    private final Clock clock;
 
-    public OpsController(Store store, MerchantRegistry merchants) {
+    public OpsController(Store store, MerchantRegistry merchants, Clock clock) {
         this.store = store;
         this.merchants = merchants;
+        this.clock = clock;
+    }
+
+    /**
+     * {@code POST /v1/breaks/{id}/resolve} with {@code {"note":"…"}} (§8.1, §10.1, §12): ESCALATED → RESOLVED_MANUAL and
+     * an audit row naming the token, in one transaction. 404 for a break the token may not see, 409 for one that is not
+     * ESCALATED (including one another person resolved a moment ago).
+     */
+    @PostMapping("/v1/breaks/{breakId}/resolve")
+    @PreAuthorize("hasAuthority('SCOPE_breaks:resolve')")
+    public ResponseEntity<?> resolve(Authentication auth, @PathVariable String breakId, HttpServletRequest request)
+            throws IOException {
+        Optional<byte[]> body = BoundedBody.read(request, MAX_RESOLVE_BODY);
+        if (body.isEmpty()) {
+            return error(413, "body larger than " + MAX_RESOLVE_BODY + " bytes");
+        }
+        String note;
+        try {
+            note = ManualResolution.requireNote(StrictJson.parse(body.get()).string("note"));
+        } catch (IllegalArgumentException e) {   // MalformedJson included
+            return error(400, e.getMessage());
+        }
+        Optional<MerchantId> bound = MerchantAccess.boundMerchant(auth);
+        String actor = String.valueOf(auth.getPrincipal());
+        ManualResolution.Result result;
+        try {
+            Instant now = clock.now();
+            result = store.transact("ops-resolve", tx -> ManualResolution.resolve(tx, breakId, bound, actor, note, now));
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        } catch (StoreConflict | IllegalArgumentException e) {
+            return error(409, "the break changed while it was being resolved; read it again");
+        }
+        return switch (result) {
+            case ManualResolution.NotFound n -> error(404, "no such break");
+            case ManualResolution.NotEscalated n -> error(409, "the break is " + n.state()
+                    + "; only an ESCALATED break can be resolved by hand");
+            case ManualResolution.Resolved r -> {
+                Map<String, Object> v = new LinkedHashMap<>();
+                v.put("break_id", r.breakId());
+                v.put("state", BreakState.RESOLVED_MANUAL.name());
+                v.put("resolved_at", r.at().toString());
+                v.put("compensation", r.compensation().toString());
+                v.put("audit_seq", r.auditSeq());
+                yield ResponseEntity.ok(v);
+            }
+        };
     }
 
     /** {@code GET /v1/breaks?state=&type=&merchantId=}. */

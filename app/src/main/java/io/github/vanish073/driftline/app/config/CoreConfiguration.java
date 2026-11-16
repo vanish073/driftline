@@ -4,18 +4,13 @@ import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
-import io.github.vanish073.driftline.app.port.HttpNetwork;
 import io.github.vanish073.driftline.app.port.SystemClock;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.CrashPoints;
 import io.github.vanish073.driftline.core.port.Clock;
-import io.github.vanish073.driftline.core.port.Network;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.store.postgres.PostgresStore;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
-import java.net.http.HttpClient;
-import java.time.Duration;
-import java.util.Map;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +26,7 @@ import org.springframework.context.annotation.Profile;
  * {@link RoleConfiguration} are the whole wiring, the production counterpart of the simulator's {@code Simulation}.
  */
 @Configuration
-@Profile("!" + Roles.MIGRATE)
+@Profile(Roles.SERVICE)
 public class CoreConfiguration {
 
     private static final Logger LOG = LoggerFactory.getLogger(CoreConfiguration.class);
@@ -91,16 +86,5 @@ public class CoreConfiguration {
         MerchantRegistry registry = MerchantRegistry.load(directory, cipher, clock.now());
         LOG.info("serving {} merchants", registry.merchants().size());
         return registry;
-    }
-
-    /**
-     * The production Network (§3.2). Nothing sends through it until the dispatcher arrives (Shift 8), so it has no
-     * targets or codecs yet; an outcome that arrives is logged.
-     */
-    @Bean
-    Network network() {
-        return new HttpNetwork(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), Map.of(), Map.of(),
-                outcome -> LOG.warn("call outcome with no dispatcher to take it: {} {}", outcome.call().callId(),
-                        outcome.error().orElse("status " + outcome.status().orElse(0))), Duration.ofSeconds(10));
     }
 }

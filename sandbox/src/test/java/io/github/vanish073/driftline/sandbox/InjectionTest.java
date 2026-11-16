@@ -14,6 +14,9 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,5 +100,22 @@ class InjectionTest {
         assertThatThrownBy(() -> Injection.run(pool.merchants().get(0), Scenario.NORMAL, 1,
                 new HttpDriftline(URI.create("http://127.0.0.1:1"), pool.merchants()), TODAY.minusDays(2)))
                 .hasMessageContaining("days before today");
+    }
+
+    @Test
+    void anAmbiguousBatchPaysEqualPaymentsInTwoLinesSoEachLineFitsSeveralSubsets() {
+        Injection.Report r = Injection.ambiguousBatch(pool.merchants().get(0), 4,
+                new HttpDriftline(URI.create("http://127.0.0.1:" + server.getAddress().getPort()), pool.merchants()),
+                TODAY);
+        assertThat(r.notAccepted()).isZero();
+        assertThat(r.batchLines()).as("one batch day, paid in two lines").hasSize(2);
+        TreeMap<String, TreeSet<String>> truth = r.world().gateway().batchLines();
+        assertThat(truth.values()).allSatisfy(members -> assertThat(members).isNotEmpty().hasSizeLessThan(4));
+        assertThat(truth.values().stream().mapToInt(Set::size).sum()).as("every payment in one line")
+                .isEqualTo(4);
+        // four equal nets split k and 4 - k, 0 < k < 4: a line of k fits C(4, k) >= 4 subsets, so neither is unique
+        assertThatThrownBy(() -> Injection.ambiguousBatch(pool.merchants().get(1), 2,
+                new HttpDriftline(URI.create("http://127.0.0.1:1"), pool.merchants()), TODAY))
+                .hasMessageContaining("at least 3");
     }
 }
