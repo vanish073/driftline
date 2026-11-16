@@ -144,13 +144,18 @@ class PartitionDriverIT {
 
     private PartitionDriver driver(String name, CrashPoints crash, PartitionDriver.Listener listener,
                                    Map<String, String> overrides) {
+        return driver(name, crash, listener, overrides, Duration.ofSeconds(30));
+    }
+
+    private PartitionDriver driver(String name, CrashPoints crash, PartitionDriver.Listener listener,
+                                   Map<String, String> overrides, Duration reacquireAfter) {
         Properties props = KafkaClients.consumer(new DriftlineProperties.Kafka(Containers.KAFKA.getBootstrapServers(),
                 topic, PARTITIONS, group, 50, Duration.ofMillis(100), Duration.ofSeconds(6), Duration.ofSeconds(300),
                 Duration.ofSeconds(10), Duration.ofSeconds(60)), name);
         props.putAll(overrides);
         PartitionDriver d = new PartitionDriver(store, new Matcher(DIRECTORY), new SystemClock(),
                 () -> new KafkaConsumer<>(props), topic, name, crash, listener, Duration.ofMillis(100),
-                Duration.ofSeconds(60), Duration.ofSeconds(30));
+                Duration.ofSeconds(60), reacquireAfter);
         drivers.add(d);
         d.start();
         return d;
@@ -253,6 +258,31 @@ class PartitionDriverIT {
         assertEffectsAppliedOnce();
         produceRound();
         assertEffectsAppliedOnce();
+    }
+
+    /** BUG-003, D50: a zombie bumps the epoch of a partition Kafka still assigns here; the driver takes it back. */
+    @Test
+    void aFencedPartitionStillAssignedHereIsAcquiredAgainAndNothingIsLost() {
+        produceRound();
+        AtomicInteger fenced = new AtomicInteger();
+        PartitionDriver.Listener countFences = new PartitionDriver.Listener() {
+            @Override
+            public void fenced(int partition) {
+                fenced.incrementAndGet();
+            }
+        };
+        PartitionDriver a = driver("matcher-a", CrashPoints.NONE, countFences, Map.of(), Duration.ofSeconds(2));
+        await("a owns every partition", Duration.ofSeconds(60), () -> a.ownedPartitions().size() == PARTITIONS);
+        assertEffectsAppliedOnce();
+        long before = count(url, "SELECT epoch FROM partition_leases WHERE partition = 0");
+
+        store.transact("zombie-acquire-p0", tx -> tx.partitions().acquire(0, "zombie"));
+        produceRound();
+        await("a is fenced on p0", Duration.ofSeconds(60), () -> fenced.get() >= 1);
+        await("a acquires p0 again", Duration.ofSeconds(60),
+                () -> count(url, "SELECT epoch FROM partition_leases WHERE partition = 0") >= before + 2);
+        assertEffectsAppliedOnce();
+        assertThat(a.failure()).isEmpty();
     }
 
     @Test

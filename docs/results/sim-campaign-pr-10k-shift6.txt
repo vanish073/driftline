@@ -1,7 +1,7 @@
 # command: ./gradlew -q :sim:campaign --args="--profile pr --from 1 --count 10000 --threads 8 --double-run 100"
-# base commit: c8aeab0 plus the uncommitted Shift 6 tree; date: 2026-11-15T21:40Z
-# machine: WSL2, 12 cores, 3915 MB RAM with 1249 MB of swap in use at the start, openjdk version "21.0.13.0.3" 2026-10-24
-campaign: profile=pr seeds=1..10000 (10000) shard=0/1 threads=8 corpus=2 double-run=100
+# base commit: ac8f4be plus the uncommitted BUG-003 fix; date: 2026-11-15T23:05Z; 155 s
+# machine: WSL2, 12 cores, 3915 MB RAM with 632 MB of swap in use at the start, openjdk version "21.0.13.0.3" 2026-10-24
+campaign: profile=pr seeds=1..10000 (10000) shard=0/1 threads=8 corpus=3 double-run=100
 totals over 10000 campaign seeds:
   breaks.DEBITED_NO_ORDER = 121519
   breaks.DUPLICATE_CAPTURE = 52763
@@ -65,10 +65,9 @@ totals over 10000 campaign seeds:
   settlement.worker.accepted = 197588
   settlement.worker.conflicts = 17079
   settlement.worker.duplicates = 20664
-  steps = 37181048
+  steps = 37194050
   store.commits = 8034088
   transitions.order = 3723367
   transitions.payment = 2143882
-wall=153.4s  per-seed=121.49ms (on 8 threads)  runs=10102
-PASS: 2 corpus seeds, 10000 campaign seeds, 100 double-runs
-# exit=0
+wall=149.9s  per-seed=118.67ms (on 8 threads)  runs=10103
+PASS: 3 corpus seeds, 10000 campaign seeds, 100 double-runs

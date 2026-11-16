@@ -8,6 +8,7 @@ Each row's seed is also added to `sim/regression-seeds.txt`, which every CI run 
 |---|---|---|---|---|---|---|---|---|
 | BUG-001 | 2026-11-15 | 5 | 361 · `pr` · 64a5874 + Shift 5 work | INV-DETECTED | The world implied DUPLICATE_CAPTURE for `pay_46_a`; Driftline flagged `pay_46_b`, the payment the merchant had actually paid and fulfilled the order with, and escalated nothing | A merchant client reusing idempotency keys made Driftline quarantine `order.paid` and `order.fulfilled`. The matcher never learned which payment paid the order, kept the earliest capture, and the quarantine row was not tied to the order, so nothing marked the order's breaks as untrustworthy | Quarantining a record now also raises an IDEMPOTENCY_CONFLICT anomaly naming its order and payment (DESIGN §10.3, §8.2), and INV-DETECTED accepts that escalation for the order's DEBITED_NO_ORDER and DUPLICATE_CAPTURE (D41) · Shift 5 commit | No: it needs a reused key to land on exactly the event that says which payment paid a duplicate-captured order |
 | BUG-002 | 2026-11-15 | 5 | 143 · `pr` · 64a5874 + Shift 5 work | none at first (a stats mismatch: 1,810 FILE_CONFLICT breaks for 1,797 refused uploads in 1,000 seeds); now INV-NO-ANOMALY | The settlement worker emitted a file it had refused as a conflict; the matcher's own guard caught its lines and raised FILE_CONFLICT | A network duplicate of a refused upload is a DUPLICATE receipt, and the worker re-emitted every duplicate without checking that the stored receipt was ACCEPTED | A duplicate of a REJECTED_CONFLICT receipt is treated as a conflict and never emitted; a FILE_CONFLICT raised by the matcher (not the worker) is now an INV-NO-ANOMALY violation, verified to fail on seed 143 without the fix · Shift 5 commit | Yes, once written: `SettlementWorkerNodeTest` now covers it. Nobody had thought to upload a refused file twice |
+| BUG-003 | 2026-11-15 | 6 | 437715671286076 · `pr` · c8aeab0 (also fails there; found by PR #3's CI, run 43771567128) | INV-DRAINED | Partition 0 stopped at offset 230 of 306 and never moved again, though the coordinator still assigned it to a live matcher | Both matchers paused together and both expired. matcher-a came back first, rejoined and acquired p0 (epoch 2). matcher-b then woke and ran an assignment of p0 delivered to its expired member id, bumping the epoch to 3 before its heartbeat told it to rejoin. matcher-a, the rightful owner, was fenced on its next commit, dropped p0, and the simulator's matcher node had no rule to take it back. The production driver already has that rule (D50) | The simulator's matcher node now acquires a fenced partition again when the coordinator still assigns it to the same member after three session timeouts, as `PartitionDriver` does (D53). Verified: the seed fails without the fix (on `main` and on the branch) and passes with it, resuming at offset 230 under epoch 4 · Shift 6 commit | No: it needs two pauses that overlap, end in a particular order, and straddle an assignment. The regression seed covers the simulator, and a new `PartitionDriverIT` test covers the production rule, which had no test |
 
 ## Entry template (detailed write-up below the table)
 
@@ -56,6 +57,30 @@ Each row's seed is also added to `sim/regression-seeds.txt`, which every CI run 
 - Fix: a DUPLICATE of a REJECTED_CONFLICT receipt is answered like a conflict and never emitted.
 - Why ordinary tests missed it: it needs a conflicting upload and a duplicate delivery of that same upload.
 - Regression: seed 143 added to `sim/regression-seeds.txt`; `SettlementWorkerNodeTest.aConflictingFileAndEveryLaterCopyOfItNeverReachTheLog`.
+
+### BUG-003: a zombie's epoch bump left the rightful owner fenced, and the partition stalled
+- Found: 2026-11-15, Shift 6, seed 437715671286076, profile `pr`, by the `simulation` job on PR #3 (GitHub Actions run 43771567128, shard 2), swarm `NET_DELAY=176‰ NODE_CRASH=1/day NODE_PAUSE=3/day CLOCK_JUMP=4/day STORE_DOWN=2/day PRODUCE_AMBIGUOUS=47‰ FILE_CONFLICT=55‰`. It fails on `main` (c8aeab0) too, so it predates Shift 6: the fresh CI seeds reached it first.
+- Repro (before the fix): `./gradlew :sim:run --args="--seed 437715671286076 --profile pr --trace"`
+- Invariant: INV-DRAINED ("partition 0 stopped at offset 230 of 306").
+- What happened (trace excerpt):
+  ```
+  000122400161 matcher-a pauses for 19076 ms holding [p0@202..229 epoch 1]
+  000122400238 matcher-b pauses for 28660 ms holding [p1@187..201 epoch 1]
+  000122410161 coordinator expire matcher-a.1 partitions=[0]
+  000122410161 coordinator assign p0 -> matcher-b.1
+  000122410238 coordinator expire matcher-b.1 partitions=[0, 1]
+  000122419237 matcher-a resumes as matcher-a.1
+  000122419237 coordinator assign p0 -> matcher-a.2
+  000122419237 matcher-a acquires p0 epoch 2 at offset 230
+  000122428898 matcher-b resumes as matcher-b.1
+  000122428898 matcher-b acquires p0 epoch 3 at offset 230
+  000122428898 matcher-b learns it lost p0
+  000124550150 matcher-a fenced on p0 with epoch 2: partition 0 is fenced: epoch 2 was superseded by 3
+  ```
+- Root cause: the assignment of p0 to matcher-b.1 was made while b was paused, so b ran it on waking, before the heartbeat that told it its member id had expired. Its epoch bump was safe, because fencing held and nothing was written twice, but the fenced rightful owner dropped p0 for good. The simulator's matcher node only acquired on an assignment, and the coordinator, seeing p0 still assigned to matcher-a.2, never assigned it again. The production `PartitionDriver` has had the recovery rule since Shift 6 (D50: re-acquire a fenced partition still assigned after three session timeouts); the simulator's model of it did not.
+- Fix: the same rule in the simulator's `MatcherInstance` (D53). With it, matcher-a acquires p0 again 30 s after being fenced, at epoch 4, and resumes at offset 230.
+- Why ordinary tests missed it: it needs two overlapping pauses that end in a particular order and straddle an assignment. `PartitionDriverIT` proved a zombie is fenced, but nothing tested the production driver's re-acquire branch either.
+- Regression: seed 437715671286076 added to `sim/regression-seeds.txt`; `PartitionDriverIT.aFencedPartitionStillAssignedHereIsAcquiredAgainAndNothingIsLost` now covers the production rule (an epoch bumped behind a running driver: fenced, acquired again, every event applied once).
 
 ## Hunting targets (subtle areas to aim the simulator at; these are *not* bugs)
 
