@@ -1,0 +1,16 @@
+case: 24
+name: noref_lookback_includes_previous_day
+about: >-
+  The line also pays a capture from 12 November (batch date 13 November), one day before its own
+  date: the one-day lookback keeps it a candidate, so the line is inferred and no MISSING_SETTLEMENT is raised.
+payments:
+  - {id: pay_prev, gross: "640.00", captured: "2026-11-12T15:00:00"}   # batch date 13 Nov: one day back, inside the lookback
+  - {id: pay_cur, gross: "1180.00", captured: "2026-11-13T15:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "1777.05"}
+expect:
+  lines:
+    stl_20261114:1: {status: INFERRED, pays: [pay_cur, pay_prev]}
+  balances: {SUSPENSE: "0.00", GATEWAY_RECEIVABLE: "0.00"}

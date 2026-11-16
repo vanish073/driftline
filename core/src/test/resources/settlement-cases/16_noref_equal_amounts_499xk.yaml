@@ -1,0 +1,20 @@
+case: 16
+name: noref_equal_amounts_499xk
+about: >-
+  Five orders at the catalogue price of 499.00; the line is three of their nets. Any three fit (ten
+  subsets), so the line is AMBIGUOUS: equal amounts are exactly where guessing goes wrong (§6.4, canary C08).
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_2, gross: "499.00", captured: "2026-11-13T11:00:00"}
+  - {id: pay_3, gross: "499.00", captured: "2026-11-13T12:00:00"}
+  - {id: pay_4, gross: "499.00", captured: "2026-11-13T13:00:00"}
+  - {id: pay_5, gross: "499.00", captured: "2026-11-13T14:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "1461.66"}   # 3 x net(499.00)
+expect:
+  lines:
+    stl_20261114:1: {status: AMBIGUOUS}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: AMBIGUOUS, evidence: {candidates: "5"}}

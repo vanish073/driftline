@@ -1,0 +1,20 @@
+name: batch_inferred
+about: >-
+  One unreferenced lump-sum credit paying five of the merchant's seven open payments. Exactly one subset
+  fits, so it is MATCHED_INFERRED: the suspense is released against the five payments' contracted fees and GST,
+  and the other two stay receivable.
+first_settlement_date: "2026-11-14"
+payments:
+  - {id: pay_1, gross: "349.00", captured: "2026-11-13T09:30:00"}
+  - {id: pay_2, gross: "1875.25", captured: "2026-11-13T10:30:00"}
+  - {id: pay_3, gross: "640.10", captured: "2026-11-13T11:30:00"}
+  - {id: pay_4, gross: "2210.00", captured: "2026-11-13T12:30:00"}
+  - {id: pay_5, gross: "99.99", captured: "2026-11-13T13:30:00"}
+  - {id: pay_6, gross: "1333.33", captured: "2026-11-13T14:30:00"}
+  - {id: pay_7, gross: "502.48", captured: "2026-11-13T15:30:00"}
+files:
+  - csv: golden/batch_inferred.csv
+expect:
+  lines:
+    stl_g2_20261114:1: {status: INFERRED, pays: [pay_1, pay_2, pay_4, pay_5, pay_7]}
+  balances: {BANK: "4917.84", GATEWAY_FEES: "100.74", GST_INPUT_CREDIT: "18.14", GATEWAY_RECEIVABLE: "1973.43", SUSPENSE: "0.00"}

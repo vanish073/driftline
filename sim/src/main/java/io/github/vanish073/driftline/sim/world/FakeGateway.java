@@ -32,6 +32,11 @@ import java.util.TreeSet;
  * settle (docs/formats.md). The settlement scenarios play out here: a payment's line can be short (with or without
  * itemisation that explains the gap), withheld (never settled), or followed by an extra line with an unknown
  * reference. Every one of them moves real money, so INV-WORLD-CONSERVED still holds.
+ *
+ * <p>Shift 7: on a <em>batch day</em> (about 30% of a merchant's settlement dates) its NORMAL payments are paid in
+ * unreferenced batch lines instead, one or two per file, each the exact sum of its payments' nets: the lump-sum
+ * credits of §6.4. The gateway remembers which payments make up each batch line, which is the ground truth
+ * INV-INFERRED-HONEST checks inferred matches against.
  */
 public final class FakeGateway {
 
@@ -145,13 +150,27 @@ public final class FakeGateway {
     private final TreeSet<MerchantId> itemising = new TreeSet<>();
     private final TreeSet<String> orphanLines = new TreeSet<>();
     private final TreeSet<String> shortLines = new TreeSet<>();
+    /** {@code merchant/fileId:lineNo} of each unreferenced batch line → the payments it pays. */
+    private final TreeMap<String, TreeSet<String>> batchLines = new TreeMap<>();
+    /** The share of a merchant's settlement dates that are batch days in the simulator. */
+    public static final int BATCH_DAY_PERCENT = 30;
+    private final int batchDayPercent;
 
     /**
      * @param rng the {@code bank} stream: which merchants itemise fees, and the amounts of short and extra lines
      */
+    /**
+     * @param batchDayPercent the share of settlement dates paid in unreferenced batch lines: {@link #BATCH_DAY_PERCENT}
+     *                        in the simulator; 0 in the sandbox, whose Compose suite proves one-to-one detection (M3)
+     *                        with exact break sets, while batch matching is proven by the case corpus and the simulator
+     */
     public FakeGateway(Scheduler scheduler, SimNetwork network, FakeBank bank, Ingress ingress, Trace trace,
                        TreeMap<MerchantId, byte[]> secrets, TreeMap<MerchantId, FakeMerchant> merchants, SplitMix64 rng,
-                       SettlementFeed feed) {
+                       SettlementFeed feed, int batchDayPercent) {
+        if (batchDayPercent < 0 || batchDayPercent > 100) {
+            throw new IllegalArgumentException("batchDayPercent must be 0 to 100");
+        }
+        this.batchDayPercent = batchDayPercent;
         this.scheduler = scheduler;
         this.network = network;
         this.bank = bank;
@@ -215,13 +234,19 @@ public final class FakeGateway {
             String fileId = "stl_" + m.value() + "_" + day;
             String batch = "UTR" + day + m.value().replace("_", "");
             boolean itemises = itemising.contains(m);
+            boolean batchDay = batchDayPercent > 0 && rng.nextLong(100) < batchDayPercent;
             List<SettlementLinePayload> lines = new ArrayList<>();
+            List<Payment> batched = new ArrayList<>();
             for (Payment p : payments.values()) {
                 if (!p.merchant.equals(m) || !p.captured() || p.settled || p.plan == SettlementPlan.WITHHELD) {
                     continue;
                 }
                 LocalDate captured = IstCalendar.istDate(scheduler.epoch().plusMillis(p.capturedAtMillis));
                 if (!captured.isBefore(settlementDate)) {
+                    continue;
+                }
+                if (batchDay && p.plan == SettlementPlan.NORMAL) {
+                    batched.add(p);
                     continue;
                 }
                 long gross = p.amount.paise();
@@ -270,9 +295,75 @@ public final class FakeGateway {
                     orphanLines.add(m + "/" + fileId + ":" + orphanNo);
                 }
             }
+            if (!batched.isEmpty()) {
+                payInBatches(m, settlementDate, fileId, batch, batched, lines);
+            }
             feed.deliver(SettlementFile.of(fileId, m, settlementDate, scheduler.instant(), lines));
         }
         trace.line(scheduler.now(), "gateway", "settles " + settlementDate + " lines=" + settlementLines.size());
+    }
+
+    /**
+     * Pays {@code batched} in one unreferenced line, or in two when there are at least two payments and a coin says so
+     * (each payment then goes to either line, neither left empty). A line is the exact sum of its payments' nets, with
+     * no fee or tax itemised.
+     */
+    private void payInBatches(MerchantId m, LocalDate settlementDate, String fileId, String batch, List<Payment> batched,
+                              List<SettlementLinePayload> lines) {
+        List<List<Payment>> groups = new ArrayList<>();
+        groups.add(new ArrayList<>());
+        if (batched.size() >= 2 && rng.nextLong(2) == 0) {
+            groups.add(new ArrayList<>());
+            for (Payment p : batched) {
+                groups.get((int) rng.nextLong(2)).add(p);
+            }
+            if (groups.get(0).isEmpty() || groups.get(1).isEmpty()) {   // keep both lines non-empty
+                List<Payment> all = new ArrayList<>(batched);
+                groups.get(0).clear();
+                groups.get(1).clear();
+                groups.get(0).add(all.get(0));
+                groups.get(1).addAll(all.subList(1, all.size()));
+            }
+        } else {
+            groups.get(0).addAll(batched);
+        }
+        for (List<Payment> group : groups) {
+            int lineNo = lines.size() + 1;
+            long total = 0;
+            TreeSet<String> members = new TreeSet<>();
+            for (Payment p : group) {
+                long gross = p.amount.paise();
+                long fee = roundHalfUp(Math.multiplyExact(gross, FEE_BPS));
+                long gst = roundHalfUp(Math.multiplyExact(fee, GST_BPS));
+                long net = gross - fee - gst;
+                bank.transfer(FLOAT, merchantAccount(m), net);
+                bank.transfer(FLOAT, REVENUE, gross - net);
+                total = Math.addExact(total, net);
+                p.settled = true;
+                p.settledOn = settlementDate;
+                p.lineKey = fileId + ":" + lineNo;
+                members.add(p.id.value());
+                settlementLines.add(new SettlementLine(settlementDate, m, p.id, p.amount, Money.ofPaise(fee),
+                        Money.ofPaise(gst), Money.ofPaise(net)));
+            }
+            lines.add(new SettlementLinePayload(fileId, lineNo, settlementDate, settlementDate, Money.ofPaise(total),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(batch), "batch payout"));
+            batchLines.put(m + "/" + fileId + ":" + lineNo, members);
+        }
+    }
+
+    /** {@code merchant/fileId:lineNo} of each unreferenced batch line → the payment ids it pays (ground truth). */
+    public TreeMap<String, TreeSet<String>> batchLines() {
+        TreeMap<String, TreeSet<String>> out = new TreeMap<>();
+        batchLines.forEach((k, v) -> out.put(k, new TreeSet<>(v)));
+        return out;
+    }
+
+    /** The expected net of a payment of {@code gross} under the contracted fee model (2% fee, 18% GST on the fee). */
+    public static Money netOf(Money gross) {
+        long fee = roundHalfUp(Math.multiplyExact(gross.paise(), FEE_BPS));
+        long gst = roundHalfUp(Math.multiplyExact(fee, GST_BPS));
+        return Money.ofPaise(gross.paise() - fee - gst);
     }
 
     public static String merchantAccount(MerchantId merchant) {

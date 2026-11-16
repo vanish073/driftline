@@ -42,6 +42,7 @@ import io.github.vanish073.driftline.core.port.TimerRepo.Timer;
 import io.github.vanish073.driftline.core.port.TimerRepo.TimerClock;
 import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.port.WatermarkRepo.StreamWatermark;
+import io.github.vanish073.driftline.core.settlement.BatchMatching;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import io.github.vanish073.driftline.core.state.Decision;
 import io.github.vanish073.driftline.core.state.DecisionKind;
@@ -80,6 +81,10 @@ import java.util.TreeSet;
 public final class Matcher {
 
     static final int MAX_TIMER_ROUNDS = 10_000;
+    /** Unreferenced lines whose money is still in suspense with no payment attributed (§6.4). */
+    private static final List<LineStatus> UNRESOLVED_BATCH = List.of(LineStatus.AWAITING_BATCH, LineStatus.AMBIGUOUS,
+            LineStatus.NO_SOLUTION, LineStatus.BUDGET_EXCEEDED, LineStatus.OUT_OF_RANGE);
+
     private static final Comparator<Timer> FIRING_ORDER = Comparator.comparing(Timer::fireAt)
             .thenComparing(t -> t.kind().name())
             .thenComparing(Timer::subjectKey)
@@ -91,6 +96,7 @@ public final class Matcher {
     private final OrderStateMachine orders = new OrderStateMachine();
     private final boolean dedupeOff;
     private final boolean processingTimeMissing;
+    private final boolean firstSolutionWins;
     private final KeyedState state = new KeyedState();
 
     public Matcher(MerchantDirectory merchants, MatcherConfig config, Canaries canaries) {
@@ -99,6 +105,7 @@ public final class Matcher {
         this.payments = new PaymentStateMachine(canaries);
         this.dedupeOff = canaries.isEnabled(Canary.DEDUPE_OFF);
         this.processingTimeMissing = canaries.isEnabled(Canary.PROCESSING_TIME_WATERMARK);
+        this.firstSolutionWins = canaries.isEnabled(Canary.FIRST_SOLUTION_WINS);
     }
 
     /** The production matcher: default constants, no canary. */
@@ -455,6 +462,9 @@ public final class Matcher {
                     settleReferenced(line, true, at);
                 }
             }
+            if (tx.settlement().matchOf(m, p.paymentId()).isEmpty()) {
+                challengeInferred(m, p.paymentId(), BatchMatching.batchDate(success, terms.cycleDays()));
+            }
         }
 
         List<PaymentState> succeededFor(MerchantId m, OrderId orderId) {
@@ -567,6 +577,9 @@ public final class Matcher {
                 return;
             }
             LocalDate tDate = IstCalendar.tDate(found.get().successAt().orElseThrow());
+            if (inUnresolvedBatch(m, merchants.terms(m).dueDate(tDate))) {
+                return;   // it may be inside an unreferenced line; solving it checks this payment again
+            }
             raise(m, BreakType.MISSING_SETTLEMENT, id.value(),
                     evidence("t_date", tDate.toString(), "due_date", merchants.terms(m).dueDate(tDate).toString(),
                             "settled_through", settledThrough(merchants.terms(m)).toString()), "SETTLEMENT_DUE");
@@ -742,7 +755,158 @@ public final class Matcher {
                 FileEnd e = end.get();
                 tx.settlement().saveFileEnd(new FileEnd(m, fileId, e.settlementDate(), e.lineCount(), e.totalAmount(),
                         e.sha256(), true));
+                if (lines.stream().anyMatch(l -> l.status() == LineStatus.AWAITING_BATCH)) {
+                    upsertTimer(m, Kind.BATCH_SOLVE, fileId, TimerClock.STREAM_G,
+                            batchGate(merchants.terms(m), e.settlementDate()));
+                }
                 advanceSettlement(merchants.terms(m));
+            }
+        }
+
+        // ---- batch matching (§6.4) ----
+
+        /**
+         * The watermark gate of an unreferenced line settled on {@code settlementDate}: its batch holds payments
+         * captured before the end of IST day {@code settlementDate − cycleDays}, so it is solved once
+         * {@code wm_G ≥ that instant + bound_G}, when every such payment should have been seen.
+         */
+        Instant batchGate(MerchantTerms terms, LocalDate settlementDate) {
+            return IstCalendar.endOfIstDay(settlementDate.minusDays(terms.cycleDays())).plus(config.boundGateway());
+        }
+
+        /**
+         * BATCH_SOLVE: matches the file's unreferenced lines (§6.4). The pool is every payment that succeeded, is not
+         * settled and is not named by any line; {@link BatchMatching} narrows it per line and propagates forced
+         * assignments. An inferred line releases its suspense against the payments' expected fees and GST; any other
+         * outcome stays in suspense as an ORPHAN_SETTLEMENT with its reason, and an ambiguous line keeps both
+         * witnesses. Payments that were held back from MISSING_SETTLEMENT because of these lines are checked again.
+         */
+        void solveBatch(MerchantId m, String fileId) {
+            List<Line> waiting = tx.settlement().lines(m, fileId).stream()
+                    .filter(l -> l.status() == LineStatus.AWAITING_BATCH).toList();
+            if (waiting.isEmpty()) {
+                return;
+            }
+            MerchantTerms terms = merchants.terms(m);
+            LocalDate date = waiting.get(0).settlementDate();
+            LocalDate from = date.minusDays(config.batchLookbackDays());
+            List<BatchMatching.Candidate> pool = new ArrayList<>();
+            for (PaymentState p : tx.payments().unsettled(m)) {
+                if (p.status() != PaymentStatus.SUCCEEDED || p.conflict() || p.successAt().isEmpty()
+                        || p.amount().isEmpty()) {
+                    continue;
+                }
+                Instant success = p.successAt().get();
+                LocalDate batchDate = BatchMatching.batchDate(success, terms.cycleDays());
+                if (batchDate.isBefore(from) || batchDate.isAfter(date)
+                        || !tx.settlement().linesReferencing(m, p.paymentId().value()).isEmpty()) {
+                    continue;
+                }
+                pool.add(new BatchMatching.Candidate(p.paymentId(), success, batchDate,
+                        terms.fees().expected(p.amount().get()).net()));
+            }
+            List<BatchMatching.Line> lines = waiting.stream()
+                    .map(l -> new BatchMatching.Line(l.key(), l.settlementDate(), l.amount())).toList();
+            List<BatchMatching.Outcome> outcomes = BatchMatching.match(lines, pool, config.batchLookbackDays(),
+                    config.solveBudgetOps(), firstSolutionWins);
+            TreeSet<String> recheck = new TreeSet<>();
+            for (int i = 0; i < waiting.size(); i++) {
+                Line line = waiting.get(i);
+                BatchMatching.Outcome o = outcomes.get(i);
+                o.candidates().forEach(p -> recheck.add(p.value()));
+                switch (o.kind()) {
+                    case INFERRED -> settleInferred(line, o);
+                    case AMBIGUOUS -> {
+                        tx.settlement().saveLine(line.ambiguous(o.witnesses().get(0), o.witnesses().get(1)));
+                        raiseBatchOrphan(line, o);
+                    }
+                    case NO_SOLUTION -> {
+                        tx.settlement().saveLine(line.withStatus(LineStatus.NO_SOLUTION));
+                        raiseBatchOrphan(line, o);
+                    }
+                    case BUDGET_EXCEEDED -> {
+                        tx.settlement().saveLine(line.withStatus(LineStatus.BUDGET_EXCEEDED));
+                        raiseBatchOrphan(line, o);
+                    }
+                    case OUT_OF_RANGE -> {
+                        tx.settlement().saveLine(line.withStatus(LineStatus.OUT_OF_RANGE));
+                        raiseBatchOrphan(line, o);
+                    }
+                    case ZERO_AMOUNT -> {
+                        tx.settlement().saveLine(line.withStatus(LineStatus.ZERO_AMOUNT));
+                        raiseBatchOrphan(line, o);
+                    }
+                }
+            }
+            for (String id : recheck) {
+                PaymentId p = PaymentId.of(id);
+                if (tx.timers().find(m, Kind.SETTLEMENT_DUE, id).isEmpty()) {
+                    evaluateMissing(m, p);   // its check already ran, while these lines were still unsolved
+                }
+            }
+        }
+
+        void settleInferred(Line line, BatchMatching.Outcome o) {
+            MerchantId m = line.merchantId();
+            FeeSchedule fees = merchants.terms(m).fees();
+            Money gross = Money.ZERO;
+            Money fee = Money.ZERO;
+            Money gst = Money.ZERO;
+            for (PaymentId id : o.matched()) {
+                FeeSchedule.Breakdown b = fees.expected(payment(m, id).orElseThrow().amount().orElseThrow());
+                gross = gross.plus(b.gross());
+                fee = fee.plus(b.fee());
+                gst = gst.plus(b.gst());
+                tx.settlement().match(new Match(m, id, line.fileId(), line.lineNo(), MatchHow.INFERRED));
+                closePayment(m, id);
+            }
+            post(PostingRules.suspenseRelease(m, line.fileId(), line.lineNo(), line.amount(), fee, gst, gross, now));
+            tx.settlement().saveLine(line.inferred(o.candidateHash()));
+        }
+
+        /** An unresolved unreferenced line: an ORPHAN_SETTLEMENT that names why (§6.4); its witnesses stay on the line. */
+        void raiseBatchOrphan(Line line, BatchMatching.Outcome o) {
+            TreeMap<String, String> facts = evidence("reason", o.kind().name(), "amount", line.amount().toString(),
+                    "candidates", Integer.toString(o.candidates().size()), "candidate_hash", o.candidateHash().hex());
+            if (o.kind() == BatchMatching.Kind.BUDGET_EXCEEDED) {
+                facts.put("estimated_ops", Long.toString(o.estimatedOps()));
+            }
+            raise(line.merchantId(), BreakType.ORPHAN_SETTLEMENT, line.key(), facts, "unreferenced line");
+        }
+
+        /**
+         * Whether an unreferenced line that is still unsolved or unresolved could hold a payment with this batch date:
+         * a complete file of the merchant settled within the lookback of that date has such a line (§6.4). Its
+         * money is held in suspense and the line is escalated, so MISSING_SETTLEMENT would be a guess.
+         */
+        boolean inUnresolvedBatch(MerchantId m, LocalDate batchDate) {
+            for (int d = 0; d <= config.batchLookbackDays(); d++) {
+                Optional<FileEnd> file = tx.settlement().completeFile(m, batchDate.plusDays(d));
+                if (file.isPresent() && tx.settlement().lines(m, file.get().fileId()).stream()
+                        .anyMatch(l -> UNRESOLVED_BATCH.contains(l.status()))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Challenge detection (§6.4): a payment that succeeds after an inferred line covering its batch date was
+         * solved means that proof was made over an incomplete candidate set.
+         */
+        void challengeInferred(MerchantId m, PaymentId id, LocalDate batchDate) {
+            for (int d = 0; d <= config.batchLookbackDays(); d++) {
+                Optional<FileEnd> file = tx.settlement().completeFile(m, batchDate.plusDays(d));
+                if (file.isEmpty()) {
+                    continue;
+                }
+                for (Line l : tx.settlement().lines(m, file.get().fileId())) {
+                    if (l.status() == LineStatus.INFERRED) {
+                        raise(m, BreakType.INFERRED_MATCH_CHALLENGED, l.key(), evidence("payment_id", id.value(),
+                                "batch_date", batchDate.toString(), "candidate_hash", l.candidateHash().orElseThrow().hex()),
+                                "a payment in a solved window");
+                    }
+                }
             }
         }
 
@@ -859,8 +1023,9 @@ public final class Matcher {
                         case DUP_CHECK -> evaluateDuplicates(t.merchantId(), OrderId.of(t.subjectKey()));
                         case SETTLEMENT_DUE -> evaluateMissing(t.merchantId(), PaymentId.of(t.subjectKey()));
                         case FEED_STALL -> evaluateStall(t.merchantId(), LocalDate.parse(t.subjectKey()));
-                        case PENDING_PROBE, BATCH_SOLVE -> {
-                            // never registered before Shifts 8 and 7
+                        case BATCH_SOLVE -> solveBatch(t.merchantId(), t.subjectKey());
+                        case PENDING_PROBE -> {
+                            // never registered before Shift 8
                         }
                     }
                 }

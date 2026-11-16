@@ -28,6 +28,8 @@ Ask for a **redacted** screenshot or column list of their reconciliation sheet. 
 
 ## Notes (fill in after the interview)
 
+**Status (2026-11-15):** not yet held. No practitioner was reachable before Shift 7, so public desk research replaced it (DESIGN D54): [`finance-ops-desk-research.md`](finance-ops-desk-research.md). Fill in the notes below if a real interview happens later.
+
 - Role, company type (no names unless they agree):
 - Date:
 - Their columns:

@@ -4,3 +4,4 @@ gradlew text eol=lf
 *.jar binary
 # Golden settlement files test exact bytes (CRLF breaks, no final break): never normalise them.
 wire/src/test/resources/settlement/*.csv -text
+core/src/test/resources/settlement-cases/golden/*.csv -text

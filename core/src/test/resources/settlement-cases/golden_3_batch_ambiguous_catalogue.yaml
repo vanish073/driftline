@@ -1,0 +1,22 @@
+name: batch_ambiguous_catalogue
+about: >-
+  Four orders at 499.00 and one at 999.00, paid in two unreferenced lines (2 x 499 and 499 + 999). Any
+  499 can stand in for any other, so both lines are AMBIGUOUS: nothing is guessed, the money stays in suspense,
+  and each line keeps two witnesses.
+first_settlement_date: "2026-11-14"
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_2, gross: "499.00", captured: "2026-11-13T11:00:00"}
+  - {id: pay_3, gross: "499.00", captured: "2026-11-13T12:00:00"}
+  - {id: pay_4, gross: "499.00", captured: "2026-11-13T13:00:00"}
+  - {id: pay_5, gross: "999.00", captured: "2026-11-13T15:00:00"}
+files:
+  - csv: golden/batch_ambiguous_catalogue.csv
+expect:
+  lines:
+    stl_g3_20261114:1: {status: AMBIGUOUS}
+    stl_g3_20261114:2: {status: AMBIGUOUS}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_g3_20261114:1", reason: AMBIGUOUS}
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_g3_20261114:2", reason: AMBIGUOUS}
+  balances: {BANK: "2437.08", SUSPENSE: "-2437.08", GATEWAY_RECEIVABLE: "2995.00"}

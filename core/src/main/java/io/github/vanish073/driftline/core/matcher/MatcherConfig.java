@@ -15,14 +15,19 @@ import java.util.Objects;
  * @param graceDays        settlement days to wait past the due date before MISSING_SETTLEMENT ({@code SETTLEMENT_DUE})
  * @param expectedArrival  when on its settlement date (IST, from midnight) a merchant's file is expected
  * @param stallTimeout     how long after the expected arrival a missing file raises FEED_STALL
+ * @param batchLookbackDays how many days before its settlement date an unreferenced line's batch may reach back
+ *                         (§6.4); equal to {@code graceDays}, so every file a payment could be settled in is complete
+ *                         when its SETTLEMENT_DUE fires
+ * @param solveBudgetOps   the batch solver's budget in operations, never time (D7); also its memory bound in bytes
  */
 public record MatcherConfig(Duration boundGateway, Duration boundMerchant, Duration idleTimeout, Duration skewAllowance,
-                            Duration orderGrace, int graceDays, Duration expectedArrival, Duration stallTimeout) {
+                            Duration orderGrace, int graceDays, Duration expectedArrival, Duration stallTimeout,
+                            int batchLookbackDays, long solveBudgetOps) {
 
     /** The values DESIGN §5.5 names, plus bounds sized for webhook retry and clock-skew allowances. */
     public static final MatcherConfig DEFAULT = new MatcherConfig(Duration.ofMinutes(2), Duration.ofMinutes(2),
             Duration.ofMinutes(1), Duration.ofMinutes(2), Duration.ofMinutes(10), 1, Duration.ofHours(10),
-            Duration.ofHours(12));
+            Duration.ofHours(12), 1, 20_000_000L);
 
     public MatcherConfig {
         for (Duration d : new Duration[] {boundGateway, boundMerchant, idleTimeout, skewAllowance, orderGrace,
@@ -34,6 +39,12 @@ public record MatcherConfig(Duration boundGateway, Duration boundMerchant, Durat
         }
         if (graceDays < 0) {
             throw new IllegalArgumentException("graceDays must not be negative");
+        }
+        if (batchLookbackDays < 0) {
+            throw new IllegalArgumentException("batchLookbackDays must not be negative");
+        }
+        if (solveBudgetOps < 0) {
+            throw new IllegalArgumentException("solveBudgetOps must not be negative");
         }
     }
 }

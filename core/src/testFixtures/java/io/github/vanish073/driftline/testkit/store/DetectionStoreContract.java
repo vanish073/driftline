@@ -385,6 +385,39 @@ public abstract class DetectionStoreContract {
         assertThat(one(t -> t.settlement().line(m, "stl_1", 2)).orElseThrow().status()).isEqualTo(LineStatus.UNATTRIBUTED);
     }
 
+    /** Shift 7 (§6.4): every batch outcome round-trips, and an INFERRED line keeps its candidate hash. */
+    @Test
+    void batchOutcomesRoundTripAndAnInferredLineKeepsItsCandidateHash() {
+        Line waiting = line("stl_9", 1, null, LineStatus.AWAITING_BATCH);
+        Line inferred = waiting.inferred(sha("c"));
+        run(t -> t.settlement().saveLine(waiting));
+        run(t -> t.settlement().saveLine(inferred));
+        assertThat(one(t -> t.settlement().line(m, "stl_9", 1))).contains(inferred);
+        assertThat(one(t -> t.settlement().line(m, "stl_9", 1)).orElseThrow().candidateHash()).contains(sha("c"));
+
+        Line ambiguous = line("stl_9", 7, null, LineStatus.AWAITING_BATCH)
+                .ambiguous(List.of(PaymentId.of("pay_a"), PaymentId.of("pay_b")), List.of(PaymentId.of("pay_c")));
+        run(t -> t.settlement().saveLine(ambiguous));
+        assertThat(one(t -> t.settlement().line(m, "stl_9", 7))).contains(ambiguous);
+        assertThat(one(t -> t.settlement().line(m, "stl_9", 7)).orElseThrow().witnesses())
+                .containsExactly(List.of(PaymentId.of("pay_a"), PaymentId.of("pay_b")), List.of(PaymentId.of("pay_c")));
+
+        List<LineStatus> unresolved = List.of(LineStatus.NO_SOLUTION,
+                LineStatus.BUDGET_EXCEEDED, LineStatus.ZERO_AMOUNT, LineStatus.OUT_OF_RANGE);
+        for (int i = 0; i < unresolved.size(); i++) {
+            Line l = line("stl_9", i + 2, null, unresolved.get(i));
+            run(t -> t.settlement().saveLine(l));
+            assertThat(one(t -> t.settlement().line(m, "stl_9", l.lineNo()))).contains(l);
+        }
+        assertThat(many(t -> t.settlement().lines(m, "stl_9"))).extracting(Line::status)
+                .containsExactly(LineStatus.INFERRED, LineStatus.NO_SOLUTION, LineStatus.BUDGET_EXCEEDED,
+                        LineStatus.ZERO_AMOUNT, LineStatus.OUT_OF_RANGE, LineStatus.AMBIGUOUS);
+
+        Match byInference = new Match(m, PaymentId.of("pay_9"), "stl_9", 1, MatchHow.INFERRED);
+        assertThat(one(t -> t.settlement().match(byInference))).isEmpty();
+        assertThat(one(t -> t.settlement().matchOf(m, PaymentId.of("pay_9")))).contains(byInference);
+    }
+
     @Test
     void onlyACompleteTrailerAnswersForItsDate() {
         FileEnd open = new FileEnd(m, "stl_1", D0, 2, Money.ofPaise(98_003), sha("x"), false);

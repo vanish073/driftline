@@ -18,6 +18,8 @@ import io.github.vanish073.driftline.core.payment.PaymentTransition;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
+import io.github.vanish073.driftline.core.port.Tx;
+import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -35,10 +37,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The ops read API (DESIGN §10.1): breaks, one break with its transitions, and a payment's timeline. Read-only, each
- * request in one Store transaction. A merchant token sees only its merchant; another merchant's break answers 404, so
- * a token cannot even learn that it exists. An ops token sees every merchant. Resolving breaks and the CSV export
- * arrive with the resolver (Shift 8) and the security work (Shift 9).
+ * The ops read API (DESIGN §10.1): breaks, one break with its transitions (and, for a break about a settlement line,
+ * that line with its witnesses), a payment's timeline, and the exception list as CSV (§6.4: ambiguous lines are
+ * reported as ambiguous, with both witnesses). Read-only, each request in one Store transaction. A merchant token sees
+ * only its merchant; another merchant's break answers 404, so a token cannot even learn that it exists. An ops token
+ * sees every merchant. Resolving breaks arrives with the resolver (Shift 8).
  */
 @RestController
 @Profile(Roles.INGEST)
@@ -123,6 +126,7 @@ public class OpsController {
                             transitions.add(row);
                         }
                         v.put("transitions", transitions);
+                        lineOf(tx, b).ifPresent(l -> v.put("line", lineView(l)));
                         return v;
                     }));
             return found.<ResponseEntity<?>>map(ResponseEntity::ok).orElseGet(() -> error(404, "no such break"));
@@ -211,6 +215,134 @@ public class OpsController {
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");
         }
+    }
+
+    /**
+     * {@code GET /v1/exports/breaks.csv?merchantId=}: every break as one CSV row, in columns that fit a reconciliation
+     * sheet (the desk research, D54): the payment, its order and expected gross, fee, GST and net; the settlement
+     * line, its date, its UTR and amount; the reason; and an ambiguous line's two witnesses, payment ids separated by
+     * spaces. RFC 4180 quoting; UTF-8. A refusal (400, 403, 503) is the usual JSON error, so the CSV media type is set
+     * on success only.
+     */
+    @GetMapping("/v1/exports/breaks.csv")
+    @PreAuthorize("hasAuthority('SCOPE_breaks:read')")
+    public ResponseEntity<?> exportCsv(Authentication auth, @RequestParam Optional<String> merchantId) {
+        Optional<MerchantId> bound = MerchantAccess.boundMerchant(auth);
+        List<MerchantId> scope = new ArrayList<>();
+        try {
+            Optional<MerchantId> requested = merchantId.map(MerchantId::of);
+            if (bound.isPresent() && requested.isPresent() && !requested.get().equals(bound.get())) {
+                return error(403, "forbidden");
+            }
+            if (requested.isPresent()) {
+                scope.add(requested.get());
+            } else if (bound.isPresent()) {
+                scope.add(bound.get());
+            } else {
+                merchants.merchants().stream().map(MerchantTerms::merchantId).forEach(scope::add);
+            }
+        } catch (IllegalArgumentException e) {
+            return error(400, "not a merchant id");
+        }
+        try {
+            String csv = store.transact("ops-export", tx -> {
+                StringBuilder out = new StringBuilder(String.join(",", CSV_COLUMNS)).append("\r\n");
+                for (MerchantId m : scope) {
+                    for (Break b : tx.breaks().forMerchant(m)) {
+                        out.append(String.join(",", csvRow(tx, b).stream().map(OpsController::csvField).toList()))
+                                .append("\r\n");
+                    }
+                }
+                return out.toString();
+            });
+            return ResponseEntity.ok()
+                    .header("Content-Type", "text/csv; charset=utf-8")
+                    .header("Content-Disposition", "attachment; filename=\"driftline-breaks.csv\"")
+                    .body(csv);
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        }
+    }
+
+    static final List<String> CSV_COLUMNS = List.of("break_id", "merchant_id", "type", "kind", "state", "detected_at",
+            "subject", "payment_id", "order_id", "gross", "expected_fee", "expected_gst", "expected_net", "file_id",
+            "line_no", "settlement_date", "batch_id", "line_amount", "line_status", "reason", "witness_1",
+            "witness_2");
+
+    /** Breaks whose subject is a payment id. */
+    static final List<BreakType> PAYMENT_TYPES = List.of(BreakType.DEBITED_NO_ORDER, BreakType.LATE_SUCCESS,
+            BreakType.DUPLICATE_CAPTURE, BreakType.MISSING_SETTLEMENT);
+    /** Breaks whose subject is a settlement line, {@code fileId:lineNo}. */
+    static final List<BreakType> LINE_TYPES = List.of(BreakType.SHORT_SETTLEMENT, BreakType.ORPHAN_SETTLEMENT,
+            BreakType.OVER_SETTLEMENT, BreakType.SETTLEMENT_CONFLICT, BreakType.INFERRED_MATCH_CHALLENGED);
+
+    private List<String> csvRow(Tx tx, Break b) {
+        List<String> row = new ArrayList<>(List.of(b.breakId(), b.merchantId().value(), b.type().name(),
+                b.type().kind().name(), b.state().name(), b.detectedAt().toString(), b.subjectKey()));
+        Optional<PaymentState> p = PAYMENT_TYPES.contains(b.type())
+                ? tx.payments().find(b.merchantId(), PaymentId.of(b.subjectKey())) : Optional.empty();
+        row.add(p.map(x -> x.paymentId().value()).orElse(""));
+        row.add(p.flatMap(PaymentState::orderId).map(o -> o.value()).orElse(""));
+        Optional<FeeSchedule.Breakdown> expected = p.flatMap(PaymentState::amount).filter(Money::isPositive)
+                .flatMap(gross -> merchants.merchants().stream().filter(t -> t.merchantId().equals(b.merchantId()))
+                        .findFirst().map(t -> t.fees().expected(gross)));
+        row.add(expected.map(e -> e.gross().toString()).orElse(""));
+        row.add(expected.map(e -> e.fee().toString()).orElse(""));
+        row.add(expected.map(e -> e.gst().toString()).orElse(""));
+        row.add(expected.map(e -> e.net().toString()).orElse(""));
+        Optional<SettlementRepo.Line> line = lineOf(tx, b);
+        row.add(line.map(SettlementRepo.Line::fileId).orElse(""));
+        row.add(line.map(l -> Integer.toString(l.lineNo())).orElse(""));
+        row.add(line.map(l -> l.settlementDate().toString()).orElse(""));
+        row.add(line.flatMap(SettlementRepo.Line::batchId).orElse(""));
+        row.add(line.map(l -> l.amount().toString()).orElse(""));
+        row.add(line.map(l -> l.status().name()).orElse(""));
+        row.add(b.evidence().getOrDefault("reason", ""));
+        List<List<PaymentId>> witnesses = line.map(SettlementRepo.Line::witnesses).orElse(List.of());
+        for (int i = 0; i < 2; i++) {
+            row.add(i < witnesses.size()
+                    ? String.join(" ", witnesses.get(i).stream().map(PaymentId::value).toList()) : "");
+        }
+        return row;
+    }
+
+    /** The settlement line a break is about, if its subject is one ({@code fileId:lineNo}). */
+    private static Optional<SettlementRepo.Line> lineOf(Tx tx, Break b) {
+        if (!LINE_TYPES.contains(b.type())) {
+            return Optional.empty();
+        }
+        int colon = b.subjectKey().lastIndexOf(':');
+        if (colon < 1) {
+            return Optional.empty();
+        }
+        try {
+            int lineNo = Integer.parseInt(b.subjectKey().substring(colon + 1));
+            return tx.settlement().line(b.merchantId(), b.subjectKey().substring(0, colon), lineNo);
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static Map<String, Object> lineView(SettlementRepo.Line l) {
+        Map<String, Object> v = new LinkedHashMap<>();
+        v.put("file_id", l.fileId());
+        v.put("line_no", l.lineNo());
+        v.put("settlement_date", l.settlementDate().toString());
+        v.put("amount", l.amount().toString());
+        v.put("reference", l.reference().orElse(null));
+        v.put("batch_id", l.batchId().orElse(null));
+        v.put("status", l.status().name());
+        v.put("candidate_hash", l.candidateHash().map(h -> h.hex()).orElse(null));
+        v.put("witnesses", l.witnesses().stream().map(w -> w.stream().map(PaymentId::value).toList()).toList());
+        return v;
+    }
+
+    /** RFC 4180: quote a field that holds a comma, a quote or a line break, doubling any quote. */
+    static String csvField(String value) {
+        if (value.indexOf(',') < 0 && value.indexOf('"') < 0 && value.indexOf('\n') < 0 && value.indexOf('\r') < 0) {
+            return value;
+        }
+        return '"' + value.replace("\"", "\"\"") + '"';
     }
 
     private static Map<String, Object> view(Break b) {

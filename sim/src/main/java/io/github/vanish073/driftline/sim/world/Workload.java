@@ -13,6 +13,12 @@ public final class Workload {
 
     /** Weights out of 100, in {@link Scenario} order. */
     private static final List<Integer> WEIGHTS = List.of(61, 8, 6, 6, 5, 5, 3, 3, 3);
+    /**
+     * Shift 7: one order in five is a catalogue price, so equal amounts occur as they do in real shops. Equal amounts
+     * are what make an unreferenced batch line ambiguous (§6.4, case 16), and what canary C08 needs to be caught.
+     */
+    static final List<Long> CATALOGUE_PAISE = List.of(49_900L, 99_900L, 149_900L);
+    static final int CATALOGUE_PERCENT = 20;
 
     private Workload() {
     }
@@ -24,7 +30,9 @@ public final class Workload {
             MerchantId merchant = rng.pick(merchants);
             String customer = "customer:" + rng.nextLong(customers);
             long createdAt = rng.nextLong(trafficMillis);
-            Money amount = Money.ofPaise(rng.between(1_000L, 500_000L));
+            Money amount = Money.ofPaise(rng.nextLong(100) < CATALOGUE_PERCENT
+                    ? rng.pick(CATALOGUE_PAISE)
+                    : rng.between(1_000L, 500_000L));
             planned.add(new PlannedOrder(merchant, OrderId.of("ord_" + i), customer, amount, createdAt, scenario(rng)));
         }
         planned.sort(Comparator.comparingLong(PlannedOrder::createdAtMillis).thenComparing(PlannedOrder::orderId));

@@ -1,0 +1,20 @@
+case: 32
+name: duplicate_bank_lines_same_amount_same_day
+about: >-
+  Two unreferenced lines of the same amount on the same day, and two payments of that net. Each line
+  could be either payment, and propagation cannot split them: both lines are AMBIGUOUS (§6.4: cautious, never wrong).
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_2, gross: "499.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "487.22"}
+      - {amount: "487.22"}
+expect:
+  lines:
+    stl_20261114:1: {status: AMBIGUOUS}
+    stl_20261114:2: {status: AMBIGUOUS}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: AMBIGUOUS}
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:2", reason: AMBIGUOUS}

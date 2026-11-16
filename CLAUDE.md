@@ -56,7 +56,8 @@
 - Free memory when the machine is swapping: `./gradlew --stop`
 - One simulator seed: `./gradlew :sim:run --args="--seed 8812 --profile calm"`; add `--trace` for the timeline. A failing seed prints the REPRO line and writes `sim/build/sim-failures/seed-<n>.trace`.
 - 1,000 `calm` seeds, each run twice (determinism): `./gradlew :sim:test --tests '*CalmCampaignTest'`
-- `:sim:campaign` and `:sim:canaries` arrive in Shift 4 (DESIGN §11.12).
+- Seeds-to-detection per canary (writes the table of `docs/results/canaries.md`): `./gradlew -q :sim:canaries --args="--threads 8 --out ../docs/results/canaries.md"`
+- The settlement case corpus (35 cases and 6 golden files, run through the real matcher): `./gradlew :sim:test --tests '*SettlementCaseCorpusTest'`. Regenerate it with `python3 scripts/gen-settlement-cases.py core/src/test/resources/settlement-cases`; the script re-checks the expectations with an independent model and reproduces the committed files byte for byte.
 - VS Code's Gradle import is switched off in `.vscode/settings.json` (gitignored), because it raced `./gradlew`.
 
 Gradle 9.9.1 through the wrapper only. `gradle/gradle-daemon-jvm.properties` pins the daemon to Java 21, and `build-logic` compiles to Java 21 bytecode.

@@ -50,4 +50,15 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":wire"))
     testImplementation(testFixtures(project(":core")))
+    // Shift 7: the settlement case corpus is YAML, read with Jackson's YAML module on the line the BOM pins.
+    testImplementation(platform(libs.jackson.bom))
+    testImplementation(libs.jackson.dataformat.yaml)
+}
+
+// The settlement case corpus lives at core/src/test/resources/settlement-cases/*.yaml (SHIFTS Shift 7). The cases run
+// through the real Matcher and InMemoryStore, which live here, so the corpus is on this module's test classpath.
+tasks.named<ProcessResources>("processTestResources") {
+    from(rootProject.file("core/src/test/resources")) {
+        include("settlement-cases/**")
+    }
 }

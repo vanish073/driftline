@@ -1,0 +1,20 @@
+case: 15
+name: noref_two_subsets_distinct_amounts
+about: >-
+  A fee-free merchant (so the arithmetic is plain): 100 + 400 = 200 + 300 = 500. Two different subsets
+  of distinct amounts fit, so the line is AMBIGUOUS, with both witnesses, and nothing is guessed (§6.4).
+fees: {fee_bps: 0, gst_bps: 0}
+payments:
+  - {id: pay_1, gross: "100.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_2, gross: "400.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_3, gross: "200.00", captured: "2026-11-13T11:00:00"}
+  - {id: pay_4, gross: "300.00", captured: "2026-11-13T12:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "500.00"}
+expect:
+  lines:
+    stl_20261114:1: {status: AMBIGUOUS}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: AMBIGUOUS, evidence: {candidates: "4"}}

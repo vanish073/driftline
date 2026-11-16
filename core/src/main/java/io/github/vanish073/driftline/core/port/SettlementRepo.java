@@ -72,7 +72,10 @@ public interface SettlementRepo {
 
     // ---- the matcher's view ----------------------------------------------------------------------------------------
 
-    /** How a line was settled (§6.3, §6.5). Every status but MATCHED and SHORT_EXPLAINED holds money in SUSPENSE. */
+    /**
+     * How a line was settled (§6.3, §6.4, §6.5). Every status but MATCHED, SHORT_EXPLAINED and INFERRED holds money in
+     * SUSPENSE (SHORT_UNEXPLAINED holds only what it could not attribute).
+     */
     enum LineStatus {
         /** Referenced, and received == expected net. */
         MATCHED,
@@ -86,13 +89,26 @@ public interface SettlementRepo {
         CONFLICT,
         /** References a payment not known as captured (yet): an orphan, held in suspense until attributed. */
         UNATTRIBUTED,
-        /** Carries no reference: waits for batch matching (Shift 7), held in suspense. */
-        AWAITING_BATCH
+        /** Carries no reference: waits for batch matching (§6.4), held in suspense. */
+        AWAITING_BATCH,
+        /** No reference, and exactly one subset of the candidates sums to it: MATCHED_INFERRED, with its candidate hash. */
+        INFERRED,
+        /** No reference, and two or more subsets fit: an orphan with two witnesses, held in suspense. */
+        AMBIGUOUS,
+        /** No reference, and no subset of the candidates fits: an orphan, held in suspense. */
+        NO_SOLUTION,
+        /** No reference, and the exact search needs more than the budget: an orphan, held in suspense. */
+        BUDGET_EXCEEDED,
+        /** No reference and a zero amount: rejected and flagged; it settles nothing. */
+        ZERO_AMOUNT,
+        /** No reference, and the amounts are too large to sum exactly: an orphan, held in suspense. */
+        OUT_OF_RANGE
     }
 
     record Line(MerchantId merchantId, String fileId, int lineNo, LocalDate settlementDate, LocalDate valueDate,
                 Money amount, Optional<Money> fee, Optional<Money> tax, Optional<String> reference,
-                Optional<String> batchId, LineStatus status) {
+                Optional<String> batchId, LineStatus status, Optional<Sha256> candidateHash,
+                List<List<PaymentId>> witnesses) {
 
         public Line {
             Objects.requireNonNull(merchantId, "merchantId");
@@ -105,6 +121,17 @@ public interface SettlementRepo {
             Objects.requireNonNull(reference, "reference");
             Objects.requireNonNull(batchId, "batchId");
             Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(candidateHash, "candidateHash");
+            if ((status == LineStatus.INFERRED) != candidateHash.isPresent()) {
+                throw new IllegalArgumentException("exactly the INFERRED lines carry a candidate hash");
+            }
+            witnesses = witnesses.stream().map(List::copyOf).toList();
+            if ((status == LineStatus.AMBIGUOUS) != (witnesses.size() == 2)) {
+                throw new IllegalArgumentException("exactly the AMBIGUOUS lines carry two witnesses");
+            }
+            if (witnesses.size() == 2 && (witnesses.get(0).isEmpty() || witnesses.get(0).equals(witnesses.get(1)))) {
+                throw new IllegalArgumentException("the two witnesses must be non-empty and distinct");
+            }
             if (lineNo < 1) {
                 throw new IllegalArgumentException("line numbers start at 1");
             }
@@ -115,14 +142,35 @@ public interface SettlementRepo {
             batchId.ifPresent(b -> IdRules.requireToken("batchId", b));
         }
 
+        /** A line that is neither INFERRED nor AMBIGUOUS, so it has no candidate hash and no witnesses. */
+        public Line(MerchantId merchantId, String fileId, int lineNo, LocalDate settlementDate, LocalDate valueDate,
+                    Money amount, Optional<Money> fee, Optional<Money> tax, Optional<String> reference,
+                    Optional<String> batchId, LineStatus status) {
+            this(merchantId, fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference, batchId, status,
+                    Optional.empty(), List.of());
+        }
+
         /** {@code fileId:lineNo}, the subject key of a line's break and of its ledger causes. */
         public String key() {
             return fileId + ":" + lineNo;
         }
 
+        /** The same line with another status that is neither INFERRED nor AMBIGUOUS. */
         public Line withStatus(LineStatus newStatus) {
             return new Line(merchantId, fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference, batchId,
                     newStatus);
+        }
+
+        /** The same line, MATCHED_INFERRED over the candidate set with this hash (§6.4). */
+        public Line inferred(Sha256 hash) {
+            return new Line(merchantId, fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference, batchId,
+                    LineStatus.INFERRED, Optional.of(hash), List.of());
+        }
+
+        /** The same line, AMBIGUOUS: two distinct subsets of the candidates both sum to it (§6.4). */
+        public Line ambiguous(List<PaymentId> first, List<PaymentId> second) {
+            return new Line(merchantId, fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference, batchId,
+                    LineStatus.AMBIGUOUS, Optional.empty(), List.of(first, second));
         }
     }
 
@@ -166,7 +214,9 @@ public interface SettlementRepo {
         REFERENCED,
         SHORT_EXPLAINED,
         SHORT_PARTIAL,
-        OVER_HELD
+        OVER_HELD,
+        /** An unreferenced line's unique subset-sum solution (§6.4). */
+        INFERRED
     }
 
     record Match(MerchantId merchantId, PaymentId paymentId, String fileId, int lineNo, MatchHow how) {
