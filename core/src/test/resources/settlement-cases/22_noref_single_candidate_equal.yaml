@@ -1,0 +1,14 @@
+case: 22
+name: noref_single_candidate_equal
+about: >-
+  One candidate, and the line equals its net: inferred.
+payments:
+  - {id: pay_1, gross: "2499.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "2440.02"}
+expect:
+  lines:
+    stl_20261114:1: {status: INFERRED, pays: [pay_1]}
+  balances: {SUSPENSE: "0.00", GATEWAY_RECEIVABLE: "0.00"}

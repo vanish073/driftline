@@ -1,0 +1,18 @@
+case: 4
+name: ref_short_itemised_gst_rounding_explains
+about: >-
+  Gross 499.00: the contract gives fee 9.98 and GST 1.80 (179.64 paise rounded half up), net
+  487.22. The bank rounds GST up to 1.81 and pays one paisa less; the itemised fee and tax explain it exactly:
+  SHORT_SETTLEMENT resolved automatically with pricing_drift 0.01 (§6.5).
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "487.21", fee: "9.98", tax: "1.81", reference: pay_1}
+expect:
+  lines:
+    stl_20261114:1: {status: SHORT_EXPLAINED, pays: [pay_1]}
+  breaks:
+    - {type: SHORT_SETTLEMENT, subject: "stl_20261114:1", state: RESOLVED_AUTO, evidence: {pricing_drift: "0.01", shortfall: "0.01"}}
+  balances: {SUSPENSE: "0.00", GATEWAY_RECEIVABLE: "0.00"}

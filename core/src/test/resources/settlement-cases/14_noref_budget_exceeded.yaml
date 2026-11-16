@@ -1,0 +1,76 @@
+case: 14
+name: noref_budget_exceeded
+about: >-
+  Sixty candidates with large amounts: meet-in-the-middle cannot take n > 40, and the dynamic programme
+  would need about 61 × 10^8 cells against a 20,000,000-operation budget. The solver refuses instead of guessing:
+  ORPHAN_SETTLEMENT with reason BUDGET_EXCEEDED, money held in suspense.
+payments:
+  - {id: pay_00, gross: "80800.61", captured: "2026-11-13T08:00:00"}
+  - {id: pay_01, gross: "21661.74", captured: "2026-11-13T08:10:00"}
+  - {id: pay_02, gross: "66235.09", captured: "2026-11-13T08:20:00"}
+  - {id: pay_03, gross: "27259.46", captured: "2026-11-13T08:30:00"}
+  - {id: pay_04, gross: "17851.97", captured: "2026-11-13T08:40:00"}
+  - {id: pay_05, gross: "49368.60", captured: "2026-11-13T08:50:00"}
+  - {id: pay_06, gross: "17004.60", captured: "2026-11-13T09:00:00"}
+  - {id: pay_07, gross: "82281.65", captured: "2026-11-13T09:10:00"}
+  - {id: pay_08, gross: "72579.17", captured: "2026-11-13T09:20:00"}
+  - {id: pay_09, gross: "80251.43", captured: "2026-11-13T09:30:00"}
+  - {id: pay_10, gross: "29485.33", captured: "2026-11-13T09:40:00"}
+  - {id: pay_11, gross: "47375.46", captured: "2026-11-13T09:50:00"}
+  - {id: pay_12, gross: "73277.42", captured: "2026-11-13T10:00:00"}
+  - {id: pay_13, gross: "82933.57", captured: "2026-11-13T10:10:00"}
+  - {id: pay_14, gross: "85430.07", captured: "2026-11-13T10:20:00"}
+  - {id: pay_15, gross: "40459.46", captured: "2026-11-13T10:30:00"}
+  - {id: pay_16, gross: "39196.13", captured: "2026-11-13T10:40:00"}
+  - {id: pay_17, gross: "50099.43", captured: "2026-11-13T10:50:00"}
+  - {id: pay_18, gross: "15362.52", captured: "2026-11-13T11:00:00"}
+  - {id: pay_19, gross: "72855.33", captured: "2026-11-13T11:10:00"}
+  - {id: pay_20, gross: "40973.12", captured: "2026-11-13T11:20:00"}
+  - {id: pay_21, gross: "10266.86", captured: "2026-11-13T11:30:00"}
+  - {id: pay_22, gross: "76996.75", captured: "2026-11-13T11:40:00"}
+  - {id: pay_23, gross: "20060.85", captured: "2026-11-13T11:50:00"}
+  - {id: pay_24, gross: "66517.84", captured: "2026-11-13T12:00:00"}
+  - {id: pay_25, gross: "56891.70", captured: "2026-11-13T12:10:00"}
+  - {id: pay_26, gross: "31881.22", captured: "2026-11-13T12:20:00"}
+  - {id: pay_27, gross: "12928.59", captured: "2026-11-13T12:30:00"}
+  - {id: pay_28, gross: "10720.04", captured: "2026-11-13T12:40:00"}
+  - {id: pay_29, gross: "41404.39", captured: "2026-11-13T12:50:00"}
+  - {id: pay_30, gross: "62058.92", captured: "2026-11-13T13:00:00"}
+  - {id: pay_31, gross: "79513.80", captured: "2026-11-13T13:10:00"}
+  - {id: pay_32, gross: "35476.57", captured: "2026-11-13T13:20:00"}
+  - {id: pay_33, gross: "74349.43", captured: "2026-11-13T13:30:00"}
+  - {id: pay_34, gross: "40843.79", captured: "2026-11-13T13:40:00"}
+  - {id: pay_35, gross: "33624.15", captured: "2026-11-13T13:50:00"}
+  - {id: pay_36, gross: "50208.84", captured: "2026-11-13T14:00:00"}
+  - {id: pay_37, gross: "89424.91", captured: "2026-11-13T14:10:00"}
+  - {id: pay_38, gross: "10059.48", captured: "2026-11-13T14:20:00"}
+  - {id: pay_39, gross: "50190.53", captured: "2026-11-13T14:30:00"}
+  - {id: pay_40, gross: "26744.40", captured: "2026-11-13T14:40:00"}
+  - {id: pay_41, gross: "65288.02", captured: "2026-11-13T14:50:00"}
+  - {id: pay_42, gross: "21028.35", captured: "2026-11-13T15:00:00"}
+  - {id: pay_43, gross: "59502.88", captured: "2026-11-13T15:10:00"}
+  - {id: pay_44, gross: "42254.74", captured: "2026-11-13T15:20:00"}
+  - {id: pay_45, gross: "81252.41", captured: "2026-11-13T15:30:00"}
+  - {id: pay_46, gross: "62006.02", captured: "2026-11-13T15:40:00"}
+  - {id: pay_47, gross: "26555.45", captured: "2026-11-13T15:50:00"}
+  - {id: pay_48, gross: "84850.88", captured: "2026-11-13T16:00:00"}
+  - {id: pay_49, gross: "30443.45", captured: "2026-11-13T16:10:00"}
+  - {id: pay_50, gross: "16962.76", captured: "2026-11-13T16:20:00"}
+  - {id: pay_51, gross: "17551.21", captured: "2026-11-13T16:30:00"}
+  - {id: pay_52, gross: "55776.23", captured: "2026-11-13T16:40:00"}
+  - {id: pay_53, gross: "22760.32", captured: "2026-11-13T16:50:00"}
+  - {id: pay_54, gross: "44505.84", captured: "2026-11-13T17:00:00"}
+  - {id: pay_55, gross: "61123.72", captured: "2026-11-13T17:10:00"}
+  - {id: pay_56, gross: "68054.61", captured: "2026-11-13T17:20:00"}
+  - {id: pay_57, gross: "69470.82", captured: "2026-11-13T17:30:00"}
+  - {id: pay_58, gross: "75546.14", captured: "2026-11-13T17:40:00"}
+  - {id: pay_59, gross: "84364.48", captured: "2026-11-13T17:50:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "1387161.17"}   # net of every other candidate
+expect:
+  lines:
+    stl_20261114:1: {status: BUDGET_EXCEEDED}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: BUDGET_EXCEEDED, evidence: {candidates: "60"}}

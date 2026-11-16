@@ -1,0 +1,21 @@
+name: referenced_daily_crlf
+about: >-
+  A referenced daily file with CRLF line endings and a quoted narration: three exact lines (two itemised)
+  and one short line whose itemised fee explains it (pricing drift 5.00). Fees and GST post as itemised.
+first_settlement_date: "2026-11-14"
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_2, gross: "1250.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_3, gross: "77.77", captured: "2026-11-13T11:00:00"}
+  - {id: pay_4, gross: "2000.00", captured: "2026-11-13T12:00:00"}
+files:
+  - csv: golden/referenced_daily_crlf.csv
+expect:
+  lines:
+    stl_g1_20261114:1: {status: MATCHED, pays: [pay_1]}
+    stl_g1_20261114:2: {status: MATCHED, pays: [pay_2]}
+    stl_g1_20261114:3: {status: MATCHED, pays: [pay_3]}
+    stl_g1_20261114:4: {status: SHORT_EXPLAINED, pays: [pay_4]}
+  breaks:
+    - {type: SHORT_SETTLEMENT, subject: "stl_g1_20261114:4", state: RESOLVED_AUTO, evidence: {pricing_drift: "5.00"}}
+  balances: {BANK: "3731.45", GATEWAY_FEES: "81.54", GST_INPUT_CREDIT: "13.78", GATEWAY_RECEIVABLE: "0.00", SUSPENSE: "0.00"}

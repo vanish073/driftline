@@ -1,0 +1,17 @@
+case: 23
+name: noref_capture_at_ist_cutoff_boundary
+about: >-
+  Two equal payments one second apart across IST midnight. Batch dates come from the IST capture
+  date (§6.4), so only pay_in is a candidate and the line is inferred. A UTC date would put both on 13 November
+  and make the line ambiguous.
+payments:
+  - {id: pay_in, gross: "750.00", captured: "2026-11-13T23:59:59"}   # IST date 13 Nov: batch date 14 Nov, inside the window
+  - {id: pay_out, gross: "750.00", captured: "2026-11-14T00:00:00"}   # IST date 14 Nov: batch date 15 Nov, outside (18:30 UTC on 13 Nov)
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "732.30"}
+expect:
+  lines:
+    stl_20261114:1: {status: INFERRED, pays: [pay_in]}
+  balances: {SUSPENSE: "0.00"}

@@ -134,7 +134,7 @@ public final class Simulation {
                 coordinator, faults, trace);
         SettlementFeed feed = new SettlementFeed(scheduler, network, faults, trace, worker);
         FakeGateway gateway = new FakeGateway(scheduler, network, bank, ingest, trace, secrets, merchants,
-                SplitMix64.stream(seed, "bank"), feed);
+                SplitMix64.stream(seed, "bank"), feed, FakeGateway.BATCH_DAY_PERCENT);
         LocalDate lastFileDate = IstCalendar.istDate(EPOCH).plusDays(profile.trafficDays + profile.drainDays);
         invariants.world(gateway, feed, merchants, EPOCH, CYCLE_DAYS, config.graceDays(), lastFileDate);
 
@@ -202,6 +202,10 @@ public final class Simulation {
         stats.put("settlement.worker.duplicates", worker.duplicates());
         stats.put("settlement.worker.conflicts", (long) worker.conflicts().size());
         stats.put("settlement.matched", (long) store.committedMatches().size());
+        for (var line : store.committedLines()) {
+            stats.merge("settlement.line." + line.status().name(), 1L, Long::sum);
+        }
+        stats.put("settlement.batch_lines.world", (long) gateway.batchLines().size());
         for (Break b : store.committedBreaks()) {
             stats.merge("breaks." + b.type().name(), 1L, Long::sum);
             if (b.evidence().containsKey("order_paid_later") || b.evidence().containsKey("attributed_to")
@@ -211,6 +215,8 @@ public final class Simulation {
         }
         stats.put("oracle.expected", (long) invariants.expected().size());
         stats.put("oracle.detected", (long) invariants.detected().size());
+        stats.put("oracle.covered.idempotency_conflict", invariants.coveredByIdempotencyConflict());
+        stats.put("oracle.covered.unresolved_batch", invariants.coveredByUnresolvedBatch());
         long cacheHits = 0;
         long cacheMisses = 0;
         for (MatcherInstance m : matchers.values()) {

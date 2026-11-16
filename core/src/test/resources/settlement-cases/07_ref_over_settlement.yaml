@@ -1,0 +1,17 @@
+case: 7
+name: ref_over_settlement
+about: >-
+  Expected net 976.40, received 980.00: OVER_SETTLEMENT, an anomaly; the whole amount is held in
+  suspense (§6.5).
+payments:
+  - {id: pay_1, gross: "1000.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "980.00", reference: pay_1}
+expect:
+  lines:
+    stl_20261114:1: {status: OVER, pays: [pay_1]}
+  breaks:
+    - {type: OVER_SETTLEMENT, subject: "stl_20261114:1", state: DETECTED}
+  balances: {GATEWAY_RECEIVABLE: "1000.00"}

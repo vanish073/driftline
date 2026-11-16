@@ -1,0 +1,17 @@
+case: 6
+name: ref_short_itemised_not_summing
+about: >-
+  Expected net 976.40, received 970.00, itemised fee 20.00 and tax 3.60: the itemisation covers
+  23.60 of a 30.00 gap, so it does not explain the shortfall: SHORT_SETTLEMENT stays open (§6.5).
+payments:
+  - {id: pay_1, gross: "1000.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "970.00", fee: "20.00", tax: "3.60", reference: pay_1}
+expect:
+  lines:
+    stl_20261114:1: {status: SHORT_UNEXPLAINED, pays: [pay_1]}
+  breaks:
+    - {type: SHORT_SETTLEMENT, subject: "stl_20261114:1", state: DETECTED, evidence: {itemised: "yes", shortfall: "6.40"}}
+  balances: {SUSPENSE: "0.00", GATEWAY_RECEIVABLE: "30.00"}

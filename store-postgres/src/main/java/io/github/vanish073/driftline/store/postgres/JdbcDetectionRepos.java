@@ -24,9 +24,11 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * The watermark, timer, break and settlement repositories on PostgreSQL (migration V4). Each check the in-memory store
@@ -485,7 +487,7 @@ final class JdbcDetectionRepos {
 
     static final class Settlement implements SettlementRepo {
         private static final String LINE_COLUMNS = "merchant_id, file_id, line_no, settlement_date, value_date, "
-                + "amount_paise, fee_paise, tax_paise, reference, batch_id, status";
+                + "amount_paise, fee_paise, tax_paise, reference, batch_id, status, candidate_hash, witnesses";
         private static final String END_COLUMNS =
                 "merchant_id, file_id, settlement_date, line_count, total_paise, sha256, complete";
 
@@ -567,7 +569,27 @@ final class JdbcDetectionRepos {
                     date(rs, "settlement_date"), date(rs, "value_date"), Money.ofPaise(rs.getLong("amount_paise")),
                     optionalMoney(rs, "fee_paise"), optionalMoney(rs, "tax_paise"),
                     Optional.ofNullable(rs.getString("reference")), Optional.ofNullable(rs.getString("batch_id")),
-                    LineStatus.valueOf(rs.getString("status")));
+                    LineStatus.valueOf(rs.getString("status")),
+                    Optional.ofNullable(rs.getString("candidate_hash")).map(Sha256::new),
+                    decodeWitnesses(rs.getString("witnesses")));
+        }
+
+        /** Witnesses as {@code pay_1,pay_2;pay_3}: payment ids are tokens, so neither separator can occur in one. */
+        static String encodeWitnesses(List<List<PaymentId>> witnesses) {
+            return witnesses.stream()
+                    .map(w -> String.join(",", w.stream().map(PaymentId::value).toList()))
+                    .collect(Collectors.joining(";"));
+        }
+
+        static List<List<PaymentId>> decodeWitnesses(String text) {
+            if (text == null) {
+                return List.of();
+            }
+            List<List<PaymentId>> out = new ArrayList<>();
+            for (String witness : text.split(";", -1)) {
+                out.add(Arrays.stream(witness.split(",", -1)).map(PaymentId::of).toList());
+            }
+            return out;
         }
 
         private List<Line> lines(String where, Object... params) {
@@ -592,12 +614,14 @@ final class JdbcDetectionRepos {
         public void saveLine(Line l) {
             try (PreparedStatement ps = tx.connection().prepareStatement("""
                     INSERT INTO settlement_lines (merchant_id, file_id, line_no, settlement_date, value_date, amount_paise,
-                                                  fee_paise, tax_paise, reference, batch_id, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                  fee_paise, tax_paise, reference, batch_id, status, candidate_hash,
+                                                  witnesses)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (merchant_id, file_id, line_no) DO UPDATE SET settlement_date = EXCLUDED.settlement_date,
                         value_date = EXCLUDED.value_date, amount_paise = EXCLUDED.amount_paise,
                         fee_paise = EXCLUDED.fee_paise, tax_paise = EXCLUDED.tax_paise, reference = EXCLUDED.reference,
-                        batch_id = EXCLUDED.batch_id, status = EXCLUDED.status
+                        batch_id = EXCLUDED.batch_id, status = EXCLUDED.status, candidate_hash = EXCLUDED.candidate_hash,
+                        witnesses = EXCLUDED.witnesses
                     """)) {
                 ps.setString(1, l.merchantId().value());
                 ps.setString(2, l.fileId());
@@ -610,6 +634,9 @@ final class JdbcDetectionRepos {
                 setOptionalText(ps, 9, l.reference());
                 setOptionalText(ps, 10, l.batchId());
                 ps.setString(11, l.status().name());
+                setOptionalText(ps, 12, l.candidateHash().map(Sha256::hex));
+                setOptionalText(ps, 13, l.witnesses().isEmpty() ? Optional.empty()
+                        : Optional.of(encodeWitnesses(l.witnesses())));
                 ps.executeUpdate();
             } catch (SQLException e) {
                 throw SqlErrors.translate("save settlement line " + l.key(), e);

@@ -1,0 +1,17 @@
+case: 34
+name: watermark_gate_not_passed
+about: >-
+  The gateway watermark has not passed the window's end plus bound_G (no tick after the first batch),
+  so a payment from the window may still be on its way: the line waits (AWAITING_BATCH), held in suspense (a credit,
+  so the debit-positive balance is negative), with no break (§6.4 step 5).
+watermark: not_passed
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "487.22"}
+expect:
+  lines:
+    stl_20261114:1: {status: AWAITING_BATCH}
+  balances: {SUSPENSE: "-487.22"}

@@ -1,0 +1,17 @@
+case: 5
+name: ref_short_unitemised
+about: >-
+  Expected net 976.40, received 970.00, nothing itemised: SHORT_SETTLEMENT stays open (the resolver
+  escalates open breaks in Shift 8) and a partial posting keeps 6.40 of the receivable open (§6.5).
+payments:
+  - {id: pay_1, gross: "1000.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "970.00", reference: pay_1}
+expect:
+  lines:
+    stl_20261114:1: {status: SHORT_UNEXPLAINED, pays: [pay_1]}
+  breaks:
+    - {type: SHORT_SETTLEMENT, subject: "stl_20261114:1", state: DETECTED, evidence: {itemised: "no", shortfall: "6.40"}}
+  balances: {SUSPENSE: "0.00", GATEWAY_RECEIVABLE: "30.00"}

@@ -88,7 +88,7 @@ final class Injection {
         secrets.put(m, merchant.secret().getBytes(StandardCharsets.US_ASCII));
         SettlementFeed feed = new SettlementFeed(scheduler, network, faults, trace, driftline);
         FakeGateway gateway = new FakeGateway(scheduler, network, bank, driftline, trace, secrets, merchants,
-                SplitMix64.stream(seed, "bank"), feed);
+                SplitMix64.stream(seed, "bank"), feed, 0);
 
         long tenAm = 10 * 3_600_000L;
         for (int i = 0; i < count; i++) {

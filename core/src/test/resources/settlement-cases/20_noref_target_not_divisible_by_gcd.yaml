@@ -1,0 +1,19 @@
+case: 20
+name: noref_target_not_divisible_by_gcd
+about: >-
+  Every candidate is a multiple of 100 rupees but the line is 1234.56: not divisible by the gcd, so
+  NO_SOLUTION without any search.
+fees: {fee_bps: 0, gst_bps: 0}
+payments:
+  - {id: pay_1, gross: "300.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_2, gross: "500.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_3, gross: "700.00", captured: "2026-11-13T11:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "1234.56"}
+expect:
+  lines:
+    stl_20261114:1: {status: NO_SOLUTION}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: NO_SOLUTION}

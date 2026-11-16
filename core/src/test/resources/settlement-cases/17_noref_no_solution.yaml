@@ -1,0 +1,17 @@
+case: 17
+name: noref_no_solution
+about: >-
+  No subset of the three candidates sums to 1000.00: NO_SOLUTION, an ORPHAN_SETTLEMENT held in suspense.
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_2, gross: "999.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_3, gross: "1499.00", captured: "2026-11-13T11:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "1000.00"}
+expect:
+  lines:
+    stl_20261114:1: {status: NO_SOLUTION}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:1", reason: NO_SOLUTION, evidence: {candidates: "3"}}

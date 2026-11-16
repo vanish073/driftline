@@ -1,0 +1,22 @@
+case: 27
+name: multi_line_forced_propagation_resolves_both
+about: >-
+  Fee-free. Line 1 (130.00) alone is ambiguous: 130 or 40 + 90. Line 2 (390.00) has exactly one
+  solution, 90 + 300, so it is committed; without pay_90, line 1 is uniquely pay_130. Forced-assignment propagation
+  resolves both, whatever the line order (§6.4).
+fees: {fee_bps: 0, gst_bps: 0}
+payments:
+  - {id: pay_40, gross: "40.00", captured: "2026-11-13T09:00:00"}
+  - {id: pay_90, gross: "90.00", captured: "2026-11-13T10:00:00"}
+  - {id: pay_130, gross: "130.00", captured: "2026-11-13T11:00:00"}
+  - {id: pay_300, gross: "300.00", captured: "2026-11-13T12:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "130.00"}
+      - {amount: "390.00"}
+expect:
+  lines:
+    stl_20261114:1: {status: INFERRED, pays: [pay_130]}
+    stl_20261114:2: {status: INFERRED, pays: [pay_300, pay_90]}
+  balances: {SUSPENSE: "0.00"}

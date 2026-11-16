@@ -1,0 +1,18 @@
+case: 8
+name: ref_unknown_reference
+about: >-
+  Line 2 names a payment Driftline has never seen: an ORPHAN_SETTLEMENT (UNKNOWN_REFERENCE),
+  its money held in suspense until it is attributed (§6.3). Line 1 settles normally.
+payments:
+  - {id: pay_1, gross: "499.00", captured: "2026-11-13T10:00:00"}
+files:
+  - date: "2026-11-14"
+    lines:
+      - {amount: "487.22", reference: pay_1}
+      - {amount: "100.00", reference: pay_unknown}
+expect:
+  lines:
+    stl_20261114:1: {status: MATCHED, pays: [pay_1]}
+    stl_20261114:2: {status: UNATTRIBUTED}
+  breaks:
+    - {type: ORPHAN_SETTLEMENT, subject: "stl_20261114:2", reason: UNKNOWN_REFERENCE}
