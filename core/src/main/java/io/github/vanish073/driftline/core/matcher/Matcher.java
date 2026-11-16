@@ -13,6 +13,7 @@ import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.Canary;
+import io.github.vanish073.driftline.core.id.DerivedId;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
@@ -34,6 +35,7 @@ import io.github.vanish073.driftline.core.payment.PaymentStateMachine;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
 import io.github.vanish073.driftline.core.port.BreakRepo;
+import io.github.vanish073.driftline.core.port.OutboxRepo;
 import io.github.vanish073.driftline.core.port.DedupeRepo;
 import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo.FileEnd;
@@ -427,6 +429,11 @@ public final class Matcher {
             if (d.kind() != DecisionKind.APPLIED) {
                 return;
             }
+            if (before.status() == PaymentStatus.NONE && after.status() == PaymentStatus.PENDING
+                    && config.maxProbes() > 0) {
+                upsertTimer(m, Kind.PENDING_PROBE, ev.paymentId().value(), TimerClock.STREAM_G,
+                        e.eventTime().plus(config.probeAfter()));
+            }
             if (after.status() == PaymentStatus.SUCCEEDED) {
                 post(PostingRules.capture(m, after.paymentId(), after.amount().orElseThrow(), after.successAt().orElseThrow()));
                 order(m, after.orderId().orElseThrow()).ifPresent(o -> matchIfPaid(m, o, after, e.eventTime()));
@@ -810,6 +817,32 @@ public final class Matcher {
             }
         }
 
+        /**
+         * The pending-order probe (§9.2, D61): a payment still PENDING long after its pending event may have an outcome
+         * whose webhook the gateway gave up on (WEBHOOK_LOST). Ask the gateway's status API, with no break yet; the
+         * dispatcher publishes what it learns as an observation, which comes back through Kafka. At most
+         * {@code maxProbes} probes, {@code probeAfter} apart in gateway event time.
+         */
+        void probe(MerchantId m, PaymentId p) {
+            if (payment(m, p).filter(x -> x.status() == PaymentStatus.PENDING).isEmpty()) {
+                return;
+            }
+            for (int n = 1; n <= config.maxProbes(); n++) {
+                String id = "cmd_" + DerivedId.of("probe", m.value(), p.value(), Integer.toString(n)).value();
+                if (tx.outbox().find(id).isEmpty()) {
+                    tx.outbox().enqueue(OutboxRepo.Command.pending(id, m, Optional.empty(),
+                            OutboxRepo.CommandKind.STATUS_QUERY_PAYMENT,
+                            evidence("payment_id", p.value(), "seq", Integer.toString(n), "probe", "yes"),
+                            Optional.empty(), now));
+                    if (n < config.maxProbes()) {
+                        upsertTimer(m, Kind.PENDING_PROBE, p.value(), TimerClock.STREAM_G,
+                                stream(Source.GATEWAY).value.plus(config.probeAfter()));
+                    }
+                    return;
+                }
+            }
+        }
+
         /** New evidence on a break: the resolver should look at it again now (§8.1). */
         void wake(MerchantId m, String breakId) {
             tx.breaks().wake(m, breakId, now);
@@ -1076,9 +1109,7 @@ public final class Matcher {
                         case SETTLEMENT_DUE -> evaluateMissing(t.merchantId(), PaymentId.of(t.subjectKey()));
                         case FEED_STALL -> evaluateStall(t.merchantId(), LocalDate.parse(t.subjectKey()));
                         case BATCH_SOLVE -> solveBatch(t.merchantId(), t.subjectKey());
-                        case PENDING_PROBE -> {
-                            // never registered before Shift 8
-                        }
+                        case PENDING_PROBE -> probe(t.merchantId(), PaymentId.of(t.subjectKey()));
                     }
                 }
             }

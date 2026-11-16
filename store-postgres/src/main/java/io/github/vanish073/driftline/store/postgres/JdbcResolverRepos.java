@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 /** The outbox and the audit log on PostgreSQL (DESIGN §9, §7.6; V1, V7). */
 final class JdbcResolverRepos {
@@ -145,7 +146,8 @@ final class JdbcResolverRepos {
         }
 
         @Override
-        public List<Command> claim(Instant now, String owner, Instant leaseUntil, Instant retryAt, int limit) {
+        public List<Command> claim(Instant now, String owner, Instant leaseUntil, Function<Command, Instant> retryAt,
+                                   int limit) {
             List<Command> due = list(SELECT + """
                      WHERE status <> 'DONE' AND next_attempt_at <= ? AND (lease_until IS NULL OR lease_until < ?)
                      ORDER BY next_attempt_at, command_id COLLATE "C"
@@ -161,7 +163,11 @@ final class JdbcResolverRepos {
                     ps.setString(1, owner);
                     ps.setObject(2, ts(leaseUntil));
                     ps.setObject(3, ts(now));
-                    ps.setObject(4, ts(retryAt));
+                    Command leased = new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(), c.args(),
+                            c.idempotencyKey(), CommandStatus.IN_FLIGHT, c.attempt() + 1, Optional.of(owner),
+                            Optional.of(leaseUntil), c.nextAttemptAt(), Optional.of(c.firstSentAt().orElse(now)),
+                            Optional.empty());
+                    ps.setObject(4, ts(retryAt.apply(leased)));
                     ps.setString(5, c.commandId());
                     ps.executeUpdate();
                     out.add(find(c.commandId()).orElseThrow());

@@ -166,7 +166,7 @@ public abstract class ResolverStoreContract {
             t.outbox().enqueue(command(b, "cmd_later", T0.plusSeconds(3_600)));
         });
         Instant now = T0.plusSeconds(10);
-        List<Command> claimed = tx(t -> t.outbox().claim(now, "d1", now.plusSeconds(30), now.plusSeconds(40), 10));
+        List<Command> claimed = tx(t -> t.outbox().claim(now, "d1", now.plusSeconds(30), c -> now.plusSeconds(40), 10));
         assertThat(claimed).extracting(Command::commandId).containsExactly("cmd_0", "cmd_a", "cmd_b");
         Command first = claimed.get(0);
         assertThat(first.status()).isEqualTo(CommandStatus.IN_FLIGHT);
@@ -177,15 +177,24 @@ public abstract class ResolverStoreContract {
         assertThat(first.nextAttemptAt()).isEqualTo(now.plusSeconds(40));
         assertThat(one(t -> t.outbox().find("cmd_0"))).contains(first);
 
-        assertThat(many(t -> t.outbox().claim(now.plusSeconds(5), "d2", now.plusSeconds(60), now.plusSeconds(70), 10)))
+        assertThat(many(t -> t.outbox().claim(now.plusSeconds(5), "d2", now.plusSeconds(60), c -> now.plusSeconds(70), 10)))
                 .as("leased commands are not claimed again").isEmpty();
         Instant afterLease = now.plusSeconds(41);
         List<Command> again = tx(t -> t.outbox().claim(afterLease, "d2", afterLease.plusSeconds(30),
-                afterLease.plusSeconds(40), 1));
+                c -> afterLease.plusSeconds(40), 1));
         assertThat(again).extracting(Command::commandId).containsExactly("cmd_0");
         assertThat(again.get(0).attempt()).isEqualTo(2);
         assertThat(again.get(0).leaseOwner()).contains("d2");
         assertThat(again.get(0).firstSentAt()).as("the first send time is kept").contains(now);
+        Instant third = afterLease.plusSeconds(41);
+        List<Command> byAttempt = tx(t -> t.outbox().claim(third, "d3", third.plusSeconds(30),
+                c -> third.plusSeconds(100L * c.attempt()), 10));
+        Command zero = byAttempt.stream().filter(c -> c.commandId().equals("cmd_0")).findFirst().orElseThrow();
+        Command a = byAttempt.stream().filter(c -> c.commandId().equals("cmd_a")).findFirst().orElseThrow();
+        assertThat(zero.attempt()).isEqualTo(3);
+        assertThat(zero.nextAttemptAt()).as("the retry time sees the attempt as claimed").isEqualTo(third.plusSeconds(300));
+        assertThat(a.attempt()).isEqualTo(2);
+        assertThat(a.nextAttemptAt()).isEqualTo(third.plusSeconds(200));
         assertThat(many(t -> t.outbox().forBreak(M, b.breakId()))).extracting(Command::commandId)
                 .containsExactly("cmd_0", "cmd_a", "cmd_b", "cmd_later");
     }
@@ -194,7 +203,7 @@ public abstract class ResolverStoreContract {
     void theFirstResultWinsAndADoneCommandIsNeverClaimedOrRetried() {
         Break b = raise(BreakType.DEBITED_NO_ORDER, "pay_1");
         run(t -> t.outbox().enqueue(command(b, "cmd_1", T0)));
-        run(t -> t.outbox().claim(T0, "d1", T0.plusSeconds(30), T0.plusSeconds(40), 10));
+        run(t -> t.outbox().claim(T0, "d1", T0.plusSeconds(30), c -> T0.plusSeconds(40), 10));
         assertThat(yes(t -> t.outbox().complete("cmd_1", Map.of("status", "PROCESSED", "refund_id", "rfd_9")))).isTrue();
         assertThat(yes(t -> t.outbox().complete("cmd_1", Map.of("status", "FAILED")))).as("a later result").isFalse();
         Command done = tx(t -> t.outbox().find("cmd_1")).orElseThrow();
@@ -203,8 +212,8 @@ public abstract class ResolverStoreContract {
         assertThat(done.leaseOwner()).isEmpty();
         run(t -> t.outbox().retryAt("cmd_1", T0));
         assertThat(one(t -> t.outbox().find("cmd_1"))).contains(done);
-        assertThat(many(t -> t.outbox().claim(T0.plusSeconds(3_600), "d2", T0.plusSeconds(3_630), T0.plusSeconds(3_640),
-                10))).isEmpty();
+        assertThat(many(t -> t.outbox().claim(T0.plusSeconds(3_600), "d2", T0.plusSeconds(3_630),
+                c -> T0.plusSeconds(3_640), 10))).isEmpty();
         assertThatThrownBy(() -> run(t -> t.outbox().complete("cmd_none", Map.of())))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -213,14 +222,14 @@ public abstract class ResolverStoreContract {
     void anExplicitRetryReleasesTheLeaseAndReschedules() {
         Break b = raise(BreakType.DEBITED_NO_ORDER, "pay_1");
         run(t -> t.outbox().enqueue(command(b, "cmd_1", T0)));
-        run(t -> t.outbox().claim(T0, "d1", T0.plusSeconds(30), T0.plusSeconds(40), 10));
+        run(t -> t.outbox().claim(T0, "d1", T0.plusSeconds(30), c -> T0.plusSeconds(40), 10));
         run(t -> t.outbox().retryAt("cmd_1", T0.plusSeconds(5)));
         Command c = tx(t -> t.outbox().find("cmd_1")).orElseThrow();
         assertThat(c.status()).isEqualTo(CommandStatus.PENDING);
         assertThat(c.leaseOwner()).isEmpty();
         assertThat(c.nextAttemptAt()).isEqualTo(T0.plusSeconds(5));
         assertThat(c.attempt()).isEqualTo(1);
-        assertThat(many(t -> t.outbox().claim(T0.plusSeconds(6), "d2", T0.plusSeconds(36), T0.plusSeconds(46), 10)))
+        assertThat(many(t -> t.outbox().claim(T0.plusSeconds(6), "d2", T0.plusSeconds(36), x -> T0.plusSeconds(46), 10)))
                 .extracting(Command::commandId).containsExactly("cmd_1");
     }
 

@@ -57,7 +57,7 @@ class OutboxDatabaseGuardsIT {
     void aDoneCommandNeverChangesAndNoCommandIsEverDeleted() throws SQLException {
         String url = PostgresFixture.newDatabase("outbox_guards");
         PostgresStore store = storeWithCommands(url, 2);
-        store.transact("claim", tx -> tx.outbox().claim(T0, "d1", T0.plusSeconds(30), T0.plusSeconds(40), 1));
+        store.transact("claim", tx -> tx.outbox().claim(T0, "d1", T0.plusSeconds(30), c -> T0.plusSeconds(40), 1));
         store.transact("done", tx -> tx.outbox().complete("cmd_000", Map.of("status", "SUCCEEDED")));
         try (Connection c = PostgresFixture.app(url)) {
             assertThatThrownBy(() -> sql(c, "UPDATE outbox SET attempt = 9 WHERE command_id = 'cmd_000'"))
@@ -103,7 +103,7 @@ class OutboxDatabaseGuardsIT {
                     together.await(10, TimeUnit.SECONDS);
                     List<String> ids = store.transact("claim-" + owner, tx -> {
                         List<String> out = new ArrayList<>();
-                        tx.outbox().claim(T0, owner, T0.plusSeconds(30), T0.plusSeconds(40), 25)
+                        tx.outbox().claim(T0, owner, T0.plusSeconds(30), c -> T0.plusSeconds(40), 25)
                                 .forEach(c -> out.add(c.commandId()));
                         return out;
                     });

@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 /**
  * The transactional outbox (DESIGN §9, §12): the resolver writes a command in the same transaction as the decision
@@ -124,12 +125,13 @@ public interface OutboxRepo {
      * Claims up to {@code limit} commands that are due: not DONE, {@code nextAttemptAt ≤ now}, and not leased or leased
      * until before {@code now}; oldest {@code nextAttemptAt} first, then command id. Each becomes IN_FLIGHT, leased to
      * {@code owner} until {@code leaseUntil}, with its attempt counted, {@code firstSentAt} set if it was empty, and
-     * {@code nextAttemptAt} set to {@code retryAt} (when it may be claimed again if no result comes). PostgreSQL uses
-     * {@code FOR UPDATE SKIP LOCKED}, so two dispatchers never claim the same row in one moment.
+     * {@code nextAttemptAt} set to {@code retryAt} of the command as claimed (when it may be claimed again if no result
+     * comes: the dispatcher's backoff, which depends on the attempt). PostgreSQL uses {@code FOR UPDATE SKIP LOCKED},
+     * so two dispatchers never claim the same row in one moment.
      *
      * @return the claimed commands as they are now stored
      */
-    List<Command> claim(Instant now, String owner, Instant leaseUntil, Instant retryAt, int limit);
+    List<Command> claim(Instant now, String owner, Instant leaseUntil, Function<Command, Instant> retryAt, int limit);
 
     /**
      * Records the command's result and makes it DONE, unless it is already DONE: the first result wins, whatever

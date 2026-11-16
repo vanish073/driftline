@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 /**
  * The simulator's {@link Store} (DESIGN §3.2, §11.3). Transactions run one at a time. Each one buffers its writes and
@@ -1117,7 +1118,8 @@ public final class InMemoryStore implements Store {
             }
 
             @Override
-            public List<Command> claim(Instant now, String owner, Instant leaseUntil, Instant retryAt, int limit) {
+            public List<Command> claim(Instant now, String owner, Instant leaseUntil, Function<Command, Instant> retryAt,
+                                       int limit) {
                 requireOpen();
                 List<Command> due = new ArrayList<>(commandView.where(c -> c.status() != CommandStatus.DONE
                         && !c.nextAttemptAt().isAfter(now)
@@ -1125,10 +1127,14 @@ public final class InMemoryStore implements Store {
                 due.sort(Comparator.comparing(Command::nextAttemptAt).thenComparing(Command::commandId));
                 List<Command> out = new ArrayList<>();
                 for (Command c : due.subList(0, Math.min(limit, due.size()))) {
-                    Command claimed = new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(), c.args(),
+                    Command leased = new Command(c.commandId(), c.merchantId(), c.breakId(), c.kind(), c.args(),
                             c.idempotencyKey(), CommandStatus.IN_FLIGHT, Math.addExact(c.attempt(), 1),
-                            Optional.of(owner), Optional.of(leaseUntil), retryAt,
+                            Optional.of(owner), Optional.of(leaseUntil), c.nextAttemptAt(),
                             Optional.of(c.firstSentAt().orElse(now)), Optional.empty());
+                    Command claimed = new Command(leased.commandId(), leased.merchantId(), leased.breakId(),
+                            leased.kind(), leased.args(), leased.idempotencyKey(), leased.status(), leased.attempt(),
+                            leased.leaseOwner(), leased.leaseUntil(), retryAt.apply(leased), leased.firstSentAt(),
+                            Optional.empty());
                     commandView.put(key(c.commandId()), claimed);
                     out.add(claimed);
                 }
