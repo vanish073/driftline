@@ -14,3 +14,4 @@
 2293 pr   # BUG-007: an ambiguity stayed reported after its pending witness failed
 8551 pr   # BUG-008: a fast dispatcher clock made an expired refund key look fresh; the refund was sent twice
 1298 pr   # BUG-009: a duplicate was refunded before the merchant paid the order, then the merchant paid with it
+439901216016483 pr   # BUG-010: a duplicate with no trace at all was settled in a batch line; the line was inferred to its twin

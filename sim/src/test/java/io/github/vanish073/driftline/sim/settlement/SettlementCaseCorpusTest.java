@@ -23,6 +23,9 @@ import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.matcher.PartitionBatch;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.core.port.OutboxRepo.Command;
+import io.github.vanish073.driftline.core.port.OutboxRepo.CommandKind;
+import io.github.vanish073.driftline.core.port.OutboxRepo.CommandStatus;
 import io.github.vanish073.driftline.core.port.SettlementRepo.Line;
 import io.github.vanish073.driftline.core.port.SettlementRepo.LineStatus;
 import io.github.vanish073.driftline.core.port.SettlementRepo.Match;
@@ -133,6 +136,7 @@ class SettlementCaseCorpusTest {
         final List<LogRecord> log = new ArrayList<>();
         final TreeMap<String, Money> gross = new TreeMap<>();
         final TreeSet<String> succeeded = new TreeSet<>();
+        final TreeMap<String, Instant> capturedAt = new TreeMap<>();
         Matcher matcher;
         long epoch;
         int pendingFrom;
@@ -165,6 +169,37 @@ class SettlementCaseCorpusTest {
             matcher.committed(outcome);
         }
 
+        /**
+         * Plays the gateway's captures API (D72): answers every open PAYMENT_SWEEP with this case's own captures of
+         * that day, as of {@code asOf}. The case's payments are the whole world, so a sweep finds nothing new.
+         */
+        void answerSweeps(Instant asOf) {
+            store.transact("sweep", tx -> {
+                for (Command c : store.committedCommands()) {
+                    if (c.kind() != CommandKind.PAYMENT_SWEEP
+                            || tx.outbox().find(c.commandId()).filter(x -> x.status() != CommandStatus.DONE).isEmpty()) {
+                        continue;
+                    }
+                    LocalDate day = LocalDate.parse(c.args().get("captured_on"));
+                    TreeMap<String, String> answer = new TreeMap<>();
+                    answer.put("as_of", asOf.toString());
+                    int i = 0;
+                    for (Map.Entry<String, Instant> e : capturedAt.entrySet()) {
+                        if (IstCalendar.istDate(e.getValue()).equals(day)) {
+                            i++;
+                            answer.put("payment_" + i, e.getKey());
+                            answer.put("order_" + i, "ord_" + e.getKey());
+                            answer.put("amount_" + i, gross.get(e.getKey()).toString());
+                            answer.put("at_" + i, e.getValue().toString());
+                        }
+                    }
+                    answer.put("count", Integer.toString(i));
+                    tx.outbox().complete(c.commandId(), answer);
+                }
+                return null;
+            });
+        }
+
         /** A successful payment (with its order created and paid, so no order break is raised) or a failed one. */
         void payment(JsonNode p) {
             String id = p.get("id").asString();
@@ -179,6 +214,7 @@ class SettlementCaseCorpusTest {
                 return;
             }
             succeeded.add(id);
+            capturedAt.put(id, at);
             append(Source.MERCHANT, EventType.ORDER_CREATED, at.minusSeconds(60),
                     new OrderPayload(order, 1, amount, at.plusSeconds(900), Optional.empty()));
             append(Source.GATEWAY, EventType.PAYMENT_SUCCEEDED, at, new PaymentPayload(PaymentId.of(id), order, amount));
@@ -243,6 +279,8 @@ class SettlementCaseCorpusTest {
         r.batch(IstCalendar.startOfIstDay(last).plusSeconds(37_800));             // 10:30 IST on the last date
         if (!"not_passed".equals(c.path("watermark").asString("passed"))) {
             r.tick(IstCalendar.startOfIstDay(last).plusSeconds(72_000));           // 20:00 IST: idle, gate passed
+            r.answerSweeps(IstCalendar.startOfIstDay(last).plusSeconds(72_000));   // the gateway lists the days' captures
+            r.tick(IstCalendar.startOfIstDay(last).plusSeconds(72_180));           // 20:03 IST: the solve re-checks
         }
         if (c.has("after_solve")) {
             for (JsonNode p : c.get("after_solve").path("payments")) {

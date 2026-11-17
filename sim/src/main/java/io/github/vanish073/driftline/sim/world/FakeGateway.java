@@ -321,6 +321,8 @@ public final class FakeGateway {
                 }
             }
             case CallRequest.RefundLookup l -> reply.accept(lookup(payments.get(l.paymentId())));
+            case CallRequest.PaymentSweep w -> reply.accept(sweepAnswer(call.merchantId(), w.capturedOn(),
+                    scheduler.now() - faults.statusLagMillis()));
             default -> throw new IllegalArgumentException("the gateway does not answer " + call.request());
         }
     }
@@ -397,6 +399,29 @@ public final class FakeGateway {
             emitRefund(p, record);
         }
         key.ifPresent(k -> refundKeys.put(k, new KeyEntry(scheduler.now(), new TreeMap<>(out))));
+        return out;
+    }
+
+    /**
+     * The captures API (D72): every payment of the merchant captured on that IST day, as the gateway knew them at
+     * {@code asOf} (STATUS_STALE makes that earlier than now), with {@code as_of} so the caller can tell a stale view.
+     */
+    private TreeMap<String, String> sweepAnswer(MerchantId m, LocalDate day, long asOf) {
+        TreeMap<String, String> out = new TreeMap<>();
+        out.put("as_of", scheduler.epoch().plusMillis(asOf).toString());
+        int i = 0;
+        for (Payment p : payments.values()) {
+            if (!p.merchant.equals(m) || p.capturedAtMillis < 0 || p.capturedAtMillis > asOf
+                    || !IstCalendar.istDate(scheduler.epoch().plusMillis(p.capturedAtMillis)).equals(day)) {
+                continue;
+            }
+            i++;
+            out.put("payment_" + i, p.id.value());
+            out.put("order_" + i, p.order.value());
+            out.put("amount_" + i, p.amount.toString());
+            out.put("at_" + i, scheduler.epoch().plusMillis(p.capturedAtMillis).toString());
+        }
+        out.put("count", Integer.toString(i));
         return out;
     }
 

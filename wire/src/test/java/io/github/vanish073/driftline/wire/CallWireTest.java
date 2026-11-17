@@ -18,6 +18,7 @@ import io.github.vanish073.driftline.wire.call.CallWire;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -42,6 +43,7 @@ class CallWireTest {
                 call(CallTarget.GATEWAY, Optional.empty(), new CallRequest.StatusQueryOrder(O)),
                 call(CallTarget.GATEWAY, Optional.of("rfd_key"), new CallRequest.Refund(P, O, AMOUNT)),
                 call(CallTarget.GATEWAY, Optional.empty(), new CallRequest.RefundLookup(P)),
+                call(CallTarget.GATEWAY, Optional.empty(), new CallRequest.PaymentSweep(LocalDate.parse("2026-11-13"))),
                 call(CallTarget.MERCHANT, Optional.of("cfm_key"), new CallRequest.MerchantConfirm(O, P, AMOUNT)),
                 call(CallTarget.OPS, Optional.empty(),
                         new CallRequest.EscalationNotify("brk_1", BreakType.SHORT_SETTLEMENT, "m_1/stl:3", "short by 1.00")));
@@ -75,6 +77,9 @@ class CallWireTest {
                         "payment_2", "pay_2", "status_2", "SUCCEEDED", "amount_2", "499.00", "at_2", AT.toString()),
                 kv("status", "PROCESSED", "refund_id", "rfd_9", "processed_at", AT.toString()),
                 kv("found", "yes", "refund_id", "rfd_9", "processed_at", AT.toString()),
+                kv("as_of", AT.toString(), "count", "2", "payment_1", "pay_1", "order_1", "ord_1", "amount_1", "499.00",
+                        "at_1", AT.toString(), "payment_2", "pay_2", "order_2", "ord_1", "amount_2", "499.00",
+                        "at_2", AT.toString()),
                 kv("status", "REJECTED"),
                 kv("status", "DELIVERED"));
         List<OutboundCall> calls = everyCall();
@@ -155,6 +160,8 @@ class CallWireTest {
         assertThat(CallWire.parse(CallTarget.MERCHANT, "GET", "/v1/merchants/m_1/payments/pay_1", new byte[0])).isEmpty();
         assertThatThrownBy(() -> CallWire.parse(CallTarget.GATEWAY, "GET", "/v1/merchants/m 1/payments/pay_1",
                 new byte[0])).isInstanceOf(MalformedJson.class);
+        assertThatThrownBy(() -> CallWire.parse(CallTarget.GATEWAY, "GET", "/v1/merchants/m_1/days/13-11-2026/captures",
+                new byte[0])).as("a date that does not parse").isInstanceOf(MalformedJson.class);
         assertThatThrownBy(() -> CallWire.parse(CallTarget.GATEWAY, "POST", "/v1/merchants/m_1/payments/pay_1/refunds",
                 "{\"order_id\":\"ord_1\"}".getBytes(StandardCharsets.UTF_8))).isInstanceOf(MalformedJson.class);
     }

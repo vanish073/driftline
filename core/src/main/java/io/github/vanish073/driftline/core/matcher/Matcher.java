@@ -60,6 +60,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -86,6 +87,13 @@ import java.util.TreeSet;
  * probe (Shift 8).
  */
 public final class Matcher {
+
+    /** D72: how long to wait before checking again whether a file's capture days are swept. */
+    static final Duration SWEEP_RECHECK = Duration.ofMinutes(1);
+    /** D72: how many times one capture day is swept while the gateway's answers are stale. */
+    static final int MAX_SWEEPS = 5;
+    /** D72: how long after a final sweep its captures may take to arrive as observations before the lines are solved. */
+    static final Duration SWEEP_PATIENCE = Duration.ofMinutes(30);
 
     static final int MAX_TIMER_ROUNDS = 10_000;
     /** Unreferenced lines whose money is still in suspense with no payment attributed (§6.4). */
@@ -890,6 +898,9 @@ public final class Matcher {
             }
             MerchantTerms terms = merchants.terms(m);
             LocalDate date = waiting.get(0).settlementDate();
+            if (!swept(m, terms, date, fileId)) {
+                return;   // D72: solved once the gateway has said what it captured on the window's days
+            }
             LocalDate from = date.minusDays(config.batchLookbackDays());
             List<BatchMatching.Candidate> pool = new ArrayList<>();
             for (PaymentState p : tx.payments().unsettled(m)) {
@@ -950,6 +961,82 @@ public final class Matcher {
                     evaluateMissing(m, p);   // its check already ran, while these lines were still unsolved
                 }
             }
+        }
+
+        /**
+         * D72 (BUG-010): a capture none of whose webhooks arrived leaves no trace but the gateway's own record, and an
+         * unreferenced line can hold it, so the lines are solved only once the gateway has listed what it captured on
+         * each day the line's window covers, and Driftline has applied what it did not know. True when the file's lines
+         * may be solved now; otherwise the needed sweeps are enqueued and BATCH_SOLVE is set again
+         * {@link #SWEEP_RECHECK} later on the processing clock.
+         */
+        boolean swept(MerchantId m, MerchantTerms terms, LocalDate date, String fileId) {
+            LocalDate last = date.minusDays(terms.cycleDays());
+            boolean ready = true;
+            for (LocalDate day = last.minusDays(config.batchLookbackDays()); !day.isAfter(last); day = day.plusDays(1)) {
+                ready &= sweptDay(m, day);
+            }
+            if (!ready) {
+                upsertTimer(m, Kind.BATCH_SOLVE, fileId, TimerClock.PROCESSING, now.plus(SWEEP_RECHECK));
+            }
+            return ready;
+        }
+
+        /**
+         * Whether one capture day's sweep is final and applied. An answer is final when the gateway's view is as of the
+         * day's end or later (a stale view may miss a late capture); a stale answer is asked again, up to
+         * {@link #MAX_SWEEPS} times, then accepted. Applied means Driftline knows every listed capture as SUCCEEDED, or
+         * {@link #SWEEP_PATIENCE} has passed since the answer, so one observation that never lands cannot hold the
+         * file's lines for ever.
+         */
+        boolean sweptDay(MerchantId m, LocalDate day) {
+            Optional<OutboxRepo.Command> latest = Optional.empty();
+            int next = 1;
+            while (next <= MAX_SWEEPS) {
+                Optional<OutboxRepo.Command> c = tx.outbox().find(sweepId(m, day, next));
+                if (c.isEmpty()) {
+                    break;
+                }
+                latest = c;
+                next++;
+            }
+            if (latest.isEmpty()) {
+                enqueueSweep(m, day, 1);
+                return false;
+            }
+            if (latest.get().status() != OutboxRepo.CommandStatus.DONE) {
+                return false;
+            }
+            Map<String, String> answer = latest.get().result().orElseThrow();
+            Instant asOf = Instant.parse(answer.get("as_of"));
+            if (asOf.isBefore(IstCalendar.endOfIstDay(day))) {
+                if (next <= MAX_SWEEPS) {
+                    enqueueSweep(m, day, next);
+                    return false;
+                }
+                return true;   // MAX_SWEEPS stale answers: solve with what is known
+            }
+            if (!now.isBefore(asOf.plus(SWEEP_PATIENCE))) {
+                return true;
+            }
+            int count = Integer.parseInt(answer.getOrDefault("count", "0"));
+            for (int i = 1; i <= count; i++) {
+                PaymentId p = PaymentId.of(answer.get("payment_" + i));
+                if (payment(m, p).filter(x -> x.status() == PaymentStatus.SUCCEEDED).isEmpty()) {
+                    return false;   // its observation is on its way through Kafka
+                }
+            }
+            return true;
+        }
+
+        static String sweepId(MerchantId m, LocalDate day, int n) {
+            return "cmd_" + DerivedId.of("sweep", m.value(), day.toString(), Integer.toString(n)).value();
+        }
+
+        void enqueueSweep(MerchantId m, LocalDate day, int n) {
+            tx.outbox().enqueue(OutboxRepo.Command.pending(sweepId(m, day, n), m, Optional.empty(),
+                    OutboxRepo.CommandKind.PAYMENT_SWEEP, evidence("captured_on", day.toString(), "seq", Integer.toString(n)),
+                    Optional.empty(), now));
         }
 
         /**

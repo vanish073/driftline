@@ -16,6 +16,8 @@ import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.core.payment.PaymentState;
+import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.core.port.CallTarget;
 import io.github.vanish073.driftline.core.port.OutboundCall;
@@ -25,6 +27,7 @@ import io.github.vanish073.driftline.core.port.OutboxRepo.CommandStatus;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -216,5 +219,30 @@ class DispatcherTest {
         assertThat(o.eventType()).isEqualTo(EventType.PAYMENT_SUCCEEDED);
         assertThat(o.eventTime()).as("the gateway's time, not the dispatcher's").isEqualTo(Instant.parse("2026-11-13T05:59:00Z"));
         assertThat(observations.get(0).breakId()).as("a probe has no break").isEmpty();
+    }
+
+    @Test
+    void aPaymentSweepPublishesEveryCaptureNotYetSeenAsSucceeded() {
+        // D72 (BUG-010): pay_8 is known as SUCCEEDED, pay_9 was never seen at all
+        store.transact("known", tx -> {
+            tx.payments().save(M, new PaymentState(PaymentId.of("pay_8"), PaymentStatus.SUCCEEDED,
+                    Optional.of(OrderId.of("ord_8")), Optional.of(Money.ofPaise(49_900)), Optional.empty(),
+                    Optional.of(Instant.parse("2026-11-13T05:00:00Z")), false));
+            tx.outbox().enqueue(Command.pending("cmd_s", M, Optional.empty(), CommandKind.PAYMENT_SWEEP,
+                    new TreeMap<>(Map.of("captured_on", "2026-11-13", "seq", "1")), Optional.empty(), T0));
+            return null;
+        });
+        OutboundCall call = claim(T0, "d1").get(0);
+        assertThat(call.request()).isEqualTo(new CallRequest.PaymentSweep(LocalDate.parse("2026-11-13")));
+        result(call, Map.of("as_of", "2026-11-14T00:00:00Z", "count", "2",
+                "payment_1", "pay_8", "order_1", "ord_8", "amount_1", "499.00", "at_1", "2026-11-13T05:00:00Z",
+                "payment_2", "pay_9", "order_2", "ord_8", "amount_2", "499.00", "at_2", "2026-11-13T05:01:00Z"),
+                T0.plusSeconds(1), "d1");
+        List<Command> observations = store.committedCommands().stream()
+                .filter(c -> c.kind() == CommandKind.PUBLISH_OBSERVATION).toList();
+        assertThat(observations).as("only the capture Driftline never saw").singleElement()
+                .satisfies(c -> assertThat(c.args()).containsEntry("payment_id", "pay_9")
+                        .containsEntry("event_type", "PAYMENT_SUCCEEDED").containsEntry("order_id", "ord_8")
+                        .containsEntry("event_time", "2026-11-13T05:01:00Z"));
     }
 }

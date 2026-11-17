@@ -27,6 +27,7 @@ import io.github.vanish073.driftline.core.port.Tx;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -49,7 +50,8 @@ import java.util.TreeMap;
  *       the first send, and a clock that was fast then makes an expired key look fresh. The lookup needs no clock: if the
  *       gateway has forgotten the key, the refund is older than the key TTL, far past the lookup's lag, so it shows;
  *       if the key is still known, the resend is deduplicated.</li>
- *   <li><b>New facts</b> (a status the matcher has not seen, a refund outcome) are published as observations, so they
+ *   <li><b>New facts</b> (a status the matcher has not seen, a capture a payment sweep found, a refund outcome) are
+ *       published as observations, so they
  *       enter through Kafka like every other event (D10); their event keys are derived, so repeats are deduplicated.</li>
  * </ul>
  *
@@ -194,6 +196,20 @@ public final class Dispatcher {
                     }
                 }
             }
+            case PAYMENT_SWEEP -> {
+                // D72: captures as capture_1, order_1, amount_1, at_1, ... up to count; each one Driftline has not seen
+                // succeed is published, so it is a batch candidate before the file's lines are solved
+                int count = Integer.parseInt(facts.getOrDefault("count", "0"));
+                for (int i = 1; i <= count; i++) {
+                    PaymentId p = PaymentId.of(facts.get("payment_" + i));
+                    Optional<PaymentStatus> known = tx.payments().find(m, p).map(PaymentState::status);
+                    if (known.filter(PaymentStatus.SUCCEEDED::equals).isEmpty()) {
+                        observe(tx, c, EventType.PAYMENT_SUCCEEDED, Instant.parse(facts.get("at_" + i)),
+                                new PaymentPayload(p, OrderId.of(facts.get("order_" + i)),
+                                        Money.parse(facts.get("amount_" + i))), now);
+                    }
+                }
+            }
             case REFUND -> {
                 String status = facts.getOrDefault("status", "");
                 if (status.equals("PROCESSED") || status.equals("FAILED")) {
@@ -274,6 +290,8 @@ public final class Dispatcher {
                             a.get("subject"), a.get("reason")));
             case STATUS_QUERY_ORDER -> new OutboundCall(callId(c, ""), c.merchantId(), CallTarget.GATEWAY,
                     Optional.empty(), new CallRequest.StatusQueryOrder(OrderId.of(a.get("order_id"))));
+            case PAYMENT_SWEEP -> new OutboundCall(callId(c, ""), c.merchantId(), CallTarget.GATEWAY, Optional.empty(),
+                    new CallRequest.PaymentSweep(LocalDate.parse(a.get("captured_on"))));
         };
     }
 

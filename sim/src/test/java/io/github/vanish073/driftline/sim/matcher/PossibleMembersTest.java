@@ -21,6 +21,9 @@ import io.github.vanish073.driftline.core.matcher.MerchantDirectory;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.matcher.PartitionBatch;
 import io.github.vanish073.driftline.core.money.Money;
+import io.github.vanish073.driftline.core.port.OutboxRepo.Command;
+import io.github.vanish073.driftline.core.port.OutboxRepo.CommandKind;
+import io.github.vanish073.driftline.core.port.OutboxRepo.CommandStatus;
 import io.github.vanish073.driftline.core.port.SettlementRepo.Line;
 import io.github.vanish073.driftline.core.port.SettlementRepo.LineStatus;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
@@ -31,13 +34,16 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 
 /**
  * Payments whose outcome Driftline has not learned are possible members of unreferenced lines (BUG-006, D69), with
  * two limits (BUG-007): one first seen after a line's window cannot be in it, and once a possible member's outcome is
- * learned, an ambiguity it witnessed is solved again.
+ * learned, an ambiguity it witnessed is solved again. And a capture Driftline never saw at all is found by the payment
+ * sweep the lines wait for (BUG-010, D72).
  */
 class PossibleMembersTest {
 
@@ -75,6 +81,38 @@ class PossibleMembersTest {
         matcher.committed(o);
     }
 
+    /** The world's captures: payment id → capture time. */
+    final TreeMap<String, Instant> captured = new TreeMap<>();
+
+    /** Plays the gateway's captures API (D72) for every open sweep, then lets the deferred solve run. */
+    void sweepAndTick(Instant now) {
+        store.transact("sweep", tx -> {
+            for (Command c : store.committedCommands()) {
+                if (c.kind() != CommandKind.PAYMENT_SWEEP
+                        || tx.outbox().find(c.commandId()).filter(x -> x.status() != CommandStatus.DONE).isEmpty()) {
+                    continue;
+                }
+                LocalDate day = LocalDate.parse(c.args().get("captured_on"));
+                TreeMap<String, String> answer = new TreeMap<>();
+                answer.put("as_of", now.toString());
+                int i = 0;
+                for (Map.Entry<String, Instant> e : captured.entrySet()) {
+                    if (IstCalendar.istDate(e.getValue()).equals(day)) {
+                        i++;
+                        answer.put("payment_" + i, e.getKey());
+                        answer.put("order_" + i, "ord_" + e.getKey());
+                        answer.put("amount_" + i, PRICE.toString());
+                        answer.put("at_" + i, e.getValue().toString());
+                    }
+                }
+                answer.put("count", Integer.toString(i));
+                tx.outbox().complete(c.commandId(), answer);
+            }
+            return null;
+        });
+        tick(now.plusSeconds(180));
+    }
+
     void order(String payment, Instant at) {
         append(Source.MERCHANT, EventType.ORDER_CREATED, at.minusSeconds(60),
                 new OrderPayload(OrderId.of("ord_" + payment), 1, PRICE, at.plusSeconds(900), Optional.empty()));
@@ -85,6 +123,7 @@ class PossibleMembersTest {
     }
 
     void succeeded(String id, Instant at) {
+        captured.put(id, at);
         order(id, at);
         payment(id, EventType.PAYMENT_SUCCEEDED, at);
         append(Source.MERCHANT, EventType.ORDER_PAID, at.plusSeconds(5), new OrderPayload(OrderId.of("ord_" + id), 2,
@@ -114,6 +153,7 @@ class PossibleMembersTest {
         fileWithOneBatchLine();
         batch(ist(D, 10).plusSeconds(1_800));
         tick(ist(D, 20));
+        sweepAndTick(ist(D, 20));
         assertThat(line().status()).as("pay_1 is the only payment that can be in the line").isEqualTo(LineStatus.INFERRED);
     }
 
@@ -125,6 +165,7 @@ class PossibleMembersTest {
         fileWithOneBatchLine();
         batch(ist(D, 10).plusSeconds(1_800));
         tick(ist(D, 20));
+        sweepAndTick(ist(D, 20));
         assertThat(line().status()).as("pay_1 or the pending pay_2").isEqualTo(LineStatus.AMBIGUOUS);
         assertThat(line().witnesses()).containsExactlyInAnyOrder(List.of(PaymentId.of("pay_1")),
                 List.of(PaymentId.of("pay_2")));
@@ -133,5 +174,28 @@ class PossibleMembersTest {
         batch(ist(D, 21).plusSeconds(60));
         assertThat(line().status()).as("pay_2 failed, so only pay_1 fits").isEqualTo(LineStatus.INFERRED);
         assertThat(line().witnesses()).isEmpty();
+    }
+
+    @Test
+    void theLinesWaitForTheSweepAndACaptureOnlyTheSweepRevealsMakesTheLineAmbiguous() {
+        // BUG-010: pay_9 left no trace at all (every webhook lost); its net equals pay_1's, and the world paid it
+        succeeded("pay_1", ist(D.minusDays(1), 12));
+        captured.put("pay_9", ist(D.minusDays(1), 12).plusSeconds(60));
+        fileWithOneBatchLine();
+        batch(ist(D, 10).plusSeconds(1_800));
+        tick(ist(D, 20));
+        assertThat(line().status()).as("not solved before the window's days are swept").isEqualTo(LineStatus.AWAITING_BATCH);
+        assertThat(store.committedCommands()).filteredOn(c -> c.kind() == CommandKind.PAYMENT_SWEEP)
+                .extracting(c -> c.args().get("captured_on")).containsExactlyInAnyOrder("2026-11-12", "2026-11-13");
+
+        sweepAndTick(ist(D, 20));
+        assertThat(line().status()).as("pay_9's observation has not arrived yet").isEqualTo(LineStatus.AWAITING_BATCH);
+
+        payment("pay_9", EventType.PAYMENT_SUCCEEDED, captured.get("pay_9"));   // the dispatcher's observation
+        batch(ist(D, 20).plusSeconds(240));
+        tick(ist(D, 20).plusSeconds(420));
+        assertThat(line().status()).as("pay_1 or pay_9: reported, not guessed").isEqualTo(LineStatus.AMBIGUOUS);
+        assertThat(line().witnesses()).containsExactlyInAnyOrder(List.of(PaymentId.of("pay_1")),
+                List.of(PaymentId.of("pay_9")));
     }
 }

@@ -8,6 +8,7 @@ import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Objects;
 
 /**
@@ -30,6 +31,17 @@ public sealed interface CallRequest {
     record StatusQueryOrder(OrderId orderId) implements CallRequest {
         public StatusQueryOrder {
             Objects.requireNonNull(orderId, "orderId");
+        }
+    }
+
+    /**
+     * {@code PAYMENT_SWEEP}: every payment the gateway captured for the merchant on one IST day, as it knows them now
+     * (a read): before a file's unreferenced lines are solved, so a capture none of whose webhooks arrived is still a
+     * candidate (D72).
+     */
+    record PaymentSweep(LocalDate capturedOn) implements CallRequest {
+        public PaymentSweep {
+            Objects.requireNonNull(capturedOn, "capturedOn");
         }
     }
 

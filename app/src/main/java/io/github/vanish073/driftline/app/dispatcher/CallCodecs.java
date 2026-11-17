@@ -20,7 +20,8 @@ public final class CallCodecs {
 
     private static final List<Class<? extends CallRequest>> KINDS = List.of(CallRequest.StatusQuery.class,
             CallRequest.StatusQueryOrder.class, CallRequest.Refund.class, CallRequest.RefundLookup.class,
-            CallRequest.MerchantConfirm.class, CallRequest.Observation.class, CallRequest.EscalationNotify.class);
+            CallRequest.MerchantConfirm.class, CallRequest.Observation.class, CallRequest.EscalationNotify.class,
+            CallRequest.PaymentSweep.class);
 
     private CallCodecs() {
     }

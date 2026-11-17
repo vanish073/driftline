@@ -1,4 +1,4 @@
-# scripts/e2e.sh, 2026-11-17T00:02:31Z, commit 48a9bc9+uncommitted
+# scripts/e2e.sh, 2026-11-17T01:44:21Z, commit becfc9d+uncommitted
 # host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3 GB RAM; Compose profile core
 injected DEBITED_NO_ORDER   merchant=m_e2e_01 partition=1 expected=3 webhooks=6 order_events=9 files=3
 injected LATE_SUCCESS       merchant=m_e2e_02 partition=2 expected=4 webhooks=9 order_events=11 files=3
@@ -10,17 +10,15 @@ detection (from the end of each injection until every expected break was visible
   DEBITED_NO_ORDER   2 s
   LATE_SUCCESS       2 s
   DUPLICATE_CAPTURE  1 s
-  SHORT_SETTLEMENT   0 s
-  MISSING_SETTLEMENT 0 s
+  SHORT_SETTLEMENT   1 s
+  MISSING_SETTLEMENT 2 s
   ORPHAN_SETTLEMENT  2 s
   raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_02/pay_0_a
   raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_03/pay_0_a
-  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_03/pay_1_a
   raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_0_a
-  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_1_a
-  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_05/pay_2_a
+  raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_04/pay_2_a
   raised before its late evidence, healed by order_paid_later: DEBITED_NO_ORDER m_e2e_06/pay_2_a
-one-to-one breaks: 19 expected, all raised; 7 raised early and already healed (D52)
+one-to-one breaks: 19 expected, all raised; 5 raised early and already healed (D52)
 handled (state counts per type, for every break the world implies):
   DEBITED_NO_ORDER   {LINKED=1, RESOLVED_AUTO=3}
   DUPLICATE_CAPTURE  {ESCALATED=3}
@@ -28,8 +26,8 @@ handled (state counts per type, for every break the world implies):
   MISSING_SETTLEMENT {ESCALATED=3}
   ORPHAN_SETTLEMENT  {AWAITING_EVIDENCE=3}
   SHORT_SETTLEMENT   {ESCALATED=2, RESOLVED_AUTO=1}
-sandbox: 4 refunds executed for 4 payments (0 refunded more than once); 26 escalation notices; 4 breaks closed by a confirmed refund, 8 escalated
-resolved by hand: DUPLICATE_CAPTURE m_e2e_03/pay_0_b -> {"break_id":"brk_xokxqxyx2etkyrxgpbefxig4t2","state":"RESOLVED_MANUAL","resolved_at":"2026-11-17T00:02:43.028392Z","compensation":"0.00","audit_seq":1}
+sandbox: 4 refunds executed for 4 payments (0 refunded more than once); 28 escalation notices; 4 breaks closed by a confirmed refund, 8 escalated
+resolved by hand: DUPLICATE_CAPTURE m_e2e_03/pay_0_b -> {"break_id":"brk_xokxqxyx2etkyrxgpbefxig4t2","state":"RESOLVED_MANUAL","resolved_at":"2026-11-17T01:44:33.042791Z","compensation":"0.00","audit_seq":1}
 ambiguous line m_e2e_07/stl_m_e2e_07_20261114:1: escalated with its witnesses; unreferenced line AMBIGUOUS; two subsets fit, for example pay_2_a+pay_3_a and pay_0_a+pay_1_a
 ambiguous line m_e2e_07/stl_m_e2e_07_20261114:2: escalated with its witnesses; unreferenced line AMBIGUOUS; two subsets fit, for example pay_2_a+pay_3_a and pay_0_a+pay_1_a
 ╷
@@ -39,14 +37,14 @@ ambiguous line m_e2e_07/stl_m_e2e_07_20261114:2: escalated with its witnesses; u
 │     ├─ everyOneToOneBreakIsDetectedEndToEndAndVisibleThroughTheOpsApi() ✔
 │     ├─ everyInjectedBreakIsHandledAndNoPaymentIsRefundedTwice() ✔
 │     ├─ anEscalatedBreakIsResolvedByHandThroughTheAuditedApi() ✔
-│     ├─ anAmbiguousBatchLineIsReportedAsAmbiguousWithTwoWitnessesAndEscalated() ✔
+│     ├─ anAmbiguousBatchLineIsReportedAsAmbiguousWithTwoWitnessesAndEscalated() 62755 ms ✔
 │     ├─ aReplayedWebhookIsAcceptedAgainAndChangesNothing() ✔
 │     ├─ aBadSignatureIs401() ✔
 │     ├─ aStaleTimestampIsRejected() ✔
 │     └─ aCrossMerchantTokenIs403() ✔
 └─ JUnit Vintage ✔
 
-Test run finished after 12994 ms
+Test run finished after 74475 ms
 [         4 containers found      ]
 [         0 containers skipped    ]
 [         4 containers started    ]

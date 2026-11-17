@@ -28,7 +28,9 @@ public interface OutboxRepo {
         REFUND_LOOKUP,
         MERCHANT_CONFIRM,
         PUBLISH_OBSERVATION,
-        ESCALATION_NOTIFY
+        ESCALATION_NOTIFY,
+        /** Every capture the gateway made for a merchant on one IST day (D72), asked before batch lines are solved. */
+        PAYMENT_SWEEP
     }
 
     enum CommandStatus {

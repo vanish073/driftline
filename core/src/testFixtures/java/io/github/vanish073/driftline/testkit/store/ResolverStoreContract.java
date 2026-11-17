@@ -156,6 +156,10 @@ public abstract class ResolverStoreContract {
                 Map.of("payment_id", "pay_9"), Optional.empty(), T0);
         assertThat(yes(t -> t.outbox().enqueue(probe))).as("a pending-order probe has no break").isTrue();
         assertThat(one(t -> t.outbox().find("cmd_probe"))).contains(probe);
+        Command sweep = Command.pending("cmd_sweep", M, Optional.empty(), CommandKind.PAYMENT_SWEEP,
+                Map.of("captured_on", "2026-11-13", "seq", "1"), Optional.empty(), T0);
+        assertThat(yes(t -> t.outbox().enqueue(sweep))).as("a payment sweep (D72) has no break either").isTrue();
+        assertThat(one(t -> t.outbox().find("cmd_sweep"))).contains(sweep);
     }
 
     @Test

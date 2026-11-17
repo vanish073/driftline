@@ -16,7 +16,9 @@ import io.github.vanish073.driftline.wire.WireTime;
 import io.github.vanish073.driftline.wire.json.JsonObject;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
 import io.github.vanish073.driftline.wire.json.StrictJson;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -38,6 +40,7 @@ import java.util.TreeMap;
  *          POST /v1/merchants/{m}/payments/{p}/refunds    {"order_id","amount_paise","metadata":{"driftline_refund_key"}}
  *                                                         → 200 {"status":"PROCESSED","refund_id","processed_at"} or {"status":"FAILED"}
  *          GET  /v1/merchants/{m}/payments/{p}/refunds    → 200 {"payment_id","refunds":{"{refundId}":{"processed_at"}}}
+ *          GET  /v1/merchants/{m}/days/{yyyy-mm-dd}/captures → 200 {"captured_on","as_of","captures":{"{p}":{"order_id","amount_paise","captured_at"}}}
  * MERCHANT POST /v1/merchants/{m}/orders/{o}/confirm      {"payment_id","amount_paise"} → 200 {"status":"ACCEPTED"|"REJECTED"}
  * DRIFTLINE POST /internal/v1/observations                {"merchant_id","type","event_key","occurred_at",
  *                                                          "payment":{"id","order_id","amount_paise"} | "refund":{"payment_id","amount_paise"}}
@@ -99,6 +102,7 @@ public final class CallWire {
             case CallRequest.StatusQuery q -> get(m + "/payments/" + q.paymentId().value());
             case CallRequest.StatusQueryOrder q -> get(m + "/orders/" + q.orderId().value() + "/payments");
             case CallRequest.RefundLookup l -> get(m + "/payments/" + l.paymentId().value() + "/refunds");
+            case CallRequest.PaymentSweep w -> get(m + "/days/" + w.capturedOn() + "/captures");
             case CallRequest.Refund r -> new HttpCall("POST", m + "/payments/" + r.paymentId().value() + "/refunds",
                     StrictJson.write(g -> {
                         g.writeStringProperty("order_id", r.orderId().value());
@@ -136,6 +140,7 @@ public final class CallWire {
                         : status == 200 ? orderPayments(StrictJson.parse(body)) : Optional.empty();
                 case CallRequest.Refund r -> status == 200 ? refund(StrictJson.parse(body)) : Optional.empty();
                 case CallRequest.RefundLookup l -> status == 200 ? lookup(StrictJson.parse(body)) : Optional.empty();
+                case CallRequest.PaymentSweep w -> status == 200 ? captures(StrictJson.parse(body)) : Optional.empty();
                 case CallRequest.MerchantConfirm c -> status == 200 ? confirm(StrictJson.parse(body)) : Optional.empty();
                 case CallRequest.Observation o -> status == 202 ? Optional.of(kv("status", "ACCEPTED")) : Optional.empty();
                 case CallRequest.EscalationNotify e -> status >= 200 && status < 300
@@ -172,6 +177,24 @@ public final class CallWire {
             out.put("status_" + i, status);
             out.put("amount_" + i, Money.ofPaise(p.integer("amount_paise")).toString());
             out.put("at_" + i, WireTime.parse("updated_at", p.string("updated_at")).toString());
+        }
+        out.put("count", Integer.toString(i));
+        return Optional.of(out);
+    }
+
+    /** A day's captures, ordered by payment id, with the time the gateway's view is as of (D72). */
+    private static Optional<TreeMap<String, String>> captures(JsonObject root) {
+        TreeMap<String, String> out = kv("as_of", WireTime.parse("as_of", root.string("as_of")).toString());
+        int i = 0;
+        for (Map.Entry<String, Object> e : root.object("captures").fields().entrySet()) {
+            if (!(e.getValue() instanceof JsonObject c)) {
+                return Optional.empty();
+            }
+            i++;
+            out.put("payment_" + i, PaymentId.of(e.getKey()).value());
+            out.put("order_" + i, OrderId.of(c.string("order_id")).value());
+            out.put("amount_" + i, Money.ofPaise(c.integer("amount_paise")).toString());
+            out.put("at_" + i, WireTime.parse("captured_at", c.string("captured_at")).toString());
         }
         out.put("count", Integer.toString(i));
         return Optional.of(out);
@@ -297,6 +320,7 @@ public final class CallWire {
                     case "GET payments#6" -> new CallRequest.StatusQuery(PaymentId.of(s[5]));
                     case "GET orders/payments#7" -> new CallRequest.StatusQueryOrder(OrderId.of(s[5]));
                     case "GET payments/refunds#7" -> new CallRequest.RefundLookup(PaymentId.of(s[5]));
+                    case "GET days/captures#7" -> new CallRequest.PaymentSweep(LocalDate.parse(s[5]));
                     case "POST payments/refunds#7" -> {
                         JsonObject r = StrictJson.parse(body);
                         yield new CallRequest.Refund(PaymentId.of(s[5]), OrderId.of(r.string("order_id")),
@@ -317,7 +341,7 @@ public final class CallWire {
             return Optional.ofNullable(request).map(r -> new Incoming(m, r));
         } catch (MalformedJson e) {
             throw e;
-        } catch (IllegalArgumentException | ArithmeticException e) {
+        } catch (IllegalArgumentException | ArithmeticException | DateTimeException e) {
             throw new MalformedJson("invalid request: " + e.getMessage());
         }
     }
@@ -364,6 +388,22 @@ public final class CallWire {
                     g.writeName(facts.get("refund_id"));
                     g.writeStartObject();
                     g.writeStringProperty("processed_at", WireTime.format(Instant.parse(facts.get("processed_at"))));
+                    g.writeEndObject();
+                }
+                g.writeEndObject();
+            }));
+            case CallRequest.PaymentSweep w -> new Reply(200, StrictJson.write(g -> {
+                g.writeStringProperty("captured_on", w.capturedOn().toString());
+                g.writeStringProperty("as_of", WireTime.format(Instant.parse(facts.get("as_of"))));
+                g.writeName("captures");
+                g.writeStartObject();
+                int count = Integer.parseInt(facts.get("count"));
+                for (int i = 1; i <= count; i++) {
+                    g.writeName(facts.get("payment_" + i));
+                    g.writeStartObject();
+                    g.writeStringProperty("order_id", facts.get("order_" + i));
+                    g.writeNumberProperty("amount_paise", Money.parse(facts.get("amount_" + i)).paise());
+                    g.writeStringProperty("captured_at", WireTime.format(Instant.parse(facts.get("at_" + i))));
                     g.writeEndObject();
                 }
                 g.writeEndObject();

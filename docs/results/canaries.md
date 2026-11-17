@@ -2,8 +2,8 @@
 
 Seeds to first detection per planted bug, `pr` profile, seeds from 1, budget 500. A canary counts only when an expected invariant trips (D37).
 
-- Command: `./gradlew -q :sim:canaries --args="--threads 8 --out ../docs/results/canaries.md"` (then this header was added); 49 s.
-- Base commit: 1cafc6b plus the uncommitted Shift 8 phase 6 tree (BUG-007, BUG-008, BUG-009 fixes); date: 2026-11-16 (UTC).
+- Command: `./gradlew -q :sim:canaries --args="--threads 8 --out ../docs/results/canaries.md"` (then this header was added).
+- Base commit: becfc9d plus the uncommitted BUG-010 fix (D72, the payment sweep); date: 2026-11-17 (UTC). Every count is the same as before that fix.
 - All eleven canaries are active from Shift 8. C02, C03, C04, C10 and C11 arrived with the resolver and dispatcher.
 - C04 (`SKIP_TTL_LOOKUP`) now means "resend a refund without the lookup": since BUG-008 every refund retry looks the refund up first (D70), so the canary removes that lookup; it is caught when a retry outlives the simulated gateway's 5-minute key TTL.
 - C11 plants both halves of D11 off (a break-scoped refund key, and every break acting for itself): either half alone already keeps a payment to one refund, so the canary needs both.
