@@ -26,6 +26,16 @@ public final class SimNetwork {
 
     /** Delivers to node {@code to} after a network delay, unless a fault intervenes. */
     public void send(String to, Runnable delivery) {
+        send(to, Long.MAX_VALUE, delivery);
+    }
+
+    /**
+     * Like {@link #send(String, Runnable)}, but every delivery arrives within {@code maxDelayMillis} (the same draws
+     * are made, so other streams do not shift). Calls to the gateway use it: Driftline assumes a request reaches the
+     * gateway within the dispatcher's lookup margin of being sent, which the compressed key TTL would otherwise break
+     * (D62).
+     */
+    public void send(String to, long maxDelayMillis, Runnable delivery) {
         long delay = rng.between(MIN_DELAY_MILLIS, MAX_DELAY_MILLIS);
         long secondDelay = rng.between(MIN_DELAY_MILLIS, MAX_DELAY_MILLIS * 10);
         long extra = faults.extraDelay();
@@ -34,9 +44,9 @@ public final class SimNetwork {
         if (dropped) {
             return;
         }
-        deliver(to, delay + extra, delivery);
+        deliver(to, Math.min(maxDelayMillis, delay + extra), delivery);
         if (twice) {
-            deliver(to, delay + secondDelay, delivery);
+            deliver(to, Math.min(maxDelayMillis, delay + secondDelay), delivery);
         }
     }
 

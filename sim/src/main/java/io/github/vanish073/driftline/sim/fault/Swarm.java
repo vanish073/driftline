@@ -35,6 +35,9 @@ public final class Swarm {
                 case MERCHANT_KEY_REUSE -> rng.between(20, 200);
                 case FILE_LATE -> rng.between(100, 500);                 // 10% to 50% of files
                 case FILE_DUP, FILE_CONFLICT -> rng.between(50, 300);
+                case CALL_AMBIGUOUS -> rng.between(20, 200);
+                case WEBHOOK_LOST -> rng.between(5, 50);
+                case STATUS_STALE -> rng.between(50, 400);
                 case NODE_CRASH, NODE_PAUSE, CLOCK_JUMP, STORE_DOWN -> rng.between(1, 4);   // per traffic day
                 case CLOCK_SKEW -> rng.between(1, 1);
             });

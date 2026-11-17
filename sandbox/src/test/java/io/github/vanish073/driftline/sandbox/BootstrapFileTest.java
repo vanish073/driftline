@@ -20,6 +20,7 @@ class BootstrapFileTest {
         assertThat(pool.merchants()).extracting(BootstrapFile.Merchant::token).doesNotHaveDuplicates();
         assertThat(pool.merchants()).allMatch(m -> m.firstSettlementDate().equals(first));
         assertThat(pool.opsToken()).startsWith("dl_ops_");
+        assertThat(pool.serviceToken()).startsWith("dl_svc_").isNotEqualTo(pool.opsToken());
         BootstrapFile.Pool again = BootstrapFile.read(BootstrapFile.generate(12, 12, first, new SecureRandom()));
         assertThat(again.merchants().get(0).secret()).isNotEqualTo(pool.merchants().get(0).secret());
     }

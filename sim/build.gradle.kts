@@ -61,4 +61,8 @@ tasks.named<ProcessResources>("processTestResources") {
     from(rootProject.file("core/src/test/resources")) {
         include("settlement-cases/**")
     }
+    // Shift 8: config/deadlines.yaml must equal core's DeadlineRule table (DeadlinesYamlTest).
+    from(rootProject.file("config")) {
+        include("deadlines.yaml")
+    }
 }

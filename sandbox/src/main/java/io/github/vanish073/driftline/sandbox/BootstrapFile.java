@@ -12,8 +12,9 @@ import java.util.Map;
 
 /**
  * The dev bootstrap file (D49), shared by the sandbox and the app: a pool of merchants with fresh random webhook
- * secrets and tokens, plus an ops token. Generated for each Compose run and never committed. Merchants are an object
- * keyed by id, so the strict parser of {@code wire} reads it (it refuses arrays).
+ * secrets and tokens, plus an ops token and the dispatcher's service token ({@code observations:write} only).
+ * Generated for each Compose run and never committed. Merchants are an object keyed by id, so the strict parser of
+ * {@code wire} reads it (it refuses arrays).
  */
 public final class BootstrapFile {
 
@@ -23,7 +24,7 @@ public final class BootstrapFile {
     public record Merchant(MerchantId id, int partition, LocalDate firstSettlementDate, String secret, String token) {
     }
 
-    public record Pool(String opsToken, List<Merchant> merchants) {
+    public record Pool(String opsToken, String serviceToken, List<Merchant> merchants) {
         public Pool {
             merchants = List.copyOf(merchants);
         }
@@ -39,6 +40,7 @@ public final class BootstrapFile {
         return StrictJson.write(g -> {
             g.writeStringProperty("format", FORMAT);
             g.writeStringProperty("ops_token", "dl_ops_" + hex(random, 24));
+            g.writeStringProperty("service_token", "dl_svc_" + hex(random, 24));
             g.writeName("merchants");
             g.writeStartObject();
             for (int i = 1; i <= count; i++) {
@@ -68,7 +70,7 @@ public final class BootstrapFile {
             merchants.add(new Merchant(MerchantId.of(e.getKey()), Math.toIntExact(m.integer("partition")),
                     LocalDate.parse(m.string("first_settlement_date")), m.string("webhook_secret"), m.string("token")));
         }
-        return new Pool(root.string("ops_token"), merchants);
+        return new Pool(root.string("ops_token"), root.string("service_token"), merchants);
     }
 
     private static String hex(SecureRandom random, int bytes) {

@@ -2,18 +2,27 @@ package io.github.vanish073.driftline.sim.invariant;
 
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakKind;
+import io.github.vanish073.driftline.core.breaks.BreakLifecycle;
+import io.github.vanish073.driftline.core.breaks.BreakState;
+import io.github.vanish073.driftline.core.breaks.BreakTransition;
 import io.github.vanish073.driftline.core.breaks.BreakType;
+import io.github.vanish073.driftline.core.event.EventType;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.ledger.AccountCode;
+import io.github.vanish073.driftline.core.ledger.CauseType;
+import io.github.vanish073.driftline.core.ledger.Entry;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import io.github.vanish073.driftline.core.matcher.MatcherConfig;
 import io.github.vanish073.driftline.core.order.OrderTransition;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
+import io.github.vanish073.driftline.core.port.BreakRepo;
+import io.github.vanish073.driftline.core.resolver.Resolver;
 import io.github.vanish073.driftline.core.port.QuarantineRepo;
-import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo.Line;
 import io.github.vanish073.driftline.core.port.SettlementRepo.LineStatus;
+import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.settlement.BatchMatching;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
@@ -21,6 +30,8 @@ import io.github.vanish073.driftline.sim.world.FakeBank;
 import io.github.vanish073.driftline.sim.world.FakeGateway;
 import io.github.vanish073.driftline.sim.world.FakeMerchant;
 import io.github.vanish073.driftline.sim.world.SettlementFeed;
+import io.github.vanish073.driftline.wire.settlement.SettlementFile;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -60,6 +71,28 @@ public final class Invariants {
     public static final String INFERRED_HONEST = "INV-INFERRED-HONEST";
     /** Every AMBIGUOUS line has two distinct witnesses, each a set of open payments in its window summing to it. */
     public static final String AMBIGUITY_WITNESSED = "INV-AMBIGUITY-WITNESSED";
+    /** The gateway executed at most one refund per payment, for its captured amount (Shift 8). */
+    public static final String REFUND_ONCE = "INV-REFUND-ONCE";
+    /** No payment is both refunded and the payment its fulfilled order was paid with. */
+    public static final String NO_REFUND_OF_FULFILLED = "INV-NO-REFUND-OF-FULFILLED";
+    /** Every break is closed or escalated by max(escalate_by, detected_at) plus the reaction bound (§8.3, D63). */
+    public static final String DEADLINE = "INV-DEADLINE";
+    /** End state: the books match the world: BANK per merchant, and every refund booked once (§11.7). */
+    public static final String BOOKS_MATCH_WORLD = "INV-BOOKS-MATCH-WORLD";
+    /** End state: every debited payment is fulfilled, refunded once, or escalated; a decided refund is never lost. */
+    public static final String CUSTOMER_WHOLE = "INV-CUSTOMER-WHOLE";
+
+    /**
+     * How long after max(escalate_by, detected_at) a break may still be open: longer than the longest modelled outage
+     * of the resolver or the store (10 minutes) plus a review, so an outage at the moment of escalation is no violation.
+     */
+    static final Duration REACTION_BOUND = Duration.ofHours(1);
+    /** The breaks that name a payment, whose escalation covers that payment for INV-CUSTOMER-WHOLE. */
+    /** The breaks whose subject is a settlement line ({@code fileId:lineNo}). */
+    static final List<BreakType> LINE_BREAKS = List.of(BreakType.ORPHAN_SETTLEMENT, BreakType.SHORT_SETTLEMENT,
+            BreakType.SETTLEMENT_CONFLICT, BreakType.OVER_SETTLEMENT);
+    static final List<BreakType> ABOUT_A_PAYMENT = List.of(BreakType.DEBITED_NO_ORDER, BreakType.LATE_SUCCESS,
+            BreakType.DUPLICATE_CAPTURE, BreakType.STATUS_CONFLICT, BreakType.MISSING_SETTLEMENT);
 
     /** Unreferenced lines whose money is still in suspense, escalated as ORPHAN_SETTLEMENT (§6.4). */
     static final List<LineStatus> UNRESOLVED_BATCH = List.of(LineStatus.AMBIGUOUS, LineStatus.NO_SOLUTION,
@@ -71,8 +104,10 @@ public final class Invariants {
      * for a merchant the bank sent a conflicting file for; IDEMPOTENCY_CONFLICT only with a quarantined record, which
      * the quarantine check above ties to a key the world really reused; FEED_STALL whenever a file is late.
      * INFERRED_MATCH_CHALLENGED is possible from Shift 7: a success delivered after its batch line was solved.
+     * STATUS_CONFLICT is possible from Shift 8, but only when the gateway gave at least {@code maxStatusQueries} stale
+     * status answers about the payment (STATUS_STALE), so it is checked on its own.
      */
-    static final List<BreakType> NEVER_EXPECTED = List.of(BreakType.STATUS_CONFLICT, BreakType.ORDER_ANOMALY,
+    static final List<BreakType> NEVER_EXPECTED = List.of(BreakType.ORDER_ANOMALY,
             BreakType.OVER_SETTLEMENT, BreakType.SETTLEMENT_CONFLICT, BreakType.LEDGER_CONFLICT);
 
     private final InMemoryStore store;
@@ -98,6 +133,10 @@ public final class Invariants {
     private TreeSet<String> expected = new TreeSet<>();
     private TreeSet<String> detected = new TreeSet<>();
     private long coveredByIdempotencyConflict;
+    private long coveredByEscalatedLine;
+    private int breakMoveSeen;
+    private int refundSeen;
+    private long lastDeadlineCheck = Long.MIN_VALUE;
     private long coveredByUnresolvedBatch;
 
     /** @param reusedKeys the keys the world's buggy clients reused (MERCHANT_KEY_REUSE), per merchant and key */
@@ -196,10 +235,229 @@ public final class Invariants {
             return Optional.of(new Violation(WORLD_CONSERVED, "the world holds " + bank.total() + " paise but "
                     + bank.opened() + " were opened", now));
         }
+        List<InMemoryStore.Recorded<BreakTransition>> moves = store.committedBreakTransitions();
+        for (; breakMoveSeen < moves.size(); breakMoveSeen++) {
+            BreakTransition t = moves.get(breakMoveSeen).row();
+            if (!BreakLifecycle.allowed(t.from().orElseThrow(), t.to())) {
+                return Optional.of(new Violation(TRANSITIONS_LEGAL, "break " + t.breakId() + " moved "
+                        + t.from().get() + " -> " + t.to() + ", which the lifecycle does not allow", now));
+            }
+        }
+        if (gateway != null) {
+            List<PaymentId> refunds = gateway.refundLog();
+            for (; refundSeen < refunds.size(); refundSeen++) {
+                FakeGateway.Payment p = gateway.payment(refunds.get(refundSeen)).orElseThrow();
+                if (p.refunds().size() > 1) {
+                    return Optional.of(new Violation(REFUND_ONCE, p.merchant() + "/" + p.id() + " was refunded "
+                            + p.refunds().size() + " times: " + p.refunds(), now));
+                }
+                if (fulfilledWith(p)) {
+                    return Optional.of(new Violation(NO_REFUND_OF_FULFILLED, p.merchant() + "/" + p.id()
+                            + " was refunded, but its order was fulfilled with it", now));
+                }
+            }
+            if (now - lastDeadlineCheck >= 60_000L) {
+                lastDeadlineCheck = now;
+                Optional<Violation> late = deadlines(now);
+                if (late.isPresent()) {
+                    return late;
+                }
+            }
+        }
         return Optional.empty();
     }
 
+    /** Whether the world's merchant fulfilled this payment's order with this payment. */
+    private boolean fulfilledWith(FakeGateway.Payment p) {
+        return merchants.get(p.merchant()).order(p.order())
+                .filter(o -> o.status() == EventType.ORDER_FULFILLED && o.paidWith().filter(p.id()::equals).isPresent())
+                .isPresent();
+    }
+
+    /** INV-DEADLINE: every break still open is within max(escalate_by, detected_at) + the reaction bound. */
+    private Optional<Violation> deadlines(long now) {
+        Instant at = epoch.plusMillis(now);
+        for (Break b : store.committedBreaks()) {
+            if (BreakLifecycle.isHandled(b.state())) {
+                continue;
+            }
+            Optional<BreakRepo.Plan> plan = store.committedPlan(b.merchantId(), b.breakId());
+            Instant from = plan.map(p -> p.escalateBy().isAfter(b.detectedAt()) ? p.escalateBy() : b.detectedAt())
+                    .orElse(b.detectedAt());
+            if (at.isAfter(from.plus(REACTION_BOUND))) {
+                return Optional.of(new Violation(DEADLINE, b.type() + " " + b.merchantId() + "/" + b.subjectKey()
+                        + " is still " + b.state() + (plan.isEmpty() ? ", never reviewed, " : ", ")
+                        + "past " + from + " + " + REACTION_BOUND, now));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** {@code merchant/fileId:lineNo} → the breaks on that settlement line. */
+    private TreeMap<String, List<Break>> lineBreaks() {
+        TreeMap<String, List<Break>> out = new TreeMap<>();
+        for (Break b : store.committedBreaks()) {
+            if (LINE_BREAKS.contains(b.type())) {
+                out.computeIfAbsent(b.merchantId() + "/" + b.subjectKey(), k -> new ArrayList<>()).add(b);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * An expected break about a payment Driftline could not know succeeded: its success webhook was lost, so it is
+     * visible only as money in a settlement line, and the break on that line went to a person.
+     */
+    private boolean coveredByEscalatedLine(String expectedKey, TreeMap<String, List<Break>> lineBreaks) {
+        String subject = expectedKey.substring(expectedKey.indexOf('/') + 1);
+        if (subject.indexOf(':') >= 0) {
+            return false;   // a line itself
+        }
+        return gateway.payment(PaymentId.of(subject)).filter(p -> onAnEscalatedLine(p, lineBreaks)).isPresent();
+    }
+
+    /**
+     * Whether a payment Driftline could not know succeeded (its success webhook was lost) is visible only as money in
+     * a settlement line that went to a person, with nothing Driftline could have asked: an unreferenced batch line, or
+     * a referenced line whose reference the gateway answered stale every time Driftline asked (D64).
+     */
+    private boolean onAnEscalatedLine(FakeGateway.Payment p, TreeMap<String, List<Break>> lineBreaks) {
+        if (p.successReported() || p.lineKey().isEmpty()) {
+            return false;
+        }
+        String line = p.merchant() + "/" + p.lineKey().get();
+        boolean nothingToAsk = gateway.batchLines().containsKey(line)
+                || p.staleAnswers() >= Resolver.Config.DEFAULT.maxStatusQueries();
+        return nothingToAsk && lineBreaks.getOrDefault(line, List.of()).stream().anyMatch(Invariants::withAPerson);
+    }
+
+    /** Expected breaks covered by an escalated break on the line that carries an unreported payment's money. */
+    public long coveredByEscalatedLine() {
+        return coveredByEscalatedLine;
+    }
+
+    private static boolean withAPerson(Break b) {
+        return b.state() == BreakState.ESCALATED || b.state() == BreakState.RESOLVED_MANUAL;
+    }
+
+    /**
+     * INV-CUSTOMER-WHOLE: every payment the world captured is the one its fulfilled order was paid with, or was refunded
+     * exactly once, or a break about it was escalated to a person: a break naming the payment, an IDEMPOTENCY_CONFLICT
+     * on its order, or, if its success webhook was lost (so Driftline cannot know it succeeded), a break on the
+     * settlement line that really carries its money, when Driftline had nothing to ask about it. A payment Driftline decided to refund must have been
+     * refunded, whatever else happened: no decided refund is ever lost (§2.1 (d)).
+     */
+    private Optional<Violation> customersWhole(long now) {
+        TreeMap<String, List<Break>> about = new TreeMap<>();
+        TreeMap<String, List<Break>> lineBreaks = lineBreaks();
+        TreeSet<String> escalatedOrders = new TreeSet<>();
+        for (Break b : store.committedBreaks()) {
+            if (ABOUT_A_PAYMENT.contains(b.type())) {
+                about.computeIfAbsent(b.merchantId() + "/" + b.subjectKey(), k -> new ArrayList<>()).add(b);
+            }
+            if (b.type() == BreakType.IDEMPOTENCY_CONFLICT && b.evidence().containsKey("order_id")
+                    && (b.state() == BreakState.ESCALATED || b.state() == BreakState.RESOLVED_MANUAL)) {
+                escalatedOrders.add(b.merchantId() + "/" + b.evidence().get("order_id"));
+            }
+        }
+        for (FakeGateway.Payment p : gateway.payments().values()) {
+            if (!p.captured()) {
+                continue;
+            }
+            List<Break> breaks = about.getOrDefault(p.merchant() + "/" + p.id(), List.of());
+            boolean decided = breaks.stream().anyMatch(b -> store.committedPlan(b.merchantId(), b.breakId())
+                    .flatMap(BreakRepo.Plan::action).filter("REFUND"::equals).isPresent());
+            if (decided && p.refunds().isEmpty()) {
+                return Optional.of(new Violation(CUSTOMER_WHOLE, "Driftline decided to refund " + p.merchant() + "/"
+                        + p.id() + ", but the refund never happened", now));
+            }
+            if (fulfilledWith(p) || p.refunds().size() == 1) {
+                continue;
+            }
+            boolean escalated = breaks.stream().anyMatch(Invariants::withAPerson)
+                    || escalatedOrders.contains(p.merchant() + "/" + p.order())
+                    || onAnEscalatedLine(p, lineBreaks);
+            if (!escalated) {
+                String line = p.lineKey().map(k -> p.merchant() + "/" + k).orElse("none");
+                return Optional.of(new Violation(CUSTOMER_WHOLE, p.merchant() + "/" + p.id() + " was debited, but its "
+                        + "order was not fulfilled with it, it was not refunded, and no break about it was escalated"
+                        + " (success reported " + p.successReported() + ", line " + line
+                        + (gateway.batchLines().containsKey(line) ? " (batch)" : "") + ", stale answers "
+                        + p.staleAnswers() + ", line breaks " + lineBreaks.getOrDefault(line, List.of()).stream()
+                                .map(b -> b.type() + ":" + b.state()).toList()
+                        + ", breaks " + breaks.stream().map(b -> b.type() + ":" + b.state()).toList() + ")", now));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * INV-BOOKS-MATCH-WORLD: for each merchant, BANK in the ledger equals what the world paid in the settlement files
+     * Driftline completed; and a refund is booked (one REFUND transaction) exactly when the gateway executed one.
+     */
+    private Optional<Violation> booksMatchWorld(long now) {
+        TreeMap<String, Long> expectedBank = new TreeMap<>();
+        for (SettlementRepo.FileEnd f : store.committedFileEnds()) {
+            if (!f.complete()) {
+                continue;
+            }
+            Optional<SettlementFile> world = gateway.file(f.fileId());
+            if (world.isEmpty()) {
+                return Optional.of(new Violation(BOOKS_MATCH_WORLD, "Driftline completed file " + f.fileId()
+                        + ", which the world never produced", now));
+            }
+            expectedBank.merge(f.merchantId().value(), world.get().totalAmount().paise(), Math::addExact);
+        }
+        TreeMap<String, Long> bookedBank = new TreeMap<>();
+        TreeSet<String> refundsBooked = new TreeSet<>();
+        for (LedgerTxn txn : store.committedLedger()) {
+            for (Entry e : txn.entries()) {
+                if (e.account() == AccountCode.BANK) {
+                    bookedBank.merge(e.merchantId().value(), e.amount().paise(), Math::addExact);
+                }
+            }
+            if (txn.cause().type() == CauseType.REFUND) {
+                refundsBooked.add(txn.merchantId() + "/" + txn.cause().id());
+            }
+        }
+        for (String m : merchantsWithBank(expectedBank, bookedBank)) {
+            long expected = expectedBank.getOrDefault(m, 0L);
+            long booked = bookedBank.getOrDefault(m, 0L);
+            if (expected != booked) {
+                return Optional.of(new Violation(BOOKS_MATCH_WORLD, m + ": BANK in the ledger is " + booked
+                        + " paise, but the world paid " + expected + " paise in the files Driftline completed", now));
+            }
+        }
+        for (FakeGateway.Payment p : gateway.payments().values()) {
+            boolean refunded = !p.refunds().isEmpty();
+            boolean booked = refundsBooked.contains(p.merchant() + "/" + p.id());
+            if (refunded != booked) {
+                return Optional.of(new Violation(BOOKS_MATCH_WORLD, p.merchant() + "/" + p.id() + (refunded
+                        ? " was refunded by the gateway, but no REFUND is booked"
+                        : " has a REFUND booked, but the gateway never refunded it"), now));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static TreeSet<String> merchantsWithBank(TreeMap<String, Long> a, TreeMap<String, Long> b) {
+        TreeSet<String> all = new TreeSet<>(a.keySet());
+        all.addAll(b.keySet());
+        return all;
+    }
+
     private Optional<Violation> checkRaised(Break b, long now) {
+        if (b.type() == BreakType.STATUS_CONFLICT) {
+            // Possible only if the gateway's status API really contradicted itself every time Driftline asked (D62)
+            int stale = gateway == null ? 0 : gateway.payment(PaymentId.of(b.subjectKey()))
+                    .map(FakeGateway.Payment::staleAnswers).orElse(0);
+            if (stale < Resolver.Config.DEFAULT.maxStatusQueries()) {
+                return Optional.of(new Violation(NO_ANOMALY, "STATUS_CONFLICT " + b.merchantId() + "/"
+                        + b.subjectKey() + " " + b.evidence() + ", but the gateway gave only " + stale
+                        + " stale status answers about it", now));
+            }
+            return Optional.empty();
+        }
         if (NEVER_EXPECTED.contains(b.type())) {
             return Optional.of(new Violation(NO_ANOMALY, b.type() + " " + b.merchantId() + "/" + b.subjectKey()
                     + " " + b.evidence() + ", which the world never causes", now));
@@ -266,7 +524,10 @@ public final class Invariants {
     /**
      * INV-AMBIGUITY-WITNESSED for the line {@code fileId:lineNo}: it is AMBIGUOUS with two distinct witnesses, and each
      * witness is a set of distinct payments the world captured, whose batch dates lie in the line's window and whose
-     * nets (the contracted fee model) sum to the line's amount.
+     * nets (the contracted fee model) sum to the line's amount. A payment whose outcome Driftline has not learned (its
+     * last recorded status is PENDING) counts as possibly captured, inside the window, if Driftline first saw it no
+     * later than the window allows (D69, BUG-007): Driftline cannot rule it out, and nothing else could. A witness
+     * naming a payment whose outcome Driftline has since learned is stale: the line should have been solved again.
      */
     private Optional<Violation> witnessed(MerchantId m, String lineKey, long now) {
         Optional<Line> found = store.committedLines().stream()
@@ -285,16 +546,30 @@ public final class Invariants {
             return Optional.empty();
         }
         LocalDate from = line.settlementDate().minusDays(LOOKBACK_DAYS);
+        // what Driftline knows of each payment: when it first saw it, and its last recorded status
+        TreeMap<String, Instant> firstSeen = new TreeMap<>();
+        TreeMap<String, PaymentStatus> lastStatus = new TreeMap<>();
+        for (InMemoryStore.Recorded<PaymentTransition> t : store.committedPaymentTransitions()) {
+            if (t.merchantId().equals(m)) {
+                String key = t.row().paymentId().value();
+                firstSeen.merge(key, t.row().eventTime(), (a, b) -> a.isBefore(b) ? a : b);
+                lastStatus.put(key, t.row().to());
+            }
+        }
         for (List<PaymentId> witness : w) {
             long sum = 0;
             TreeSet<String> distinct = new TreeSet<>();
             for (PaymentId id : witness) {
                 Optional<FakeGateway.Payment> p = gateway.payment(id);
-                if (p.isEmpty() || !p.get().captured() || !distinct.add(id.value())) {
+                // a payment Driftline still sees as PENDING is a possible member (D69), if it was first seen in time
+                boolean possible = p.isPresent() && lastStatus.get(id.value()) == PaymentStatus.PENDING
+                        && !BatchMatching.batchDate(firstSeen.get(id.value()), cycleDays).isAfter(line.settlementDate());
+                if (p.isEmpty() || !p.get().captured() && !possible || !distinct.add(id.value())) {
                     return Optional.of(new Violation(AMBIGUITY_WITNESSED, m + "/" + lineKey + " witness " + witness
-                            + " names " + id + ", not a distinct captured payment", now));
+                            + " names " + id + ", not a distinct captured (or possibly captured) payment", now));
                 }
-                LocalDate batchDate = BatchMatching.batchDate(epoch.plusMillis(p.get().capturedAtMillis()), cycleDays);
+                LocalDate batchDate = possible ? line.settlementDate()
+                        : BatchMatching.batchDate(epoch.plusMillis(p.get().capturedAtMillis()), cycleDays);
                 if (batchDate.isBefore(from) || batchDate.isAfter(line.settlementDate())) {
                     return Optional.of(new Violation(AMBIGUITY_WITNESSED, m + "/" + lineKey + " witness " + witness
                             + " names " + id + ", outside the line's window", now));
@@ -421,9 +696,27 @@ public final class Invariants {
             }
         }
         if (gateway != null) {
-            Optional<Violation> dishonest = inferredHonest(now);
+            for (FakeGateway.Payment p : gateway.payments().values()) {
+                if (!p.refunds().isEmpty() && fulfilledWith(p)) {
+                    return Optional.of(new Violation(NO_REFUND_OF_FULFILLED, p.merchant() + "/" + p.id()
+                            + " was refunded, and its order was fulfilled with it", now));
+                }
+            }
+            Optional<Violation> dishonest = inferredHonest(now);   // before its consequences: the root cause first
             if (dishonest.isPresent()) {
                 return dishonest;
+            }
+            Optional<Violation> late = deadlines(now);
+            if (late.isPresent()) {
+                return late;
+            }
+            Optional<Violation> whole = customersWhole(now);
+            if (whole.isPresent()) {
+                return whole;
+            }
+            Optional<Violation> books = booksMatchWorld(now);
+            if (books.isPresent()) {
+                return books;
             }
             expected = Oracle.expected(gateway, merchants, epoch, cycleDays, graceDays, lastFileDate);
             TreeSet<String> raised = new TreeSet<>();
@@ -448,6 +741,10 @@ public final class Invariants {
                 }
                 if (coveredByUnresolvedBatch(e, unresolvedLines)) {
                     coveredByUnresolvedBatch++;
+                    continue;
+                }
+                if (coveredByEscalatedLine(e, lineBreaks())) {
+                    coveredByEscalatedLine++;
                     continue;
                 }
                 return Optional.of(new Violation(DETECTED, "the world implies " + e + ", but Driftline never raised it",

@@ -6,21 +6,27 @@ import io.github.vanish073.driftline.core.breaks.BreakType;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.OrderPayload;
 import io.github.vanish073.driftline.core.event.PaymentPayload;
+import io.github.vanish073.driftline.core.event.EventType;
+import io.github.vanish073.driftline.core.event.RefundPayload;
 import io.github.vanish073.driftline.core.event.SettlementFileEndPayload;
 import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.Canary;
+import io.github.vanish073.driftline.core.id.DerivedId;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
 import io.github.vanish073.driftline.core.ledger.PostResult;
 import io.github.vanish073.driftline.core.ledger.PostingRules;
+import io.github.vanish073.driftline.core.ledger.Cause;
+import io.github.vanish073.driftline.core.ledger.CauseType;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.order.OrderEvidence;
 import io.github.vanish073.driftline.core.order.OrderRule;
 import io.github.vanish073.driftline.core.order.OrderState;
+import io.github.vanish073.driftline.core.order.OrderStatus;
 import io.github.vanish073.driftline.core.order.OrderStateMachine;
 import io.github.vanish073.driftline.core.order.OrderTransition;
 import io.github.vanish073.driftline.core.payment.PaymentEvidence;
@@ -30,6 +36,7 @@ import io.github.vanish073.driftline.core.payment.PaymentStateMachine;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.payment.PaymentTransition;
 import io.github.vanish073.driftline.core.port.BreakRepo;
+import io.github.vanish073.driftline.core.port.OutboxRepo;
 import io.github.vanish073.driftline.core.port.DedupeRepo;
 import io.github.vanish073.driftline.core.port.QuarantineRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo.FileEnd;
@@ -53,6 +60,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -80,6 +88,13 @@ import java.util.TreeSet;
  */
 public final class Matcher {
 
+    /** D72: how long to wait before checking again whether a file's capture days are swept. */
+    static final Duration SWEEP_RECHECK = Duration.ofMinutes(1);
+    /** D72: how many times one capture day is swept while the gateway's answers are stale. */
+    static final int MAX_SWEEPS = 5;
+    /** D72: how long after a final sweep its captures may take to arrive as observations before the lines are solved. */
+    static final Duration SWEEP_PATIENCE = Duration.ofMinutes(30);
+
     static final int MAX_TIMER_ROUNDS = 10_000;
     /** Unreferenced lines whose money is still in suspense with no payment attributed (§6.4). */
     private static final List<LineStatus> UNRESOLVED_BATCH = List.of(LineStatus.AWAITING_BATCH, LineStatus.AMBIGUOUS,
@@ -97,6 +112,7 @@ public final class Matcher {
     private final boolean dedupeOff;
     private final boolean processingTimeMissing;
     private final boolean firstSolutionWins;
+    private final boolean everyBreakActs;
     private final KeyedState state = new KeyedState();
 
     public Matcher(MerchantDirectory merchants, MatcherConfig config, Canaries canaries) {
@@ -106,6 +122,7 @@ public final class Matcher {
         this.dedupeOff = canaries.isEnabled(Canary.DEDUPE_OFF);
         this.processingTimeMissing = canaries.isEnabled(Canary.PROCESSING_TIME_WATERMARK);
         this.firstSolutionWins = canaries.isEnabled(Canary.FIRST_SOLUTION_WINS);
+        this.everyBreakActs = canaries.isEnabled(Canary.BREAK_SCOPED_REFUND_KEY);
     }
 
     /** The production matcher: default constants, no canary. */
@@ -169,7 +186,10 @@ public final class Matcher {
                             run.fileEnd(e);
                             applied++;
                         }
-                        case REFUND_PROCESSED, REFUND_FAILED -> notYetHandled++;
+                        case REFUND_PROCESSED, REFUND_FAILED -> {
+                            run.refundOutcome(e);
+                            applied++;
+                        }
                     }
                 }
             }
@@ -412,6 +432,10 @@ public final class Matcher {
             savePayment(m, after);
             tx.payments().appendTransition(m, new PaymentTransition(ev.paymentId(), before.status(), after.status(),
                     (PaymentRule) d.rule(), e.eventKey(), e.eventTime()));
+            if (before.status() == PaymentStatus.PENDING && !before.conflict()
+                    && (after.status() != PaymentStatus.PENDING || after.conflict())) {
+                solveAgainWithout(m, ev.paymentId());   // BUG-007: it is no longer a possible member of any line
+            }
             if (d.kind() == DecisionKind.CONFLICT) {
                 raise(m, BreakType.STATUS_CONFLICT, ev.paymentId().value(),
                         evidence("rule", ((PaymentRule) d.rule()).name(), "event_key", e.eventKey()), "conflicting records");
@@ -494,6 +518,16 @@ public final class Matcher {
                         "contradictory order history");
                 return;
             }
+            if (d.kind() == DecisionKind.APPLIED && before.status() == OrderStatus.NONE && config.maxProbes() > 0) {
+                upsertTimer(m, Kind.PENDING_PROBE, ev.orderId().value(), TimerClock.STREAM_GM,
+                        e.eventTime().plus(config.probeAfter()));
+            }
+            if (d.kind() == DecisionKind.APPLIED) {
+                // the resolver waits on order state (expiry, order.paid): wake every payment's action owner (§8.2)
+                for (PaymentState p : tx.payments().forOrder(m, ev.orderId())) {
+                    tx.payments().actionOwner(m, p.paymentId()).ifPresent(owner -> wake(m, owner));
+                }
+            }
             if (d.kind() != DecisionKind.APPLIED || after.paidWith().isEmpty()) {
                 return;
             }
@@ -501,6 +535,7 @@ public final class Matcher {
             payment(m, paidWith).ifPresent(p -> matchIfPaid(m, after, p, e.eventTime()));
             tx.breaks().find(m, BreakType.DEBITED_NO_ORDER, paidWith.value()).ifPresent(b -> tx.breaks()
                     .addEvidence(m, b.breakId(), "order_paid_later", "v" + after.version() + " at " + e.eventTime()));
+            tx.breaks().find(m, BreakType.DEBITED_NO_ORDER, paidWith.value()).ifPresent(b -> wake(m, b.breakId()));
             if (tx.timers().find(m, Kind.DUP_CHECK, ev.orderId().value()).isEmpty()) {
                 evaluateDuplicates(m, ev.orderId());
             }
@@ -567,6 +602,7 @@ public final class Matcher {
             }
             tx.breaks().find(m, BreakType.DUPLICATE_CAPTURE, kept.paymentId().value()).ifPresent(b -> tx.breaks()
                     .addEvidence(m, b.breakId(), "kept_by_order", "order paid with this payment"));
+            tx.breaks().find(m, BreakType.DUPLICATE_CAPTURE, kept.paymentId().value()).ifPresent(b -> wake(m, b.breakId()));
         }
 
         /** SETTLEMENT_DUE: succeeded, and still not settled once every file up to its due date plus grace is complete. */
@@ -575,6 +611,9 @@ public final class Matcher {
             if (found.isEmpty() || found.get().status() != PaymentStatus.SUCCEEDED || found.get().conflict()
                     || tx.settlement().matchOf(m, id).isPresent()) {
                 return;
+            }
+            if (tx.ledger().find(m, new Cause(CauseType.REFUND, id.value())).isPresent()) {
+                return;   // refunded: a gateway does not settle a payment it refunded before settling it
             }
             LocalDate tDate = IstCalendar.tDate(found.get().successAt().orElseThrow());
             if (inUnresolvedBatch(m, merchants.terms(m).dueDate(tDate))) {
@@ -710,6 +749,8 @@ public final class Matcher {
             if (late) {
                 tx.breaks().find(line.merchantId(), BreakType.ORPHAN_SETTLEMENT, line.key()).ifPresent(b ->
                         tx.breaks().addEvidence(line.merchantId(), b.breakId(), "attributed_to", id.value()));
+                tx.breaks().find(line.merchantId(), BreakType.ORPHAN_SETTLEMENT, line.key())
+                        .ifPresent(b -> wake(line.merchantId(), b.breakId()));
             }
         }
 
@@ -763,6 +804,74 @@ public final class Matcher {
             }
         }
 
+        // ---- refunds (§7.2, §9; Shift 8) ----
+
+        /**
+         * A refund outcome from the gateway: its webhook, or an observation the dispatcher published after a refund call
+         * or lookup (D10). {@code refund.processed} posts the REFUND ledger transaction (once per payment, by its cause),
+         * against SALES if the payment was already matched to an order and against PAYMENTS_CLEARING otherwise; either
+         * outcome is recorded on the payment's action-owner break, which the resolver is woken to look at.
+         */
+        void refundOutcome(EventEnvelope e) {
+            RefundPayload r = (RefundPayload) e.payload();
+            MerchantId m = e.merchantId();
+            PaymentId id = r.paymentId();
+            Optional<String> owner = tx.payments().actionOwner(m, id);
+            if (e.eventType() == EventType.REFUND_PROCESSED) {
+                if (payment(m, id).filter(p -> p.status() == PaymentStatus.SUCCEEDED).isPresent()) {
+                    boolean matched = tx.ledger().find(m, new Cause(CauseType.ORDER_MATCH, id.value())).isPresent();
+                    post(PostingRules.refund(m, id, r.amount(), matched, e.eventTime()));
+                }
+                owner.ifPresent(b -> {
+                    tx.breaks().addEvidence(m, b, "refund_processed", r.amount() + " at " + e.eventTime());
+                    wake(m, b);
+                });
+            } else {
+                owner.ifPresent(b -> {
+                    tx.breaks().addEvidence(m, b, "refund_failed", r.amount() + " at " + e.eventTime());
+                    wake(m, b);
+                });
+            }
+        }
+
+        /**
+         * The pending-order probe (§9.2, D61): an order that is still not paid with a payment Driftline knows has
+         * succeeded, {@code probeAfter} after its first event, may have a payment whose webhooks the gateway gave up on
+         * (WEBHOOK_LOST). Ask the gateway about the order, with no break yet; the dispatcher publishes each payment
+         * outcome Driftline has not seen as an observation, which comes back through Kafka. At most {@code maxProbes}
+         * probes, {@code probeAfter} apart in event time.
+         */
+        void probe(MerchantId m, OrderId orderId) {
+            Optional<OrderState> order = order(m, orderId);
+            boolean settled = order.flatMap(OrderState::paidWith).flatMap(p -> payment(m, p))
+                    .filter(p -> p.status() == PaymentStatus.SUCCEEDED).isPresent();
+            // BUG-006: a paid order can still hold a duplicate whose success webhook was lost
+            boolean anotherPending = tx.payments().forOrder(m, orderId).stream()
+                    .anyMatch(p -> p.status() == PaymentStatus.PENDING);
+            if (settled && !anotherPending) {
+                return;
+            }
+            for (int n = 1; n <= config.maxProbes(); n++) {
+                String id = "cmd_" + DerivedId.of("probe", m.value(), orderId.value(), Integer.toString(n)).value();
+                if (tx.outbox().find(id).isEmpty()) {
+                    tx.outbox().enqueue(OutboxRepo.Command.pending(id, m, Optional.empty(),
+                            OutboxRepo.CommandKind.STATUS_QUERY_ORDER,
+                            evidence("order_id", orderId.value(), "seq", Integer.toString(n), "probe", "yes"),
+                            Optional.empty(), now));
+                    if (n < config.maxProbes()) {
+                        upsertTimer(m, Kind.PENDING_PROBE, orderId.value(), TimerClock.STREAM_GM,
+                                streamGM().plus(config.probeAfter()));
+                    }
+                    return;
+                }
+            }
+        }
+
+        /** New evidence on a break: the resolver should look at it again now (§8.1). */
+        void wake(MerchantId m, String breakId) {
+            tx.breaks().wake(m, breakId, now);
+        }
+
         // ---- batch matching (§6.4) ----
 
         /**
@@ -789,6 +898,9 @@ public final class Matcher {
             }
             MerchantTerms terms = merchants.terms(m);
             LocalDate date = waiting.get(0).settlementDate();
+            if (!swept(m, terms, date, fileId)) {
+                return;   // D72: solved once the gateway has said what it captured on the window's days
+            }
             LocalDate from = date.minusDays(config.batchLookbackDays());
             List<BatchMatching.Candidate> pool = new ArrayList<>();
             for (PaymentState p : tx.payments().unsettled(m)) {
@@ -799,7 +911,8 @@ public final class Matcher {
                 Instant success = p.successAt().get();
                 LocalDate batchDate = BatchMatching.batchDate(success, terms.cycleDays());
                 if (batchDate.isBefore(from) || batchDate.isAfter(date)
-                        || !tx.settlement().linesReferencing(m, p.paymentId().value()).isEmpty()) {
+                        || !tx.settlement().linesReferencing(m, p.paymentId().value()).isEmpty()
+                        || tx.ledger().find(m, new Cause(CauseType.REFUND, p.paymentId().value())).isPresent()) {
                     continue;
                 }
                 pool.add(new BatchMatching.Candidate(p.paymentId(), success, batchDate,
@@ -809,6 +922,10 @@ public final class Matcher {
                     .map(l -> new BatchMatching.Line(l.key(), l.settlementDate(), l.amount())).toList();
             List<BatchMatching.Outcome> outcomes = BatchMatching.match(lines, pool, config.batchLookbackDays(),
                     config.solveBudgetOps(), firstSolutionWins);
+            List<BatchMatching.Candidate> possible = possibleMembers(m, terms, date);
+            if (!possible.isEmpty() && !firstSolutionWins) {
+                outcomes = soundAgainstPending(lines, pool, possible, outcomes);
+            }
             TreeSet<String> recheck = new TreeSet<>();
             for (int i = 0; i < waiting.size(); i++) {
                 Line line = waiting.get(i);
@@ -844,6 +961,181 @@ public final class Matcher {
                     evaluateMissing(m, p);   // its check already ran, while these lines were still unsolved
                 }
             }
+        }
+
+        /**
+         * D72 (BUG-010): a capture none of whose webhooks arrived leaves no trace but the gateway's own record, and an
+         * unreferenced line can hold it, so the lines are solved only once the gateway has listed what it captured on
+         * each day the line's window covers, and Driftline has applied what it did not know. True when the file's lines
+         * may be solved now; otherwise the needed sweeps are enqueued and BATCH_SOLVE is set again
+         * {@link #SWEEP_RECHECK} later on the processing clock.
+         */
+        boolean swept(MerchantId m, MerchantTerms terms, LocalDate date, String fileId) {
+            LocalDate last = date.minusDays(terms.cycleDays());
+            boolean ready = true;
+            for (LocalDate day = last.minusDays(config.batchLookbackDays()); !day.isAfter(last); day = day.plusDays(1)) {
+                ready &= sweptDay(m, day);
+            }
+            if (!ready) {
+                upsertTimer(m, Kind.BATCH_SOLVE, fileId, TimerClock.PROCESSING, now.plus(SWEEP_RECHECK));
+            }
+            return ready;
+        }
+
+        /**
+         * Whether one capture day's sweep is final and applied. An answer is final when the gateway's view is as of the
+         * day's end or later (a stale view may miss a late capture); a stale answer is asked again, up to
+         * {@link #MAX_SWEEPS} times, then accepted. Applied means Driftline knows every listed capture as SUCCEEDED, or
+         * {@link #SWEEP_PATIENCE} has passed since the answer, so one observation that never lands cannot hold the
+         * file's lines for ever.
+         */
+        boolean sweptDay(MerchantId m, LocalDate day) {
+            Optional<OutboxRepo.Command> latest = Optional.empty();
+            int next = 1;
+            while (next <= MAX_SWEEPS) {
+                Optional<OutboxRepo.Command> c = tx.outbox().find(sweepId(m, day, next));
+                if (c.isEmpty()) {
+                    break;
+                }
+                latest = c;
+                next++;
+            }
+            if (latest.isEmpty()) {
+                enqueueSweep(m, day, 1);
+                return false;
+            }
+            if (latest.get().status() != OutboxRepo.CommandStatus.DONE) {
+                return false;
+            }
+            Map<String, String> answer = latest.get().result().orElseThrow();
+            Instant asOf = Instant.parse(answer.get("as_of"));
+            if (asOf.isBefore(IstCalendar.endOfIstDay(day))) {
+                if (next <= MAX_SWEEPS) {
+                    enqueueSweep(m, day, next);
+                    return false;
+                }
+                return true;   // MAX_SWEEPS stale answers: solve with what is known
+            }
+            if (!now.isBefore(asOf.plus(SWEEP_PATIENCE))) {
+                return true;
+            }
+            int count = Integer.parseInt(answer.getOrDefault("count", "0"));
+            for (int i = 1; i <= count; i++) {
+                PaymentId p = PaymentId.of(answer.get("payment_" + i));
+                if (payment(m, p).filter(x -> x.status() == PaymentStatus.SUCCEEDED).isEmpty()) {
+                    return false;   // its observation is on its way through Kafka
+                }
+            }
+            return true;
+        }
+
+        static String sweepId(MerchantId m, LocalDate day, int n) {
+            return "cmd_" + DerivedId.of("sweep", m.value(), day.toString(), Integer.toString(n)).value();
+        }
+
+        void enqueueSweep(MerchantId m, LocalDate day, int n) {
+            tx.outbox().enqueue(OutboxRepo.Command.pending(sweepId(m, day, n), m, Optional.empty(),
+                    OutboxRepo.CommandKind.PAYMENT_SWEEP, evidence("captured_on", day.toString(), "seq", Integer.toString(n)),
+                    Optional.empty(), now));
+        }
+
+        /**
+         * Known payments whose outcome Driftline has not learned (PENDING, unsettled, named by no line, not refunded):
+         * any of them may have succeeded and be inside an unreferenced line (BUG-006, D69). Their success time is
+         * unknown, but it is no earlier than the payment's first event, so a payment first seen after the file's window
+         * closed cannot be in it (BUG-007); every other one is placed on the file's own settlement date, inside every
+         * line's window.
+         */
+        List<BatchMatching.Candidate> possibleMembers(MerchantId m, MerchantTerms terms, LocalDate date) {
+            List<BatchMatching.Candidate> out = new ArrayList<>();
+            for (PaymentState p : tx.payments().unsettled(m)) {
+                if (p.status() != PaymentStatus.PENDING || p.conflict() || p.amount().isEmpty()
+                        || !tx.settlement().linesReferencing(m, p.paymentId().value()).isEmpty()
+                        || tx.ledger().find(m, new Cause(CauseType.REFUND, p.paymentId().value())).isPresent()) {
+                    continue;
+                }
+                Optional<Instant> seen = firstSeen(m, p.paymentId());
+                if (seen.isPresent() && BatchMatching.batchDate(seen.get(), terms.cycleDays()).isAfter(date)) {
+                    continue;
+                }
+                out.add(new BatchMatching.Candidate(p.paymentId(), now, date, terms.fees().expected(p.amount().get()).net()));
+            }
+            return out;
+        }
+
+        /** The event time of a payment's first recorded event: no capture can be earlier. */
+        Optional<Instant> firstSeen(MerchantId m, PaymentId id) {
+            return tx.payments().transitions(m, id).stream().map(PaymentTransition::eventTime)
+                    .min(Comparator.naturalOrder());
+        }
+
+        /**
+         * BUG-007: a payment that was a possible member of unreferenced lines has an outcome now (or a conflict), so an
+         * ambiguity it witnessed may no longer hold. Every AMBIGUOUS line naming it, in a complete file dated from its
+         * first event's batch date to today, goes back to AWAITING_BATCH and is solved again now. A line that becomes
+         * INFERRED releases its suspense; its orphan, already escalated (D68), keeps that state for a person.
+         */
+        void solveAgainWithout(MerchantId m, PaymentId id) {
+            Optional<Instant> seen = firstSeen(m, id);
+            if (seen.isEmpty()) {
+                return;
+            }
+            LocalDate today = IstCalendar.istDate(now);
+            for (LocalDate d = BatchMatching.batchDate(seen.get(), merchants.terms(m).cycleDays()); !d.isAfter(today);
+                 d = d.plusDays(1)) {
+                Optional<FileEnd> file = tx.settlement().completeFile(m, d);
+                if (file.isEmpty()) {
+                    continue;
+                }
+                boolean reopened = false;
+                for (Line l : tx.settlement().lines(m, file.get().fileId())) {
+                    if (l.status() == LineStatus.AMBIGUOUS && l.witnesses().stream().anyMatch(w -> w.contains(id))) {
+                        tx.settlement().saveLine(l.withStatus(LineStatus.AWAITING_BATCH));
+                        reopened = true;
+                    }
+                }
+                if (reopened) {
+                    solveBatch(m, file.get().fileId());
+                }
+            }
+        }
+
+        /**
+         * An inference is sound only if it is the unique solution over every payment that may be in the line. Solves
+         * again with the possible members added; a line whose inference changes is not inferred but AMBIGUOUS, with
+         * the inference and the solution that includes a possible member as its two witnesses (BUG-006, D69).
+         */
+        List<BatchMatching.Outcome> soundAgainstPending(List<BatchMatching.Line> lines, List<BatchMatching.Candidate> pool,
+                                                         List<BatchMatching.Candidate> possible,
+                                                         List<BatchMatching.Outcome> outcomes) {
+            List<BatchMatching.Candidate> wider = new ArrayList<>(pool);
+            wider.addAll(possible);
+            List<BatchMatching.Outcome> all = BatchMatching.match(lines, wider, config.batchLookbackDays(),
+                    config.solveBudgetOps(), false);
+            List<BatchMatching.Outcome> out = new ArrayList<>(outcomes.size());
+            for (int i = 0; i < outcomes.size(); i++) {
+                BatchMatching.Outcome known = outcomes.get(i);
+                BatchMatching.Outcome w = all.get(i);
+                if (known.kind() != BatchMatching.Kind.INFERRED
+                        || w.kind() == BatchMatching.Kind.INFERRED && w.matched().equals(known.matched())) {
+                    out.add(known);
+                    continue;
+                }
+                Optional<List<PaymentId>> other = switch (w.kind()) {
+                    case INFERRED -> Optional.of(w.matched());
+                    case AMBIGUOUS -> w.witnesses().stream().filter(x -> !x.equals(known.matched())).findFirst();
+                    default -> Optional.empty();
+                };
+                if (other.isEmpty()) {
+                    out.add(known);   // the wider pool found no other solution for this line
+                    continue;
+                }
+                List<List<PaymentId>> witnesses = new ArrayList<>(List.of(known.matched(), other.get()));
+                witnesses.sort(Comparator.comparing(List::toString));
+                out.add(new BatchMatching.Outcome(known.line(), BatchMatching.Kind.AMBIGUOUS, List.of(), witnesses,
+                        w.candidates(), w.candidateHash(), Math.addExact(known.estimatedOps(), w.estimatedOps())));
+            }
+            return out;
         }
 
         void settleInferred(Line line, BatchMatching.Outcome o) {
@@ -1024,9 +1316,7 @@ public final class Matcher {
                         case SETTLEMENT_DUE -> evaluateMissing(t.merchantId(), PaymentId.of(t.subjectKey()));
                         case FEED_STALL -> evaluateStall(t.merchantId(), LocalDate.parse(t.subjectKey()));
                         case BATCH_SOLVE -> solveBatch(t.merchantId(), t.subjectKey());
-                        case PENDING_PROBE -> {
-                            // never registered before Shift 8
-                        }
+                        case PENDING_PROBE -> probe(t.merchantId(), OrderId.of(t.subjectKey()));
                     }
                 }
             }
@@ -1034,6 +1324,9 @@ public final class Matcher {
 
         /** D11: the first refund-capable break of a payment owns its actions; later ones follow it as LINKED. */
         void claimActionOwners() {
+            if (everyBreakActs) {
+                return;   // C11: no action owner, so every refund-capable break acts for itself
+            }
             claims.sort(Comparator.comparingInt((Claim c) -> BreakType.REFUND_CAPABLE.indexOf(c.type()))
                     .thenComparing(c -> c.merchantId().value())
                     .thenComparing(c -> c.paymentId().value()));

@@ -48,6 +48,7 @@ class ApplicationSmokeIT {
     static final String SECRET = "test-only-webhook-secret-smoke-not-a-real-key";
     static final String TOKEN = "test-token-smoke_merchant";
     static final String OPS_TOKEN = "test-token-smoke_ops";
+    static final String SERVICE_TOKEN = "test-token-smoke_service";
     static final Instant T = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(Duration.ofHours(1));
     static final LocalDate FIRST_SETTLEMENT = LocalDate.parse("2026-11-10");
 
@@ -70,8 +71,8 @@ class ApplicationSmokeIT {
                 {"format":"driftline-bootstrap-v1",
                  "merchants":{"%s":{"partition":3,"fee_bps":200,"gst_bps":1800,"cycle_days":1,
                                     "first_settlement_date":"%s","webhook_secret":"%s","token":"%s"}},
-                 "ops_token":"%s"}
-                """.formatted(MERCHANT, FIRST_SETTLEMENT, SECRET, TOKEN, OPS_TOKEN));
+                 "ops_token":"%s","service_token":"%s"}
+                """.formatted(MERCHANT, FIRST_SETTLEMENT, SECRET, TOKEN, OPS_TOKEN, SERVICE_TOKEN));
         app = DriftlineApplication.application("all").run(
                 "--spring.datasource.url=" + url,
                 "--spring.datasource.username=" + Containers.APP_USER,
@@ -82,6 +83,12 @@ class ApplicationSmokeIT {
                 "--driftline.secrets.keys.it=" + Base64.getEncoder().encodeToString(new byte[32]),
                 "--driftline.bootstrap-file=" + bootstrap,
                 "--driftline.instance-id=smoke",
+                // role `all` includes the dispatcher; port 9 refuses at once, so any call fails fast and is retried later
+                "--driftline.dispatcher.gateway-url=http://127.0.0.1:9/gateway",
+                "--driftline.dispatcher.merchant-url=http://127.0.0.1:9/merchant",
+                "--driftline.dispatcher.ops-url=http://127.0.0.1:9/ops",
+                "--driftline.dispatcher.observations-url=http://127.0.0.1:9",
+                "--driftline.dispatcher.service-token=" + SERVICE_TOKEN,
                 "--server.port=0",
                 "--management.server.port=0");
         api = "http://127.0.0.1:" + app.getEnvironment().getProperty("local.server.port");

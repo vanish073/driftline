@@ -60,6 +60,8 @@ final class HttpDriftline implements Ingress, SettlementUploads {
                 reply.accept(post("/v1/merchants/" + m.id().value() + "/order-events", o.body(), () -> Map.of(
                         "Authorization", "Bearer " + m.token(), "Idempotency-Key", o.idempotencyKey().orElseThrow())));
             }
+            case Request.Observation o ->
+                    throw new IllegalArgumentException("observations come from Driftline's dispatcher, never the world");
         }
     }
 

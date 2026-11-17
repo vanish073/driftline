@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -16,6 +20,7 @@ import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
 import io.github.vanish073.driftline.core.breaks.Break;
+import io.github.vanish073.driftline.core.breaks.BreakState;
 import io.github.vanish073.driftline.core.breaks.BreakType;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.id.MerchantId;
@@ -25,6 +30,7 @@ import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.payment.PaymentState;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
+import io.github.vanish073.driftline.core.port.AuditRepo;
 import io.github.vanish073.driftline.core.port.BreakRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
@@ -40,8 +46,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -121,9 +129,13 @@ class OpsApiTest {
     }
 
     void token(String token, Optional<MerchantId> merchant) {
+        token(token, merchant, List.of("breaks:read"));
+    }
+
+    void token(String token, Optional<MerchantId> merchant, List<String> scopes) {
         Sha256 hash = DevBootstrap.tokenHash(token);
         when(directory.token(hash)).thenReturn(Optional.of(new PostgresDirectory.ApiToken(hash, merchant,
-                List.of("breaks:read"), NOW.minusSeconds(60), Optional.empty())));
+                scopes, NOW.minusSeconds(60), Optional.empty())));
     }
 
     @Test
@@ -213,5 +225,72 @@ class OpsApiTest {
     @Test
     void readingNeedsAToken() throws Exception {
         mvc.perform(get("/v1/breaks")).andExpect(status().isUnauthorized());
+    }
+
+    // ---- manual resolution (§8.1, §12) ----------------------------------------------------------------------------
+
+    static final Break DETECTED_B = Break.detected(B, BreakType.SHORT_SETTLEMENT, "stl_9:1", NOW.minusSeconds(7_200),
+            Map.of());
+    static final Break ESCALATED_B = new Break(DETECTED_B.breakId(), B, BreakType.SHORT_SETTLEMENT, "stl_9:1",
+            BreakState.ESCALATED, DETECTED_B.detectedAt(), new TreeMap<>(), 2);
+    static final String ESCALATED_PATH = "/v1/breaks/" + ESCALATED_B.breakId() + "/resolve";
+
+    void resolvable() {
+        token("test-token-ops-resolver", Optional.empty(), List.of("breaks:read", "breaks:resolve"));
+        token("test-token-a-resolver", Optional.of(A), List.of("breaks:read", "breaks:resolve"));
+        when(tx.breaks().byId(ESCALATED_B.breakId())).thenReturn(Optional.of(ESCALATED_B));
+        AuditRepo audit = Mockito.mock(AuditRepo.class);
+        when(tx.audit()).thenReturn(audit);
+        when(audit.append(any())).thenAnswer(i -> {
+            AuditRepo.Entry e = i.getArgument(0);
+            return new AuditRepo.Row(7, e, AuditRepo.GENESIS, AuditRepo.hash(AuditRepo.GENESIS, e));
+        });
+    }
+
+    @Test
+    void anOpsTokenResolvesAnEscalatedBreakByHandWithAnAuditRowNamingTheToken() throws Exception {
+        resolvable();
+        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"bank confirmed by phone\"}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.break_id").value(ESCALATED_B.breakId()))
+                .andExpect(jsonPath("$.state").value("RESOLVED_MANUAL"))
+                .andExpect(jsonPath("$.resolved_at").value(NOW.toString()))
+                .andExpect(jsonPath("$.audit_seq").value(7));
+        verify(tx.breaks()).transition(B, ESCALATED_B.breakId(), BreakState.RESOLVED_MANUAL, NOW,
+                "resolved by hand: bank confirmed by phone");
+        ArgumentCaptor<AuditRepo.Entry> entry = ArgumentCaptor.forClass(AuditRepo.Entry.class);
+        verify(tx.audit()).append(entry.capture());
+        assertThat(entry.getValue().actor()).startsWith("ops/");
+        assertThat(entry.getValue().subject()).isEqualTo(ESCALATED_B.breakId());
+    }
+
+    @Test
+    void resolvingNeedsTheResolveScopeAndAMerchantTokenSeesOnlyItsOwnBreaks() throws Exception {
+        resolvable();
+        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"x\"}")
+                        .header("Authorization", "Bearer test-token-ops"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"x\"}")
+                        .header("Authorization", "Bearer test-token-a-resolver"))
+                .andExpect(status().isNotFound());
+        verify(tx.breaks(), never()).transition(any(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    void aBreakThatIsNotEscalatedIs409AndAMissingNote400() throws Exception {
+        resolvable();
+        mvc.perform(post("/v1/breaks/" + BREAK_A.breakId() + "/resolve").content("{\"note\":\"x\"}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(
+                        "the break is DETECTED; only an ESCALATED break can be resolved by hand"));
+        mvc.perform(post(ESCALATED_PATH).content("{}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"   \"}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isBadRequest());
+        verify(tx.breaks(), never()).transition(eq(B), anyString(), any(), any(), anyString());
     }
 }

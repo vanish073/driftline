@@ -37,4 +37,20 @@ class SchedulerTest {
         assertThat(s.step(100)).isTrue();
         assertThatThrownBy(() -> s.at(50, "n", () -> { })).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void advanceToRunsWhatIsDueThenMovesTheClockEvenWithNothingQueued() {
+        Scheduler s = new Scheduler(Instant.EPOCH);
+        List<String> ran = new ArrayList<>();
+        s.at(10, "a", () -> ran.add("a@" + s.now()));
+        s.at(50, "b", () -> ran.add("b@" + s.now()));
+        s.advanceTo(30);
+        assertThat(ran).containsExactly("a@10");
+        assertThat(s.now()).isEqualTo(30);
+        s.advanceTo(20);
+        assertThat(s.now()).as("never backwards").isEqualTo(30);
+        s.advanceTo(1_000);
+        assertThat(ran).containsExactly("a@10", "b@50");
+        assertThat(s.now()).isEqualTo(1_000);
+    }
 }

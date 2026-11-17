@@ -1,0 +1,333 @@
+# scripts/chaos.sh, 2026-11-17T01:45:50Z, commit becfc9d+uncommitted
+# host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3 GB RAM; Compose profiles core and chaos; CHAOS_ROUNDS=2 CHAOS_SECONDS=180 CHAOS_SEED=335667940
+chaos: seed 335667940, 2 rounds of 7 injections
+wrote deploy/compose/.dev/bootstrap.json (first settlement date 2026-11-14)
+ Image driftline-app:dev Building 
+ Image driftline-app:dev Building 
+ Image driftline-app:dev Building 
+ Image driftline-sandbox:dev Building 
+ Image driftline-app:dev Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.27kB done
+#1 DONE 0.0s
+
+#2 [driftline internal] load build definition from app.Dockerfile
+#2 transferring dockerfile: 34B 0.0s
+#2 transferring dockerfile: 653B 0.1s done
+#2 DONE 0.1s
+
+#3 [sandbox internal] load build definition from sandbox.Dockerfile
+#3 transferring dockerfile: 492B 0.1s done
+#3 DONE 0.1s
+
+#4 [matcher internal] load metadata for docker.io/library/eclipse-temurin:21.0.12.1_1-jre-noble@sha256:cd35bb33859641c5374415826a5951845104093eaa401cbe9d3d9023444f1c13
+#4 DONE 0.1s
+
+#5 [sandbox internal] load .dockerignore
+#5 transferring context: 187B 0.0s done
+#5 DONE 0.0s
+
+#6 [sandbox internal] load build context
+#6 DONE 0.0s
+
+#7 [dispatcher internal] load build context
+#7 transferring context: 147B 0.0s done
+#7 DONE 0.0s
+
+#6 [sandbox internal] load build context
+#6 transferring context: 775B 0.0s done
+#6 DONE 0.1s
+
+#8 [migrate 1/4] FROM docker.io/library/eclipse-temurin:21.0.12.1_1-jre-noble@sha256:cd35bb33859641c5374415826a5951845104093eaa401cbe9d3d9023444f1c13
+#8 resolve docker.io/library/eclipse-temurin:21.0.12.1_1-jre-noble@sha256:cd35bb33859641c5374415826a5951845104093eaa401cbe9d3d9023444f1c13 0.2s done
+#8 resolve docker.io/library/eclipse-temurin:21.0.12.1_1-jre-noble@sha256:cd35bb33859641c5374415826a5951845104093eaa401cbe9d3d9023444f1c13 0.2s done
+#8 DONE 0.2s
+
+#9 [sandbox 3/4] WORKDIR /app
+#9 CACHED
+
+#10 [sandbox 2/4] RUN groupadd --system sandbox && useradd --system --gid sandbox --no-create-home --shell /usr/sbin/nologin sandbox
+#10 CACHED
+
+#11 [sandbox 4/4] COPY sandbox/build/install/sandbox /app
+#11 CACHED
+
+#12 [migrate 2/4] RUN groupadd --system driftline && useradd --system --gid driftline --no-create-home --shell /usr/sbin/nologin driftline
+#12 CACHED
+
+#13 [migrate 3/4] WORKDIR /app
+#13 CACHED
+
+#14 [matcher 4/4] COPY app/build/libs/app-0.1.0-SNAPSHOT.jar /app/driftline.jar
+#14 CACHED
+
+#15 [migrate] exporting to image
+#15 exporting layers 0.0s done
+#15 exporting manifest sha256:258dd3dc8c4f8807d0bfc4d846fd9befd98b7606e35e7043134e803a84d19259 0.0s done
+#15 exporting config sha256:7ee788911a7af60f1023ca840204fb7556df3a3c5a175c97cd21080280bb0434
+#15 exporting config sha256:7ee788911a7af60f1023ca840204fb7556df3a3c5a175c97cd21080280bb0434 0.1s done
+#15 exporting attestation manifest sha256:2a027673ecf060487e1d100822deada7b15bce17f39b2bfc55a73b25f7d4e918
+#15 exporting attestation manifest sha256:2a027673ecf060487e1d100822deada7b15bce17f39b2bfc55a73b25f7d4e918 0.2s done
+#15 exporting manifest list sha256:73c90938f29c9191bc15b170633baa7b01e277a3f52c934b1c08efd8d7e1e624
+#15 exporting manifest list sha256:73c90938f29c9191bc15b170633baa7b01e277a3f52c934b1c08efd8d7e1e624 0.1s done
+#15 naming to docker.io/library/driftline-app:dev
+#15 naming to docker.io/library/driftline-app:dev 0.0s done
+#15 unpacking to docker.io/library/driftline-app:dev
+#15 unpacking to docker.io/library/driftline-app:dev 0.1s done
+#15 DONE 0.8s
+
+#16 [dispatcher] exporting to image
+#16 exporting layers 0.0s done
+#16 exporting manifest sha256:73ce7a6d784801168209d5e2e17080458844d0008dbcc0df516f73ddb1cf4147 0.1s done
+#16 exporting config sha256:02cd9055c974e3fee997a3da86202fe9a901502e2f272a6963e076f48d2e3208 0.1s done
+#16 exporting attestation manifest sha256:4b99d2a6396d2e48f9692f8aa842aa7da105fd4458066db4f1778d3f6daddd71 0.2s done
+#16 exporting manifest list sha256:c6aef8bab20ca5802bf1652c96e12c0050a762c75109eee1d9ccff722ac78c25 0.1s done
+#16 naming to docker.io/library/driftline-app:dev 0.0s done
+#16 unpacking to docker.io/library/driftline-app:dev 0.1s done
+#16 DONE 0.9s
+
+#17 [sandbox] exporting to image
+#17 exporting layers 0.0s done
+#17 exporting manifest sha256:8ddd401a3acb09a07f79b4210b57760e2adb79ea4cd1c173268168a094a70133 0.0s done
+#17 exporting config sha256:97164042027584aa722fc361584e17ca6261e5ae430a880738e1f38479c7262d 0.1s done
+#17 exporting attestation manifest sha256:423738309f4f07f04db8f79d497545f819d2c50178542bf5c80dc933ad39489d 0.2s done
+#17 exporting manifest list sha256:3388f9fb5cab86723c9ca4dff58218b2d05da9607de0b911e647f58882f0ad06 0.1s done
+#17 naming to docker.io/library/driftline-sandbox:dev 0.0s done
+#17 unpacking to docker.io/library/driftline-sandbox:dev 0.1s done
+#17 DONE 0.9s
+
+#18 [driftline] exporting to image
+#18 exporting layers 0.0s done
+#18 exporting manifest sha256:4fff06fafcbaefcabb58ee4fc9f8d45308ecd0e664931e895dbae255515a032a 0.1s done
+#18 exporting config sha256:1d20f72184c2478a6dd4b9e88e0b20a971982c768e8deaae7cdaec7aa8a48326 0.1s done
+#18 exporting attestation manifest sha256:b3a7cd19bdf6ba0ce0d19cff6d7ce88a785b370357e20c1d67387b777e1ebfbe 0.2s done
+#18 exporting manifest list sha256:dc2b8913bfaaccdc66cc5e6fd0bb43aae50a199ebede1c73783ada96e020ebb1 0.1s done
+#18 naming to docker.io/library/driftline-app:dev 0.0s done
+#18 unpacking to docker.io/library/driftline-app:dev 0.1s done
+#18 DONE 0.9s
+
+#19 [matcher] exporting to image
+#19 exporting layers 0.0s done
+#19 exporting manifest sha256:bc1ca26f3dffb73b2f1a46a682769f47bf08846ab693f6237fb71e04d79fde4b 0.2s done
+#19 exporting config sha256:f2caf2c3dc10c4d0260ec0259399e8cfe2eae9f44350e41a5d90fa74972e2c84 0.1s done
+#19 exporting attestation manifest sha256:943ca918ba545f00583560c9978e7f810df02a93371f1cf592035617be0eb155 0.2s done
+#19 exporting manifest list sha256:3144055c3587fcc67b48e8ca7d11fecb100bf99b9ce0ce62b5373769b2b6eeef 0.1s done
+#19 naming to docker.io/library/driftline-app:dev 0.0s done
+#19 unpacking to docker.io/library/driftline-app:dev 0.1s done
+#19 DONE 0.9s
+
+#20 [migrate] resolving provenance for metadata file
+#20 DONE 0.6s
+
+#21 [sandbox] resolving provenance for metadata file
+#21 DONE 0.6s
+
+#22 [driftline] resolving provenance for metadata file
+#22 DONE 0.1s
+
+#23 [matcher] resolving provenance for metadata file
+#23 DONE 0.2s
+
+#24 [dispatcher] resolving provenance for metadata file
+#24 DONE 0.3s
+ Image driftline-app:dev Built 
+ Image driftline-app:dev Built 
+ Image driftline-sandbox:dev Built 
+ Image driftline-app:dev Built 
+ Image driftline-app:dev Built 
+ Network driftline_default Creating 
+ Network driftline_default Creating 
+ Network driftline_default Created 
+ Network driftline_default Created 
+ Container driftline-kafka-1 Creating 
+ Container driftline-postgres-1 Creating 
+ Container driftline-postgres-1 Created 
+ Container driftline-migrate-1 Creating 
+ Container driftline-kafka-1 Created 
+ Container driftline-kafka-init-1 Creating 
+ Container driftline-migrate-1 Created 
+ Container driftline-kafka-init-1 Created 
+ Container driftline-driftline-1 Creating 
+ Container driftline-driftline-1 Created 
+ Container driftline-sandbox-1 Creating 
+ Container driftline-dispatcher-1 Creating 
+ Container driftline-matcher-1 Creating 
+ Container driftline-dispatcher-1 Created 
+ Container driftline-matcher-1 Created 
+ Container driftline-sandbox-1 Created 
+ Container driftline-postgres-1 Starting 
+ Container driftline-kafka-1 Starting 
+ Container driftline-postgres-1 Started 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-kafka-1 Started 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-migrate-1 Exited 
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-driftline-1 Starting 
+ Container driftline-driftline-1 Started 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-sandbox-1 Starting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-matcher-1 Starting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-dispatcher-1 Starting 
+ Container driftline-sandbox-1 Started 
+ Container driftline-matcher-1 Started 
+ Container driftline-dispatcher-1 Started 
+waiting for the stack (sandbox up implies a healthy Driftline)...
+NAME                     IMAGE                                                                                        COMMAND                  SERVICE      CREATED              STATUS                            PORTS
+driftline-dispatcher-1   driftline-app:dev                                                                            "java -jar /app/drif…"   dispatcher   About a minute ago   Up 4 seconds (health: starting)   8080/tcp, 9091/tcp
+driftline-driftline-1    driftline-app:dev                                                                            "java -jar /app/drif…"   driftline    About a minute ago   Up 26 seconds (healthy)           127.0.0.1:8080->8080/tcp
+driftline-kafka-1        apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69   "/__cacert_entrypoin…"   kafka        About a minute ago   Up About a minute (healthy)       9092/tcp
+driftline-matcher-1      driftline-app:dev                                                                            "java -jar /app/drif…"   matcher      About a minute ago   Up 4 seconds (health: starting)   8080/tcp, 9091/tcp
+driftline-postgres-1     postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07          "docker-entrypoint.s…"   postgres     About a minute ago   Up About a minute (healthy)       5432/tcp
+driftline-sandbox-1      driftline-sandbox:dev                                                                        "/app/bin/sandbox se…"   sandbox      About a minute ago   Up 5 seconds (healthy)            127.0.0.1:8085->8085/tcp
+chaos: SIGKILL dispatcher at +6 s, down 2 s
+chaos: injected DEBITED_NO_ORDER (round 1)
+ Container driftline-postgres-1 Waiting 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-kafka-init-1 Exited 
+chaos: injected LATE_SUCCESS (round 1)
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-dispatcher-1 Starting 
+ Container driftline-dispatcher-1 Started 
+chaos: injected DUPLICATE_CAPTURE (round 1)
+chaos: SIGKILL matcher at +45 s, down 7 s
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-migrate-1 Started 
+chaos: injected SHORT_SETTLEMENT (round 1)
+ Container driftline-kafka-init-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+chaos: injected MISSING_SETTLEMENT (round 1)
+ Container driftline-kafka-init-1 Exited 
+chaos: injected ORPHAN_SETTLEMENT (round 1)
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-matcher-1 Starting 
+ Container driftline-matcher-1 Started 
+chaos: injected NORMAL (round 1)
+chaos: SIGKILL dispatcher at +125 s, down 4 s
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+chaos: injected DEBITED_NO_ORDER (round 2)
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+chaos: injected LATE_SUCCESS (round 2)
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-dispatcher-1 Starting 
+chaos: injected DUPLICATE_CAPTURE (round 2)
+ Container driftline-dispatcher-1 Started 
+chaos: SIGKILL matcher at +172 s, down 6 s
+chaos: injected SHORT_SETTLEMENT (round 2)
+ Container driftline-postgres-1 Waiting 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+chaos: injected MISSING_SETTLEMENT (round 2)
+ Container driftline-kafka-init-1 Exited 
+chaos: injected ORPHAN_SETTLEMENT (round 2)
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-matcher-1 Starting 
+ Container driftline-matcher-1 Started 
+chaos: SIGKILL dispatcher at +221 s, down 2 s
+chaos: injected NORMAL (round 2)
+ Container driftline-postgres-1 Waiting 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-dispatcher-1 Starting 
+ Container driftline-dispatcher-1 Started 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-driftline-1 Healthy 
+chaos: traffic done; killed the matcher 2 times and the dispatcher 3 times
+ Container driftline-verify-run-fa4e215bfbdb Creating 
+ Container driftline-verify-run-fa4e215bfbdb Created 
+Picked up JAVA_TOOL_OPTIONS: -Xmx128m -XX:+UseSerialGC -Xss512k
+2026-11-17T01:53:57.624Z  INFO 1 --- [driftline] [           main] i.g.v.d.app.DriftlineApplication         : Starting DriftlineApplication v0.1.0-SNAPSHOT using Java 21.0.12.1 with PID 1 (/app/driftline.jar started by driftline in /app)
+2026-11-17T01:53:57.652Z  INFO 1 --- [driftline] [           main] i.g.v.d.app.DriftlineApplication         : The following 1 profile is active: "verify"
+2026-11-17T01:54:03.601Z  INFO 1 --- [driftline] [           main] i.g.v.d.app.DriftlineApplication         : Started DriftlineApplication in 10.281 seconds (process running for 16.442)
+2026-11-17T01:54:04.413Z  INFO 1 --- [driftline] [           main] com.zaxxer.hikari.HikariDataSource       : driftline - Starting...
+2026-11-17T01:54:05.292Z  INFO 1 --- [driftline] [           main] com.zaxxer.hikari.pool.HikariPool        : driftline - Added connection org.postgresql.jdbc.PgConnection@64b0d1fa
+2026-11-17T01:54:05.335Z  INFO 1 --- [driftline] [           main] com.zaxxer.hikari.HikariDataSource       : driftline - Start completed.
+verify: PASS ledger balanced                          0
+verify: PASS one refund command per payment           0
+verify: PASS transitions legal                        0
+verify: PASS every break reviewed                     0
+verify: PASS deadlines met                            0
+verify: PASS outbox drained                           0
+verify: PASS no payment refunded twice (gateway)      0
+verify: PASS refunds booked = refunds executed        0
+verify: CLEAN
+2026-11-17T01:54:06.386Z  INFO 1 --- [driftline] [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : driftline - Shutdown initiated...
+2026-11-17T01:54:06.406Z  INFO 1 --- [driftline] [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : driftline - Shutdown completed.
+chaos: sandbox {"worlds":14,"refunds":10,"payments_refunded":10,"payments_refunded_more_than_once":0,"escalations":38}
+chaos: seed 335667940, matcher killed 2 times, dispatcher 3 times, 10 refunds, verify exit status 0

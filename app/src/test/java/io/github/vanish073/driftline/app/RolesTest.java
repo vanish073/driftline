@@ -9,17 +9,29 @@ import org.junit.jupiter.api.Test;
 class RolesTest {
 
     @Test
-    void allRunsEverythingThatExistsInOneJvm() {
-        assertThat(Roles.profiles("all")).containsExactly("ingest", "matcher", "settlement-worker");
+    void allRunsEveryRoleInOneJvm() {
+        assertThat(Roles.profiles("all"))
+                .containsExactly("ingest", "matcher", "settlement-worker", "resolver", "dispatcher");
         assertThat(Roles.profiles(" Matcher ")).containsExactly("matcher");
         assertThat(Roles.profiles("settlement-worker")).containsExactly("settlement-worker");
+        assertThat(Roles.profiles("resolver")).containsExactly("resolver");
+        assertThat(Roles.profiles("dispatcher")).containsExactly("dispatcher");
         assertThat(Roles.profiles("migrate")).containsExactly("migrate");
     }
 
     @Test
-    void rolesThatDoNotExistYetAreRefusedRatherThanSilentlyRunningNothing() {
-        assertThatThrownBy(() -> Roles.profiles("resolver")).hasMessageContaining("Shift 8");
-        assertThatThrownBy(() -> Roles.profiles("dispatcher")).hasMessageContaining("Shift 8");
-        assertThatThrownBy(() -> Roles.profiles("everything")).hasMessageContaining("must be one of");
+    void aListRunsJustThoseRolesAndTheOneShotsRunAlone() {
+        assertThat(Roles.profiles("ingest, settlement-worker,resolver"))
+                .containsExactly("ingest", "settlement-worker", "resolver");
+        assertThat(Roles.profiles("matcher,matcher")).containsExactly("matcher");
+        assertThat(Roles.profiles("verify")).containsExactly("verify");
+        assertThatThrownBy(() -> Roles.profiles("verify,matcher")).hasMessageContaining("must be");
+        assertThatThrownBy(() -> Roles.profiles("migrate,ingest")).hasMessageContaining("must be");
+    }
+
+    @Test
+    void anUnknownRoleIsRefusedRatherThanSilentlyRunningNothing() {
+        assertThatThrownBy(() -> Roles.profiles("everything")).hasMessageContaining("must be");
+        assertThatThrownBy(() -> Roles.profiles("ingest,")).hasMessageContaining("must be");
     }
 }

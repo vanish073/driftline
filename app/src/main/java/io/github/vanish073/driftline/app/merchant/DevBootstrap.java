@@ -26,14 +26,15 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <pre>
  * {"format":"driftline-bootstrap-v1",
- *  "ops_token":"…",
+ *  "ops_token":"…", "service_token":"…",
  *  "merchants":{"m_e2e_01":{"partition":1,"fee_bps":200,"gst_bps":1800,"cycle_days":1,
  *                           "first_settlement_date":"2026-11-12","webhook_secret":"…","token":"…"}}}
  * </pre>
  *
  * Merchants are an object keyed by merchant id (no arrays), so the sandbox reads the same file with the strict parser
  * of {@code wire}. A merchant token gets {@code events:write}, {@code settlement:write} and {@code breaks:read} for its merchant; the
- * ops token gets {@code breaks:read} across merchants.
+ * ops token gets {@code breaks:read} and {@code breaks:resolve} across merchants; the service token, which the dispatcher
+ * sends to {@code /internal/v1/observations}, gets {@code observations:write} only.
  */
 public final class DevBootstrap {
 
@@ -71,7 +72,9 @@ public final class DevBootstrap {
                     List.of("events:write", "settlement:write", "breaks:read"), now, Optional.empty()));
         }
         directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "ops_token")), Optional.empty(),
-                List.of("breaks:read"), now, Optional.empty()));
+                List.of("breaks:read", "breaks:resolve"), now, Optional.empty()));
+        directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "service_token")), Optional.empty(),
+                List.of("observations:write"), now, Optional.empty()));
         LOG.info("bootstrap file applied: {} merchants onboarded now, {} listed", onboarded, root.path("merchants").size());
     }
 

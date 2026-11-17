@@ -64,6 +64,8 @@ public final class MatcherInstance {
     private final Coordinator coordinator;
     private final FaultInjector faults;
     private final Consumer<String> anomalies;
+    /** Runs after every committed batch or tick: new breaks, woken breaks or probes may need the resolver or dispatcher. */
+    private Runnable afterCommit = () -> { };
     private final Matcher matcher;
     private final SimClock clock;
     private final TreeMap<Integer, PartitionConsumer> consumers = new TreeMap<>();
@@ -94,6 +96,10 @@ public final class MatcherInstance {
 
     public String name() {
         return name;
+    }
+
+    public void afterCommit(Runnable hook) {
+        this.afterCommit = hook;
     }
 
     /** The group member id: a new one after every restart or rejoin, as Kafka issues. */
@@ -354,6 +360,7 @@ public final class MatcherInstance {
                 BatchOutcome outcome = store.transact(member + "-tick-p" + partition,
                         tx -> matcher.tick(partition, epoch, clock.now(), tx));
                 matcher.committed(outcome);
+                afterCommit.run();
                 if (outcome.timersFired() > 0 || !outcome.raised().isEmpty()) {
                     trace.line(scheduler.now(), name, "p" + partition + " tick timers=" + outcome.timersFired()
                             + describe(outcome));
@@ -421,6 +428,7 @@ public final class MatcherInstance {
                 });
                 position = records.get(records.size() - 1).offset() + 1;
                 matcher.committed(outcome);
+                afterCommit.run();
                 trace.line(scheduler.now(), name, "p" + partition + " epoch " + epoch + " batch @" + records.get(0).offset()
                         + " applied=" + outcome.applied() + " skipped=" + outcome.alreadyProcessed()
                         + " dup=" + outcome.duplicates() + " reused=" + outcome.keyReused()

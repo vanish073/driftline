@@ -19,15 +19,18 @@ import java.util.Objects;
  *                         (§6.4); equal to {@code graceDays}, so every file a payment could be settled in is complete
  *                         when its SETTLEMENT_DUE fires
  * @param solveBudgetOps   the batch solver's budget in operations, never time (D7); also its memory bound in bytes
+ * @param probeAfter       how long after an order's first event, in event time, the pending-order probe asks the
+ *                         gateway about it if it is still not paid with a known success (§9.2, WEBHOOK_LOST)
+ * @param maxProbes        how many probes such an order gets, {@code probeAfter} apart
  */
 public record MatcherConfig(Duration boundGateway, Duration boundMerchant, Duration idleTimeout, Duration skewAllowance,
                             Duration orderGrace, int graceDays, Duration expectedArrival, Duration stallTimeout,
-                            int batchLookbackDays, long solveBudgetOps) {
+                            int batchLookbackDays, long solveBudgetOps, Duration probeAfter, int maxProbes) {
 
     /** The values DESIGN §5.5 names, plus bounds sized for webhook retry and clock-skew allowances. */
     public static final MatcherConfig DEFAULT = new MatcherConfig(Duration.ofMinutes(2), Duration.ofMinutes(2),
             Duration.ofMinutes(1), Duration.ofMinutes(2), Duration.ofMinutes(10), 1, Duration.ofHours(10),
-            Duration.ofHours(12), 1, 20_000_000L);
+            Duration.ofHours(12), 1, 20_000_000L, Duration.ofMinutes(30), 3);
 
     public MatcherConfig {
         for (Duration d : new Duration[] {boundGateway, boundMerchant, idleTimeout, skewAllowance, orderGrace,
@@ -45,6 +48,10 @@ public record MatcherConfig(Duration boundGateway, Duration boundMerchant, Durat
         }
         if (solveBudgetOps < 0) {
             throw new IllegalArgumentException("solveBudgetOps must not be negative");
+        }
+        Objects.requireNonNull(probeAfter, "probeAfter");
+        if (probeAfter.isNegative() || probeAfter.isZero() || maxProbes < 0) {
+            throw new IllegalArgumentException("probeAfter must be positive and maxProbes not negative");
         }
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sun.net.httpserver.HttpServer;
 import io.github.vanish073.driftline.core.id.MerchantId;
+import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.core.port.CallTarget;
 import io.github.vanish073.driftline.core.port.OutboundCall;
@@ -27,8 +28,6 @@ import org.junit.jupiter.api.Test;
 /** The production Network: non-blocking send, outcome in the inbox, the idempotency key on the wire (§3.2). */
 class HttpNetworkTest {
 
-    record Ping(String text) implements CallRequest {
-    }
 
     private HttpServer server;
     private final AtomicReference<String> seenKey = new AtomicReference<>();
@@ -65,9 +64,10 @@ class HttpNetworkTest {
 
     @Test
     void theOutcomeArrivesInTheInboxWithTheIdempotencyKeySent() throws InterruptedException {
-        HttpNetwork network = network(Map.of(Ping.class, (c, base) -> HttpRequest.newBuilder(base.resolve("/ping"))
-                .POST(HttpRequest.BodyPublishers.ofString(((Ping) c.request()).text()))));
-        network.send(call(new Ping("hello")));
+        HttpNetwork network = network(Map.of(CallRequest.StatusQuery.class, (c, base) -> HttpRequest.newBuilder(
+                base.resolve("/ping")).POST(HttpRequest.BodyPublishers.ofString(
+                        ((CallRequest.StatusQuery) c.request()).paymentId().value()))));
+        network.send(call(new CallRequest.StatusQuery(PaymentId.of("hello"))));
         HttpNetwork.CallOutcome outcome = inbox.poll(10, TimeUnit.SECONDS);
         assertThat(outcome).isNotNull();
         assertThat(outcome.status()).contains(201);
@@ -78,18 +78,19 @@ class HttpNetworkTest {
 
     @Test
     void aCallWithNoCodecComesBackAsAnErrorAtOnceAndIsNeverDropped() throws InterruptedException {
-        network(Map.of()).send(call(new Ping("x")));
+        network(Map.of()).send(call(new CallRequest.StatusQuery(PaymentId.of("x"))));
         HttpNetwork.CallOutcome outcome = inbox.poll(1, TimeUnit.SECONDS);
         assertThat(outcome).isNotNull();
         assertThat(outcome.status()).isEmpty();
-        assertThat(outcome.error()).contains("no codec for Ping");
+        assertThat(outcome.error()).contains("no codec for StatusQuery");
     }
 
     @Test
     void aTransportFailureIsAnOutcomeToo() throws InterruptedException {
-        HttpNetwork network = network(Map.of(Ping.class, (c, base) -> HttpRequest.newBuilder(base.resolve("/ping"))));
+        HttpNetwork network = network(Map.of(CallRequest.StatusQuery.class,
+                (c, base) -> HttpRequest.newBuilder(base.resolve("/ping"))));
         server.stop(0);
-        network.send(call(new Ping("x")));
+        network.send(call(new CallRequest.StatusQuery(PaymentId.of("x"))));
         HttpNetwork.CallOutcome outcome = inbox.poll(10, TimeUnit.SECONDS);
         assertThat(outcome).isNotNull();
         assertThat(outcome.status()).isEmpty();

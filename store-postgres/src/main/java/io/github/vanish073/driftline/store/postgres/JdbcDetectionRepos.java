@@ -4,6 +4,7 @@ import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
 import io.github.vanish073.driftline.core.breaks.BreakTransition;
 import io.github.vanish073.driftline.core.breaks.BreakType;
+import io.github.vanish073.driftline.core.breaks.DeadlineRule;
 import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.event.Source;
 import io.github.vanish073.driftline.core.id.MerchantId;
@@ -443,6 +444,113 @@ final class JdbcDetectionRepos {
                 }
             } catch (SQLException e) {
                 throw SqlErrors.translate("transition " + breakId, e);
+            }
+        }
+
+        // ---- the resolver's plan (V7) ----
+
+        private static final String PLAN = """
+                SELECT rule_id, deadline_at, escalate_by, review_at, action, resolved_at, compensation_paise
+                  FROM breaks WHERE merchant_id = ? AND break_id = ?
+                """;
+
+        @Override
+        public void savePlan(MerchantId merchantId, String breakId, Plan plan) {
+            Optional<Plan> existing = planOf(merchantId, breakId);
+            if (existing.isEmpty() && byId(merchantId, breakId, false).isEmpty()) {
+                throw new IllegalArgumentException("no break " + breakId);
+            }
+            if (existing.flatMap(Plan::action).isPresent() && !existing.get().action().equals(plan.action())) {
+                throw new IllegalStateException("break " + breakId + " already has action "
+                        + existing.get().action().get());
+            }
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    UPDATE breaks SET rule_id = ?, deadline_at = ?, escalate_by = ?, review_at = ?, action = ?,
+                                      resolved_at = ?, compensation_paise = ?
+                     WHERE merchant_id = ? AND break_id = ?
+                    """)) {
+                ps.setString(1, plan.rule().name());
+                ps.setObject(2, ts(plan.deadlineAt()));
+                ps.setObject(3, ts(plan.escalateBy()));
+                ps.setObject(4, ts(plan.reviewAt()));
+                setOptionalText(ps, 5, plan.action());
+                ps.setObject(6, plan.resolvedAt().map(JdbcDetectionRepos::ts).orElse(null));
+                ps.setLong(7, plan.compensation().paise());
+                ps.setString(8, merchantId.value());
+                ps.setString(9, breakId);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw SqlErrors.translate("save the plan of " + breakId, e);
+            }
+        }
+
+        @Override
+        public Optional<Plan> planOf(MerchantId merchantId, String breakId) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(PLAN)) {
+                ps.setString(1, merchantId.value());
+                ps.setString(2, breakId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next() || rs.getString("rule_id") == null) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(new Plan(DeadlineRule.valueOf(rs.getString("rule_id")),
+                            instant(rs, "deadline_at"), instant(rs, "escalate_by"), instant(rs, "review_at"),
+                            Optional.ofNullable(rs.getString("action")), optionalInstant(rs, "resolved_at"),
+                            Money.ofPaise(rs.getLong("compensation_paise"))));
+                }
+            } catch (SQLException e) {
+                throw SqlErrors.translate("the plan of " + breakId, e);
+            }
+        }
+
+        @Override
+        public List<Break> dueForReview(Instant now, int limit) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(SELECT + """
+                     WHERE state IN ('DETECTED', 'AWAITING_EVIDENCE', 'ACTION_PENDING')
+                       AND (review_at IS NULL OR review_at <= ?)
+                     ORDER BY review_at NULLS FIRST, break_id COLLATE "C"
+                     LIMIT ? FOR UPDATE SKIP LOCKED
+                    """)) {
+                ps.setObject(1, ts(now));
+                ps.setInt(2, limit);
+                List<Break> out = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(read(rs));
+                    }
+                }
+                return List.copyOf(out);
+            } catch (SQLException e) {
+                throw SqlErrors.translate("breaks due for review", e);
+            }
+        }
+
+        @Override
+        public Optional<Instant> nextReviewAt() {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    SELECT min(coalesce(review_at, detected_at)) AS next FROM breaks
+                     WHERE state IN ('DETECTED', 'AWAITING_EVIDENCE', 'ACTION_PENDING')
+                    """);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return optionalInstant(rs, "next");
+            } catch (SQLException e) {
+                throw SqlErrors.translate("next review", e);
+            }
+        }
+
+        @Override
+        public void wake(MerchantId merchantId, String breakId, Instant at) {
+            try (PreparedStatement ps = tx.connection().prepareStatement("""
+                    UPDATE breaks SET review_at = ? WHERE merchant_id = ? AND break_id = ? AND review_at > ?
+                    """)) {
+                ps.setObject(1, ts(at));
+                ps.setString(2, merchantId.value());
+                ps.setString(3, breakId);
+                ps.setObject(4, ts(at));
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw SqlErrors.translate("wake " + breakId, e);
             }
         }
 

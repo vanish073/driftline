@@ -1,8 +1,8 @@
 package io.github.vanish073.driftline.sim.fault;
 
 /**
- * The faults the injector can switch on (DESIGN §11.5). The rest of the catalogue (NET_PARTITION, CALL_AMBIGUOUS,
- * WEBHOOK_LOST and STATUS_STALE) arrives with the dispatcher it targets (Shift 8).
+ * The faults the injector can switch on (DESIGN §11.5). CALL_AMBIGUOUS, WEBHOOK_LOST and STATUS_STALE arrived with the
+ * dispatcher they target (Shift 8); NET_PARTITION is not modelled (D62).
  *
  * <p>A <em>rate</em> fault is decided per message or per request, with a probability in permille. An <em>event</em>
  * fault is scheduled at random times of the RUN phase, a few times per traffic day. The settlement-file faults are
@@ -34,7 +34,13 @@ public enum Fault {
     /** A settlement file is uploaded a second time, byte for byte (rate, per file). */
     FILE_DUP(true),
     /** After a file was accepted, the bank uploads a different file for the same date (rate, per file). */
-    FILE_CONFLICT(true);
+    FILE_CONFLICT(true),
+    /** The gateway applies a refund, then the response is lost (rate, per refund call). */
+    CALL_AMBIGUOUS(true),
+    /** The gateway gives up on a webhook: only the pending-order probe can recover the fact (rate, per webhook). */
+    WEBHOOK_LOST(true),
+    /** The gateway's status API answers with the state of 1 to 10 minutes ago (rate, per status query). */
+    STATUS_STALE(true);
 
     private final boolean rate;
 

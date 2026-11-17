@@ -77,4 +77,18 @@ public final class Scheduler {
         next.action().run();
         return true;
     }
+
+    /**
+     * Runs every item due by {@code limitMillis}, then moves the clock to it even if nothing was queued there. The
+     * simulator never needs this (time skips to the next item); the sandbox does, to keep a world's clock on real time
+     * between the calls Driftline makes to it (D65).
+     */
+    public void advanceTo(long limitMillis) {
+        while (step(limitMillis)) {
+            // run what is due
+        }
+        if (limitMillis > now) {
+            now = limitMillis;
+        }
+    }
 }

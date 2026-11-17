@@ -2,6 +2,7 @@ package io.github.vanish073.driftline.sim.runner;
 
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.Canary;
+import io.github.vanish073.driftline.core.hooks.CrashPoint;
 import io.github.vanish073.driftline.sim.Profile;
 import io.github.vanish073.driftline.sim.RunResult;
 import io.github.vanish073.driftline.sim.Simulation;
@@ -12,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@code ./gradlew :sim:run --args="--seed 8812 --profile pr [--canary C09] [--trace]"} (DESIGN §11.12). The driver sits outside
@@ -31,12 +33,14 @@ public final class SimMain {
         Profile profile = Profile.CALM;
         boolean printTrace = false;
         List<Canary> canaries = new ArrayList<>();
+        Optional<CrashPoint> crash = Optional.empty();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--seed" -> seed = Long.parseLong(args[++i]);
                 case "--profile" -> profile = Profile.fromId(args[++i]);
                 case "--trace" -> printTrace = true;
                 case "--canary" -> canaries.add(Canary.fromCode(args[++i]));
+                case "--crash" -> crash = Optional.of(CrashPoint.valueOf(args[++i]));
                 default -> {
                     System.err.println("unknown argument " + args[i]);
                     System.err.println(USAGE);
@@ -49,7 +53,7 @@ public final class SimMain {
             System.exit(2);
         }
         Canaries planted = new Canaries(canaries);
-        RunResult result = Simulation.run(seed, profile, planted, printTrace);
+        RunResult result = Simulation.run(seed, profile, planted, printTrace, crash);
         if (printTrace) {
             result.trace().forEach(System.out::println);
         }
@@ -68,7 +72,7 @@ public final class SimMain {
         System.out.println("VIOLATION " + v.invariant() + " at " + v.atMillis() + " ms: " + v.detail());
         System.out.println("--- last " + result.traceTail().size() + " trace lines ---");
         result.traceTail().forEach(System.out::println);
-        RunResult full = Simulation.run(seed, profile, planted, true);
+        RunResult full = Simulation.run(seed, profile, planted, true, crash);
         Path file = Path.of("build", "sim-failures", "seed-" + seed + ".trace");
         Files.createDirectories(file.getParent());
         Files.write(file, full.trace(), StandardCharsets.UTF_8);
