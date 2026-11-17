@@ -283,6 +283,7 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 - The OpenTelemetry agent in the image, manual spans with links, `traceparent` in Kafka headers; the metrics in §13; JSON logs with trace ids.
 - `deploy/grafana` (a provisioned dashboard), `deploy/prometheus` (scrape config and alert rules), and the Compose `obs` profile.
 - Security: AES-GCM field encryption with a blind index and `kid` rotation; the masking converter plus a test that scans logs for PII; the audit hash chain plus `verify-audit`; webhook secret rotation; the CSV export with injection-safe escaping.
+- Manual ledger adjustments (`MANUAL_ADJUSTMENT`, DESIGN §7, D8): an audited ops API that posts a balanced correcting entry with its audit row; designed from the start but scheduled in no shift until the end of Shift 8 (D73 (1)).
 - CI `security` job: dependency-review, OSV-Scanner, gitleaks, Trivy (nightly); `dependabot.yml`.
 - `docs/THREAT_MODEL.md`.
 - `deploy/k8s` with kustomize (base plus the `kind` overlay; §15.3); `scripts/kind-smoke.sh`; `nightly.yml`.
@@ -306,7 +307,7 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 - The hot-account benchmark: `ROW_LOCK` vs `APPEND_SNAPSHOT` × concurrency {1, 4, 16, 64}, giving `docs/results/hot-accounts.csv` and a chart.
 - The final simulation campaign (≥ 1,000,000 seeds across nightly runs and local runs), the canary table, the cumulative seed count, and the per-type auto-resolution shares.
 - `scripts/render-results` fills in the README tables.
-- **README:** the problem; the architecture diagram; **Guarantees and limits** (copied from DESIGN §2); the numbers; simulation and canaries; bug log highlights; security; who would pay (with interview insights); prior art; how to run.
+- **README:** the problem; the architecture diagram; **Guarantees and limits** (copied from DESIGN §2, with the known weaknesses of D73 and D70's refund rule in place of §2.1's out-of-date row); the numbers; simulation and canaries; bug log highlights; security; who would pay (with interview insights); prior art; how to run.
 - Stretch, only if time remains: seed shrinking.
 - A final pass over the traceability matrix below: every row needs evidence. Tag `v1.0`.
 
