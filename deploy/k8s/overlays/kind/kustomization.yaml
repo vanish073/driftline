@@ -1,0 +1,70 @@
+# The `kind` overlay (DESIGN §15.3, D80): the base plus dev-only PostgreSQL and Kafka, the sandbox, the verify Job and
+# their NetworkPolicies, in namespace `driftline`, with the images loaded into kind. The Secrets are generated from
+# files that scripts/kind-smoke.sh writes into .dev/ (git-ignored) with fresh random values; nothing secret is
+# committed. Build it with `kubectl kustomize --load-restrictor LoadRestrictionsNone`, since PostgreSQL's init script
+# is shared with Compose.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: driftline
+resources:
+  - namespace.yaml
+  - ../../base
+  - network-policies.yaml
+  - postgres.yaml
+  - kafka.yaml
+  - sandbox.yaml
+  - verify-job.yaml
+images:
+  - name: driftline-app
+    newTag: dev
+  - name: driftline-sandbox
+    newTag: dev
+generatorOptions:
+  labels:
+    driftline.io/stage: infra
+secretGenerator:
+  - name: driftline-secrets
+    envs: [.dev/driftline-secrets.env]
+  - name: driftline-migrator
+    envs: [.dev/driftline-migrator.env]
+  - name: driftline-infra
+    envs: [.dev/driftline-infra.env]
+  - name: driftline-bootstrap
+    files: [.dev/bootstrap.json]
+configMapGenerator:
+  - name: postgres-init
+    files: [01-roles.sh=../../../compose/postgres-init.sh]
+  - name: driftline-config
+    behavior: merge
+    literals:
+      - DRIFTLINE_DISPATCHER_GATEWAY_URL=http://sandbox:8085/gateway
+      - DRIFTLINE_DISPATCHER_MERCHANT_URL=http://sandbox:8085/merchant
+      - DRIFTLINE_DISPATCHER_OPS_URL=http://sandbox:8085/ops
+patches:
+  - path: bootstrap-patch.yaml
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=driftline
+  # The API and the sandbox as NodePorts, which cluster.yaml publishes on 127.0.0.1 for the e2e suite.
+  - target: {kind: Service, name: ingest}
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080
+  - target: {kind: Service, name: sandbox}
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30085
+  # One ingest replica is enough for a smoke test on a small runner.
+  - target: {kind: HorizontalPodAutoscaler, name: ingest}
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1

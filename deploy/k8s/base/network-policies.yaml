@@ -1,0 +1,53 @@
+# NetworkPolicies (§14 "Extras", §15.3, D80). Nothing may connect to a pod in the namespace unless a policy allows it:
+# the public API (ingest, port 8080) from anywhere, and the management port (9091) only from namespaces labelled
+# driftline.io/monitoring=true (Prometheus). The kind overlay adds its PostgreSQL, Kafka and sandbox. Egress is not
+# restricted: the dispatcher calls the gateway, the merchant and the ops sink wherever they are.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingest-api
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: driftline
+      app.kubernetes.io/component: ingest
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: management-from-monitoring
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: driftline
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              driftline.io/monitoring: "true"
+      ports:
+        - port: 9091
+          protocol: TCP

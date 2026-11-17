@@ -1,0 +1,18 @@
+# Every role reads the dev bootstrap file (merchants, secrets, tokens), as in Compose; applying it is idempotent, so
+# roles that start together are safe (DevBootstrap inserts with ON CONFLICT DO NOTHING).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: any
+spec:
+  template:
+    spec:
+      containers:
+        - name: driftline
+          env:
+            - {name: DRIFTLINE_BOOTSTRAP_FILE, value: /bootstrap/bootstrap.json}
+          volumeMounts:
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: bootstrap
+          secret: {secretName: driftline-bootstrap}

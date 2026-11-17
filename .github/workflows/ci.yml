@@ -268,6 +268,18 @@ jobs:
       - name: Observability config
         run: scripts/check-obs-config.sh
 
+  # DESIGN §14, §15.3, D80: the Kubernetes base and kind overlay render and validate (kubeconform, Kubernetes 1.37),
+  # and every Driftline pod is non-root, read-only, unprivileged, limited and probed, behind a default-deny policy.
+  k8s-manifests:
+    name: k8s-manifests (kustomize, kubeconform, hardening)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Kubernetes manifests
+        run: scripts/check-k8s.sh
+
   # DESIGN §16, §2.2: no claim-bearing file may claim what Driftline does not guarantee.
   claims-lint:
     name: claims-lint

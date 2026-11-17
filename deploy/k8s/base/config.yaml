@@ -1,0 +1,27 @@
+# Settings every role reads (§15.3). Nothing secret: passwords, keys and tokens come from the Secrets in
+# secrets.example.yaml. An overlay replaces the addresses and the dispatcher's targets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: driftline-config
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+data:
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+  SPRING_DATASOURCE_USERNAME: driftline
+  DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  # The key ids whose keys the Secret holds (DRIFTLINE_SECRETS_KEYS_<KID>, DRIFTLINE_PII_KEYS_<KID>).
+  DRIFTLINE_SECRETS_ACTIVE_KID: k1
+  DRIFTLINE_PII_ACTIVE_KID: p1
+  # The dispatcher's targets (§9.2); an overlay must set real ones. The observations go back to ingest.
+  DRIFTLINE_DISPATCHER_GATEWAY_URL: https://gateway.example.invalid
+  DRIFTLINE_DISPATCHER_MERCHANT_URL: https://merchant.example.invalid
+  DRIFTLINE_DISPATCHER_OPS_URL: https://ops.example.invalid
+  DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://ingest:8080
+  # The production heap cap (§15.1); /tmp is the only writable path.
+  JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k -Djava.io.tmpdir=/tmp"
+  # The OpenTelemetry Java agent (D78): off unless an overlay turns it on and points it at a collector.
+  OTEL_JAVAAGENT_ENABLED: "false"
+  OTEL_INSTRUMENTATION_KAFKA_ENABLED: "false"
+  OTEL_INSTRUMENTATION_JDBC_ENABLED: "false"
