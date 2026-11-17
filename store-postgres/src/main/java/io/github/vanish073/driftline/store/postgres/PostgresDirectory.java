@@ -4,6 +4,7 @@ import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.id.IdRules;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
+import io.github.vanish073.driftline.core.port.AuditRepo;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import java.sql.Array;
 import java.sql.Connection;
@@ -19,6 +20,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 import javax.sql.DataSource;
 
 /**
@@ -34,7 +37,7 @@ public final class PostgresDirectory {
 
     /** The scopes a token may carry (§10.1). */
     public static final List<String> SCOPES = List.of("events:write", "settlement:write", "observations:write",
-            "breaks:read", "breaks:resolve");
+            "breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write");
 
     /** One webhook secret as stored: {@code secretEnc} is ciphertext; the caller encrypts and decrypts (D48). */
     public record WebhookSecret(MerchantId merchantId, String kid, byte[] secretEnc, Instant activeFrom,
@@ -217,6 +220,85 @@ public final class PostgresDirectory {
                 ps.setObject(5, secret.activeTo().map(PostgresDirectory::ts).orElse(null));
                 return ps.executeUpdate() == 1;
             }
+        });
+    }
+
+    /** What a rotation did (D76). */
+    public enum Rotation {
+        /** The new secret is active now; the ones it replaces stay valid until the overlap ends. */
+        ROTATED,
+        /** Two secrets are already active: a rotation is in progress, and a third would exceed §10.2's limit. */
+        IN_PROGRESS,
+        /** The merchant already has (or had) a secret with this key id. */
+        KID_TAKEN,
+        UNKNOWN_MERCHANT
+    }
+
+    /**
+     * Rotates a merchant's webhook secret (§10.2, §14, D76) in one transaction: under a per-merchant lock, every secret
+     * active at {@code now} is given {@code retireAt} as the end of its window (two are accepted until then), the new
+     * secret becomes active at {@code now}, and an audit row ({@code WEBHOOK_SECRET_ROTATE}; never the secret) is
+     * appended with the store's own hash-chained code, so the change and its record commit together. The new ciphertext
+     * is the caller's (D48), already encrypted.
+     *
+     * @param retireAt after {@code now}: the overlap in which the gateway may still sign with the old secret
+     */
+    public Rotation rotateWebhookSecret(MerchantId merchantId, String kid, byte[] secretEnc, Instant now,
+                                        Instant retireAt, String actor) {
+        IdRules.requireToken("kid", kid);
+        if (!retireAt.isAfter(now)) {
+            throw new IllegalArgumentException("the old secret must stay valid for a while after the rotation");
+        }
+        return inTransaction("rotate webhook secret " + merchantId, c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_xact_lock(hashtext(?))")) {
+                ps.setString(1, "driftline_webhook_secrets/" + merchantId.value());
+                ps.execute();
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM merchants WHERE merchant_id = ?")) {
+                ps.setString(1, merchantId.value());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Rotation.UNKNOWN_MERCHANT;
+                    }
+                }
+            }
+            OffsetDateTime at = ts(now);
+            List<WebhookSecret> active = secrets(c, "WHERE merchant_id = ? AND active_from <= ? AND (active_to IS NULL "
+                    + "OR active_to > ?)", merchantId.value(), at, at);
+            if (active.size() >= 2) {
+                return Rotation.IN_PROGRESS;
+            }
+            if (!secrets(c, "WHERE merchant_id = ? AND kid = ?", merchantId.value(), kid).isEmpty()) {
+                return Rotation.KID_TAKEN;
+            }
+            try (PreparedStatement ps = c.prepareStatement("""
+                    UPDATE merchant_webhook_secrets SET active_to = ?
+                     WHERE merchant_id = ? AND active_from <= ? AND (active_to IS NULL OR active_to > ?)
+                    """)) {
+                ps.setObject(1, ts(retireAt));
+                ps.setString(2, merchantId.value());
+                ps.setObject(3, at);
+                ps.setObject(4, ts(retireAt));
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("""
+                    INSERT INTO merchant_webhook_secrets (merchant_id, kid, secret_enc, active_from, active_to)
+                    VALUES (?, ?, ?, ?, NULL)
+                    """)) {
+                ps.setString(1, merchantId.value());
+                ps.setString(2, kid);
+                ps.setBytes(3, secretEnc.clone());
+                ps.setObject(4, at);
+                ps.executeUpdate();
+            }
+            TreeMap<String, String> details = new TreeMap<>();
+            details.put("merchant_id", merchantId.value());
+            details.put("new_kid", kid);
+            details.put("retired_kids", active.stream().map(WebhookSecret::kid).collect(Collectors.joining(",")));
+            details.put("retire_at", retireAt.toString());
+            new JdbcResolverRepos.Audit(new JdbcTx(c, BalanceStrategy.APPEND_SNAPSHOT)).append(AuditRepo.Entry.of(now,
+                    actor, "WEBHOOK_SECRET_ROTATE", merchantId.value(), details));
+            return Rotation.ROTATED;
         });
     }
 

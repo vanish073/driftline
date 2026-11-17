@@ -4,6 +4,7 @@ import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
+import io.github.vanish073.driftline.app.merchant.SecretRefresher;
 import io.github.vanish073.driftline.app.port.SystemClock;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.CrashPoints;
@@ -76,6 +77,13 @@ public class CoreConfiguration {
     @Bean
     SecretCipher secretCipher(DriftlineProperties properties) {
         return new SecretCipher(properties.secrets().activeKid(), properties.secrets().keys());
+    }
+
+    /** Reloads the active webhook secrets while running (D76). */
+    @Bean
+    SecretRefresher secretRefresher(MerchantRegistry registry, PostgresDirectory directory, SecretCipher cipher,
+                                    Clock clock, DriftlineProperties properties) {
+        return new SecretRefresher(registry, directory, cipher, clock, properties.secrets().refreshInterval());
     }
 
     /** Applies the dev bootstrap file first, if one is configured (D49), then loads every merchant. */

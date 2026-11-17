@@ -1,6 +1,9 @@
 package io.github.vanish073.driftline.app.verify;
 
+import io.github.vanish073.driftline.core.audit.AuditChain;
 import io.github.vanish073.driftline.core.breaks.BreakLifecycle;
+import io.github.vanish073.driftline.store.postgres.BalanceStrategy;
+import io.github.vanish073.driftline.store.postgres.PostgresStore;
 import io.github.vanish073.driftline.wire.json.JsonObject;
 import io.github.vanish073.driftline.wire.json.StrictJson;
 import java.io.IOException;
@@ -35,6 +38,7 @@ import javax.sql.DataSource;
  *   <li><b>transitions legal</b>: every recorded break transition is in the lifecycle table (§8.1, D60).</li>
  *   <li><b>every break reviewed</b>: no break left DETECTED and unplanned 10 minutes after it was detected.</li>
  *   <li><b>deadlines met</b>: no break still unhandled an hour after its escalate_by (INV-DEADLINE, D63).</li>
+ *   <li><b>audit chain intact</b>: {@code verify-audit}'s walk of the hash chain (§7.6, {@link AuditChain}).</li>
  *   <li><b>outbox drained</b>: no command left unclaimed 2 minutes after it was due (the dispatcher polls every
  *       second; a retry waiting out its backoff is not yet due).</li>
  *   <li><b>refunds once, and booked</b> (with the sandbox): no payment refunded more than once by the gateway
@@ -104,9 +108,11 @@ public final class Verify {
             for (Map.Entry<String, String> e : sql.entrySet()) {
                 out.add(new Check(e.getKey(), count(c, e.getValue())));
             }
+            out.add(new Check("audit chain intact", auditChain(dataSource).intact() ? 0 : 1));
             if (sandbox.isPresent()) {
                 JsonObject stats = stats(sandbox.get());
-                out.add(new Check("no payment refunded twice (gateway)", stats.integer("payments_refunded_more_than_once")));
+                out.add(new Check("no payment refunded twice (gateway)",
+                        stats.integer("payments_refunded_more_than_once")));
                 long booked = count(c, "SELECT count(*) FROM ledger_transactions WHERE cause_type = 'REFUND'");
                 out.add(new Check("refunds booked = refunds executed", Math.abs(booked - stats.integer("refunds"))));
             }
@@ -115,6 +121,12 @@ public final class Verify {
             throw new IllegalStateException("verify cannot read the database: " + e.getMessage(), e);
         }
         return out;
+    }
+
+    /** Walks the audit chain through the store's own reader, read-only. The data source stays open. */
+    public static AuditChain.Verdict auditChain(DataSource dataSource) {
+        return AuditChain.verify(new PostgresStore(dataSource, BalanceStrategy.APPEND_SNAPSHOT)
+                .transact("verify-audit", tx -> tx.audit().rows()));
     }
 
     private static String legalMoves() {

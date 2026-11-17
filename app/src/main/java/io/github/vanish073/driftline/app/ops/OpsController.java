@@ -3,13 +3,17 @@ package io.github.vanish073.driftline.app.ops;
 import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.ingest.BoundedBody;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.merchant.SecretCipher;
+import io.github.vanish073.driftline.app.merchant.SecretRefresher;
 import io.github.vanish073.driftline.app.security.MerchantAccess;
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
 import io.github.vanish073.driftline.core.breaks.BreakTransition;
 import io.github.vanish073.driftline.core.breaks.BreakType;
+import io.github.vanish073.driftline.core.id.IdRules;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.ledger.AccountCode;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.order.OrderState;
@@ -22,18 +26,25 @@ import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.core.port.Tx;
+import io.github.vanish073.driftline.core.resolver.ManualAdjustment;
 import io.github.vanish073.driftline.core.resolver.ManualResolution;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
+import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
+import io.github.vanish073.driftline.wire.json.JsonObject;
 import io.github.vanish073.driftline.wire.json.StrictJson;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -50,7 +61,8 @@ import org.springframework.web.bind.annotation.RestController;
  * reported as ambiguous, with both witnesses). Read-only, each request in one Store transaction. A merchant token sees
  * only its merchant; another merchant's break answers 404, so a token cannot even learn that it exists. An ops token
  * sees every merchant. {@code POST /v1/breaks/{id}/resolve} closes an ESCALATED break by hand, with its audit row
- * ({@link ManualResolution}); it needs {@code breaks:resolve}.
+ * ({@link ManualResolution}); it needs {@code breaks:resolve}. {@code POST /v1/merchants/{m}/ledger/adjustments}
+ * posts a balanced correcting entry under its audit row ({@link ManualAdjustment}); it needs {@code ledger:adjust}.
  */
 @RestController
 @Profile(Roles.INGEST)
@@ -61,11 +73,91 @@ public class OpsController {
     private final Store store;
     private final MerchantRegistry merchants;
     private final Clock clock;
+    private final PostgresDirectory directory;
+    private final SecretCipher cipher;
+    private final SecretRefresher refresher;
 
-    public OpsController(Store store, MerchantRegistry merchants, Clock clock) {
+    public OpsController(Store store, MerchantRegistry merchants, Clock clock, PostgresDirectory directory,
+                         SecretCipher cipher, SecretRefresher refresher) {
         this.store = store;
         this.merchants = merchants;
         this.clock = clock;
+        this.directory = directory;
+        this.cipher = cipher;
+        this.refresher = refresher;
+    }
+
+    /** Overlap bounds for a webhook secret rotation (D76): long enough for the gateway to switch, at most a week. */
+    static final Duration MIN_OVERLAP = Duration.ofMinutes(1);
+    static final Duration MAX_OVERLAP = Duration.ofDays(7);
+    static final Duration DEFAULT_OVERLAP = Duration.ofHours(24);
+
+    /**
+     * {@code POST /v1/merchants/{m}/webhook-secrets/rotate} (§10.2, §14, D76) with
+     * {@code {"kid":"k2","secret":"…","overlap_seconds":86400}}: the secret the gateway issued becomes active now, the
+     * current one stays valid for the overlap (default 24 h, 1 min to 7 days), and an audit row records it, never the
+     * secret. Scope {@code secrets:write}, ops tokens only. The secret is encrypted before it is stored (D48); this
+     * instance reloads at once and every other within its refresh interval. 201; 400 for a malformed request or a secret
+     * under 32 bytes; 404 for an unknown merchant; 409 while a rotation is in progress or if the key id was used before.
+     */
+    @PostMapping("/v1/merchants/{merchantId}/webhook-secrets/rotate")
+    @PreAuthorize("hasAuthority('SCOPE_secrets:write')")
+    public ResponseEntity<?> rotateSecret(Authentication auth, @PathVariable String merchantId,
+                                          HttpServletRequest request) throws IOException {
+        if (MerchantAccess.boundMerchant(auth).isPresent()) {
+            return error(403, "only an ops token may rotate a webhook secret");
+        }
+        MerchantId m;
+        try {
+            m = MerchantId.of(merchantId);
+        } catch (IllegalArgumentException e) {
+            return error(404, "unknown merchant");
+        }
+        Optional<byte[]> body = BoundedBody.read(request, MAX_RESOLVE_BODY);
+        if (body.isEmpty()) {
+            return error(413, "body larger than " + MAX_RESOLVE_BODY + " bytes");
+        }
+        String kid;
+        byte[] secret;
+        Duration overlap;
+        try {
+            JsonObject root = StrictJson.parse(body.get());
+            kid = IdRules.requireToken("kid", root.string("kid"));
+            secret = root.string("secret").getBytes(StandardCharsets.UTF_8);
+            overlap = root.has("overlap_seconds") ? Duration.ofSeconds(root.integer("overlap_seconds"))
+                    : DEFAULT_OVERLAP;
+        } catch (IllegalArgumentException e) {   // MalformedJson or a bad key id
+            return error(400, e.getMessage() == null ? "malformed rotation" : e.getMessage());
+        }
+        if (secret.length < 32 || secret.length > 512) {
+            return error(400, "a webhook secret is 32 to 512 bytes");
+        }
+        if (overlap.compareTo(MIN_OVERLAP) < 0 || overlap.compareTo(MAX_OVERLAP) > 0) {
+            return error(400, "overlap_seconds must be between 60 and 604800");
+        }
+        Instant now = clock.now();
+        PostgresDirectory.Rotation result;
+        try {
+            result = directory.rotateWebhookSecret(m, kid, cipher.encrypt(secret, MerchantRegistry.context(m, kid)),
+                    now, now.plus(overlap), String.valueOf(auth.getPrincipal()));
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        } finally {
+            Arrays.fill(secret, (byte) 0);
+        }
+        return switch (result) {
+            case UNKNOWN_MERCHANT -> error(404, "unknown merchant");
+            case IN_PROGRESS -> error(409, "a rotation is in progress: two secrets are active until its overlap ends");
+            case KID_TAKEN -> error(409, "this key id was used before; choose a new one");
+            case ROTATED -> {
+                refresher.refresh();
+                Map<String, Object> v = new LinkedHashMap<>();
+                v.put("kid", kid);
+                v.put("active_from", now.toString());
+                v.put("previous_secrets_retire_at", now.plus(overlap).toString());
+                yield ResponseEntity.status(201).body(v);
+            }
+        };
     }
 
     /**
@@ -110,6 +202,74 @@ public class OpsController {
                 v.put("compensation", r.compensation().toString());
                 v.put("audit_seq", r.auditSeq());
                 yield ResponseEntity.ok(v);
+            }
+        };
+    }
+
+    /**
+     * {@code POST /v1/merchants/{m}/ledger/adjustments} (§7, D8, D74) with
+     * {@code {"note":"…","break_id":"…","entries":{"BANK":"-12.34","SETTLEMENT_DIFFERENCES":"12.34"}}}: a balanced
+     * correcting entry, posted under its own audit row ({@link ManualAdjustment}). Scope {@code ledger:adjust}, ops
+     * tokens only: a merchant does not adjust its own books. Amounts are signed, debit positive; {@code break_id} is
+     * optional. 201 with the audit sequence number and the ledger cause; 400 for an unbalanced or malformed request;
+     * 404 for an unknown merchant or break.
+     */
+    @PostMapping("/v1/merchants/{merchantId}/ledger/adjustments")
+    @PreAuthorize("hasAuthority('SCOPE_ledger:adjust')")
+    public ResponseEntity<?> adjust(Authentication auth, @PathVariable String merchantId, HttpServletRequest request)
+            throws IOException {
+        if (MerchantAccess.boundMerchant(auth).isPresent()) {
+            return error(403, "only an ops token may adjust a merchant's books");
+        }
+        MerchantId m;
+        try {
+            m = MerchantId.of(merchantId);
+        } catch (IllegalArgumentException e) {
+            return error(404, "unknown merchant");
+        }
+        if (merchants.context(m).isEmpty()) {
+            return error(404, "unknown merchant");
+        }
+        Optional<byte[]> body = BoundedBody.read(request, MAX_RESOLVE_BODY);
+        if (body.isEmpty()) {
+            return error(413, "body larger than " + MAX_RESOLVE_BODY + " bytes");
+        }
+        String note;
+        Optional<String> breakId;
+        TreeMap<AccountCode, Money> amounts = new TreeMap<>();
+        try {
+            JsonObject root = StrictJson.parse(body.get());
+            note = ManualResolution.requireNote(root.string("note"));
+            breakId = Optional.ofNullable(root.optionalString("break_id"));
+            for (Map.Entry<String, Object> e : root.object("entries").fields().entrySet()) {
+                if (!(e.getValue() instanceof String amount)) {
+                    return error(400, "each entry is an account code and a signed amount as a string");
+                }
+                amounts.put(AccountCode.valueOf(e.getKey()), Money.parseSigned(amount));
+            }
+        } catch (IllegalArgumentException e) {   // MalformedJson, an unknown account or a bad amount
+            return error(400, e.getMessage() == null ? "malformed adjustment" : e.getMessage());
+        }
+        String actor = String.valueOf(auth.getPrincipal());
+        ManualAdjustment.Result result;
+        try {
+            Instant now = clock.now();
+            result = store.transact("ops-adjust", tx -> ManualAdjustment.post(tx, m, actor, note, breakId, amounts, now));
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        } catch (IllegalArgumentException e) {   // LedgerRejected: the entries break a double-entry rule
+            return error(400, e.getMessage());
+        }
+        return switch (result) {
+            case ManualAdjustment.BreakNotFound n -> error(404, "no such break for this merchant");
+            case ManualAdjustment.Posted posted -> {
+                Map<String, Object> v = new LinkedHashMap<>();
+                v.put("audit_seq", posted.auditSeq());
+                v.put("cause", posted.txn().cause().type() + ":" + posted.txn().cause().id());
+                Map<String, String> entries = new LinkedHashMap<>();
+                posted.txn().entries().forEach(en -> entries.put(en.account().name(), en.amount().toString()));
+                v.put("entries", entries);
+                yield ResponseEntity.status(201).body(v);
             }
         };
     }
@@ -280,7 +440,7 @@ public class OpsController {
      * {@code GET /v1/exports/breaks.csv?merchantId=}: every break as one CSV row, in columns that fit a reconciliation
      * sheet (the desk research, D54): the payment, its order and expected gross, fee, GST and net; the settlement
      * line, its date, its UTR and amount; the reason; and an ambiguous line's two witnesses, payment ids separated by
-     * spaces. RFC 4180 quoting; UTF-8. A refusal (400, 403, 503) is the usual JSON error, so the CSV media type is set
+     * spaces. RFC 4180 quoting, with formula-like cells neutralised (§14); UTF-8. A refusal (400, 403, 503) is the usual JSON error, so the CSV media type is set
      * on success only.
      */
     @GetMapping("/v1/exports/breaks.csv")
@@ -397,11 +557,18 @@ public class OpsController {
     }
 
     /** RFC 4180: quote a field that holds a comma, a quote or a line break, doubling any quote. */
+    /**
+     * One CSV cell (RFC 4180), safe to open in a spreadsheet (§14, OWASP "CSV injection"): a cell that starts with
+     * {@code = + - @}, a tab or a carriage return would be read as a formula, so it gets a leading apostrophe, which
+     * spreadsheets show as text, and is quoted. A negative amount therefore exports as text; the export has none today.
+     */
     static String csvField(String value) {
-        if (value.indexOf(',') < 0 && value.indexOf('"') < 0 && value.indexOf('\n') < 0 && value.indexOf('\r') < 0) {
-            return value;
+        boolean formula = !value.isEmpty() && "=+-@\t\r".indexOf(value.charAt(0)) >= 0;
+        String cell = formula ? "'" + value : value;
+        if (!formula && cell.indexOf(',') < 0 && cell.indexOf('"') < 0 && cell.indexOf('\n') < 0 && cell.indexOf('\r') < 0) {
+            return cell;
         }
-        return '"' + value.replace("\"", "\"\"") + '"';
+        return '"' + cell.replace("\"", "\"\"") + '"';
     }
 
     private static Map<String, Object> view(Break b) {

@@ -25,6 +25,7 @@ class RolesTest {
                 .containsExactly("ingest", "settlement-worker", "resolver");
         assertThat(Roles.profiles("matcher,matcher")).containsExactly("matcher");
         assertThat(Roles.profiles("verify")).containsExactly("verify");
+        assertThat(Roles.profiles("verify-audit")).containsExactly("verify-audit");
         assertThatThrownBy(() -> Roles.profiles("verify,matcher")).hasMessageContaining("must be");
         assertThatThrownBy(() -> Roles.profiles("migrate,ingest")).hasMessageContaining("must be");
     }

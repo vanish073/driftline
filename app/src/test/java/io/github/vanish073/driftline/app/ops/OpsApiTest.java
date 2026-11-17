@@ -18,6 +18,8 @@ import io.github.vanish073.driftline.app.ingest.IngestController;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.merchant.SecretCipher;
+import io.github.vanish073.driftline.app.merchant.SecretRefresher;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
@@ -26,23 +28,29 @@ import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.ledger.LedgerTxn;
+import io.github.vanish073.driftline.core.ledger.PostResult;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.payment.PaymentState;
 import io.github.vanish073.driftline.core.payment.PaymentStatus;
 import io.github.vanish073.driftline.core.port.AuditRepo;
 import io.github.vanish073.driftline.core.port.BreakRepo;
+import io.github.vanish073.driftline.core.port.Clock;
+import io.github.vanish073.driftline.core.port.LedgerRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
-import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.port.TxBody;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
+import io.github.vanish073.driftline.wire.ingest.MerchantContext;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -97,6 +105,10 @@ class OpsApiTest {
     Store store;
     @MockitoBean
     PostgresDirectory directory;
+    @MockitoBean
+    SecretCipher cipher;
+    @MockitoBean
+    SecretRefresher refresher;
 
     @BeforeEach
     void world() {
@@ -180,6 +192,19 @@ class OpsApiTest {
         assertThat(OpsController.csvField("plain")).isEqualTo("plain");
         assertThat(OpsController.csvField("a,b")).isEqualTo("\"a,b\"");
         assertThat(OpsController.csvField("say \"hi\"")).isEqualTo("\"say \"\"hi\"\"\"");
+        assertThat(OpsController.csvField("")).isEmpty();
+    }
+
+    @Test
+    void aCellThatASpreadsheetWouldRunAsAFormulaIsExportedAsText() {
+        // §14, OWASP CSV injection: = + - @ tab and carriage return start a formula in Excel and Sheets
+        assertThat(OpsController.csvField("=HYPERLINK(\"http://x\",\"y\")"))
+                .isEqualTo("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\"");
+        assertThat(OpsController.csvField("+1")).isEqualTo("\"'+1\"");
+        assertThat(OpsController.csvField("-2+3")).isEqualTo("\"'-2+3\"");
+        assertThat(OpsController.csvField("@SUM(A1)")).isEqualTo("\"'@SUM(A1)\"");
+        assertThat(OpsController.csvField("\tcmd")).isEqualTo("\"'\tcmd\"");
+        assertThat(OpsController.csvField("pay_1-a")).as("only the first character matters").isEqualTo("pay_1-a");
     }
 
     @Test
@@ -292,5 +317,145 @@ class OpsApiTest {
                         .header("Authorization", "Bearer test-token-ops-resolver"))
                 .andExpect(status().isBadRequest());
         verify(tx.breaks(), never()).transition(eq(B), anyString(), any(), any(), anyString());
+    }
+
+    // ---- manual ledger adjustments (§7, D8, D74) ------------------------------------------------------------------
+
+    static final String ADJUST_A = "/v1/merchants/m_a/ledger/adjustments";
+    static final String BALANCED = "{\"note\":\"bank fee we had not booked\","
+            + "\"entries\":{\"SETTLEMENT_DIFFERENCES\":\"12.34\",\"BANK\":\"-12.34\"}}";
+
+    LedgerRepo adjustable() {
+        token("test-token-ops-adjuster", Optional.empty(), List.of("breaks:read", "ledger:adjust"));
+        token("test-token-a-adjuster", Optional.of(A), List.of("breaks:read", "ledger:adjust"));
+        when(merchants.context(A)).thenReturn(Optional.of(new MerchantContext(A, 1, List.of(new byte[32]))));
+        AuditRepo audit = Mockito.mock(AuditRepo.class);
+        when(tx.audit()).thenReturn(audit);
+        when(audit.append(any())).thenAnswer(i -> {
+            AuditRepo.Entry e = i.getArgument(0);
+            return new AuditRepo.Row(4, e, AuditRepo.GENESIS, AuditRepo.hash(AuditRepo.GENESIS, e));
+        });
+        LedgerRepo ledger = Mockito.mock(LedgerRepo.class);
+        when(tx.ledger()).thenReturn(ledger);
+        when(ledger.post(any())).thenAnswer(i -> new PostResult.Posted(i.getArgument(0, LedgerTxn.class).id()));
+        return ledger;
+    }
+
+    @Test
+    void anOpsTokenPostsABalancedAdjustmentUnderItsAuditRow() throws Exception {
+        LedgerRepo ledger = adjustable();
+        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops-adjuster"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.audit_seq").value(4))
+                .andExpect(jsonPath("$.cause").value("MANUAL_ADJUSTMENT:4"))
+                .andExpect(jsonPath("$.entries.BANK").value("-12.34"))
+                .andExpect(jsonPath("$.entries.SETTLEMENT_DIFFERENCES").value("12.34"));
+        ArgumentCaptor<LedgerTxn> txn = ArgumentCaptor.forClass(LedgerTxn.class);
+        verify(ledger).post(txn.capture());
+        assertThat(txn.getValue().merchantId()).isEqualTo(A);
+        verify(tx.audit()).append(any());
+    }
+
+    @Test
+    void adjustingNeedsTheLedgerScopeAndAnOpsToken() throws Exception {
+        LedgerRepo ledger = adjustable();
+        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-a-adjuster"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops"))
+                .andExpect(status().isForbidden());
+        verify(ledger, never()).post(any());
+    }
+
+    @Test
+    void anUnbalancedOrMalformedAdjustmentIs400AndAnUnknownMerchant404() throws Exception {
+        LedgerRepo ledger = adjustable();
+        String ops = "Bearer test-token-ops-adjuster";
+        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+                        + "\"entries\":{\"SETTLEMENT_DIFFERENCES\":\"12.34\",\"BANK\":\"-12.00\"}}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+                        + "\"entries\":{\"PETTY_CASH\":\"1.00\",\"BANK\":\"-1.00\"}}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+                        + "\"entries\":{\"SUSPENSE\":100,\"BANK\":\"-1.00\"}}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/v1/merchants/m_nobody/ledger/adjustments").header("Authorization", ops).content(BALANCED))
+                .andExpect(status().isNotFound());
+        verify(ledger, never()).post(any());
+    }
+
+    // ---- webhook secret rotation (§10.2, §14, D76) ----------------------------------------------------------------
+
+    static final String ROTATE_A = "/v1/merchants/m_a/webhook-secrets/rotate";
+    static final String NEW_SECRET = "test-only-rotated-webhook-secret-not-a-real-key";
+
+    void rotatable(PostgresDirectory.Rotation outcome) {
+        token("test-token-ops-rotator", Optional.empty(), List.of("breaks:read", "secrets:write"));
+        token("test-token-a-rotator", Optional.of(A), List.of("breaks:read", "secrets:write"));
+        when(cipher.encrypt(any(), anyString())).thenReturn(new byte[64]);
+        when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString())).thenReturn(outcome);
+    }
+
+    @Test
+    void anOpsTokenRotatesASecretWithADayOfOverlapAndThisInstanceReloadsAtOnce() throws Exception {
+        rotatable(PostgresDirectory.Rotation.ROTATED);
+        List<byte[]> seen = new ArrayList<>();   // a copy taken during the call: the endpoint wipes the array afterwards
+        List<byte[]> passed = new ArrayList<>();
+        when(cipher.encrypt(any(), anyString())).thenAnswer(i -> {
+            byte[] plain = i.getArgument(0);
+            passed.add(plain);
+            seen.add(plain.clone());
+            return new byte[64];
+        });
+        String body = mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-ops-rotator")
+                        .content("{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.kid").value("k2"))
+                .andExpect(jsonPath("$.active_from").value(NOW.toString()))
+                .andExpect(jsonPath("$.previous_secrets_retire_at").value(NOW.plusSeconds(86_400).toString()))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).as("the secret is never echoed").doesNotContain(NEW_SECRET);
+        verify(cipher).encrypt(any(), eq("webhook-secret/m_a/k2"));
+        assertThat(seen).singleElement().isEqualTo(NEW_SECRET.getBytes(StandardCharsets.UTF_8));
+        assertThat(passed.getFirst()).as("the plaintext is wiped once encrypted").containsOnly((byte) 0);
+        verify(directory).rotateWebhookSecret(eq(A), eq("k2"), any(), eq(NOW), eq(NOW.plusSeconds(86_400)),
+                anyString());
+        verify(refresher).refresh();
+    }
+
+    @Test
+    void rotatingNeedsTheSecretsScopeAndAnOpsToken() throws Exception {
+        rotatable(PostgresDirectory.Rotation.ROTATED);
+        String body = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
+        mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-a-rotator").content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-ops").content(body))
+                .andExpect(status().isForbidden());
+        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString());
+    }
+
+    @Test
+    void aWeakOrMalformedRotationIs400AndTheDirectorysRefusalsMapTo404And409() throws Exception {
+        rotatable(PostgresDirectory.Rotation.ROTATED);
+        String ops = "Bearer test-token-ops-rotator";
+        mvc.perform(post(ROTATE_A).header("Authorization", ops).content("{\"kid\":\"k2\",\"secret\":\"short\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post(ROTATE_A).header("Authorization", ops)
+                        .content("{\"kid\":\"k 2\",\"secret\":\"" + NEW_SECRET + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post(ROTATE_A).header("Authorization", ops)
+                        .content("{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\",\"overlap_seconds\":10}"))
+                .andExpect(status().isBadRequest());
+        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString());
+        String body = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
+        for (var outcome : new PostgresDirectory.Rotation[] {PostgresDirectory.Rotation.IN_PROGRESS,
+            PostgresDirectory.Rotation.KID_TAKEN}) {
+            when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString())).thenReturn(outcome);
+            mvc.perform(post(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isConflict());
+        }
+        when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString()))
+                .thenReturn(PostgresDirectory.Rotation.UNKNOWN_MERCHANT);
+        mvc.perform(post(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isNotFound());
+        verify(refresher, never()).refresh();
     }
 }

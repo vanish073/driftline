@@ -51,8 +51,19 @@ public record DriftlineProperties(
             @DefaultValue("60s") Duration maxTickInterval) {
     }
 
-    /** AES-256-GCM keys for stored webhook secrets, by key id, base64; {@code activeKid} encrypts (D48). */
-    public record Secrets(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys) {
+    /**
+     * AES-256-GCM keys for stored webhook secrets, by key id, base64; {@code activeKid} encrypts (D48). Active secrets
+     * are reloaded every {@code refreshInterval} (D76).
+     */
+    public record Secrets(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys,
+                          @DefaultValue("30s") Duration refreshInterval) {
+
+        /** Never prints the keys. */
+        @Override
+        public String toString() {
+            return "Secrets[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", refreshInterval=" + refreshInterval
+                    + "]";
+        }
     }
 
     public record Store(@DefaultValue("APPEND_SNAPSHOT") BalanceStrategy balanceStrategy) {

@@ -16,6 +16,8 @@ import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.merchant.SecretCipher;
+import io.github.vanish073.driftline.app.merchant.SecretRefresher;
 import io.github.vanish073.driftline.app.ops.OpsController;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
@@ -88,6 +90,10 @@ class IngestApiTest {
     Store store;
     @MockitoBean
     PostgresDirectory directory;
+    @MockitoBean
+    SecretCipher cipher;
+    @MockitoBean
+    SecretRefresher refresher;
 
     @BeforeEach
     void world() {

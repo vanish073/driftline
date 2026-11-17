@@ -17,14 +17,16 @@ import java.util.TreeMap;
  * have one active webhook secret, or two while rotating; anything else stops the start-up, because a merchant whose
  * webhooks cannot be verified would silently lose them.
  *
- * <p>Known limit (D49): a merchant onboarded later, or a rotated secret, is picked up on the next restart, and the
- * matcher must restart before ingest accepts the new merchant's events.
+ * <p>Known limit (D49): a merchant onboarded later is picked up on the next restart, and the matcher must restart
+ * before ingest accepts the new merchant's events. Webhook secrets are reloaded while running ({@link #refreshSecrets},
+ * D76), so a rotation needs no restart.
  */
 public final class MerchantRegistry {
 
     private final MerchantDirectory directory;
     private final List<MerchantTerms> merchants;
-    private final TreeMap<MerchantId, MerchantContext> contexts;
+    /** Replaced whole by {@link #refreshSecrets}; readers see one consistent map. */
+    private volatile TreeMap<MerchantId, MerchantContext> contexts;
 
     private MerchantRegistry(List<MerchantTerms> merchants, TreeMap<MerchantId, MerchantContext> contexts) {
         this.merchants = List.copyOf(merchants);
@@ -49,6 +51,33 @@ public final class MerchantRegistry {
             contexts.put(t.merchantId(), new MerchantContext(t.merchantId(), t.partition(), active));
         }
         return new MerchantRegistry(merchants, contexts);
+    }
+
+    /**
+     * Reloads every merchant's active webhook secrets (D76): a rotated-in secret is accepted and a retired one refused
+     * from now on, without a restart. The merchant list itself is unchanged (D49). A merchant whose active secrets are
+     * not one or two (which the rotation API never produces) keeps its previous ones; the count of such merchants is
+     * returned, so the caller can log it.
+     */
+    public synchronized int refreshSecrets(PostgresDirectory store, SecretCipher cipher, Instant now) {
+        TreeMap<MerchantId, List<byte[]>> secrets = new TreeMap<>();
+        for (PostgresDirectory.WebhookSecret s : store.activeSecrets(now)) {
+            secrets.computeIfAbsent(s.merchantId(), m -> new ArrayList<>())
+                    .add(cipher.decrypt(s.secretEnc(), context(s.merchantId(), s.kid())));
+        }
+        TreeMap<MerchantId, MerchantContext> next = new TreeMap<>();
+        int kept = 0;
+        for (MerchantTerms t : merchants) {
+            List<byte[]> active = secrets.getOrDefault(t.merchantId(), List.of());
+            if (active.isEmpty() || active.size() > 2) {
+                next.put(t.merchantId(), contexts.get(t.merchantId()));
+                kept++;
+            } else {
+                next.put(t.merchantId(), new MerchantContext(t.merchantId(), t.partition(), active));
+            }
+        }
+        contexts = next;
+        return kept;
     }
 
     /** The associated data of a stored secret: the ciphertext only decrypts for its own row. */
