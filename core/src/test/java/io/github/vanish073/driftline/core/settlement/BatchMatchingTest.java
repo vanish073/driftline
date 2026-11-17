@@ -11,6 +11,7 @@ import io.github.vanish073.driftline.core.settlement.BatchMatching.Line;
 import io.github.vanish073.driftline.core.settlement.BatchMatching.Outcome;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +45,20 @@ class BatchMatchingTest {
         assertThat(o.candidates()).hasSize(2);
         assertThatThrownBy(() -> SubsetSum.solve(new long[] {big, big}, 5, BUDGET))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theSinkHearsTheCostOfEverySearchRunAndNoneForAnAnswerReused() {
+        List<Candidate> pool = List.of(c("pay_a", 200, 0), c("pay_b", 300, 1), c("pay_c", 400, 2));
+        List<Long> ops = new ArrayList<>();
+        Outcome o = BatchMatching.match(List.of(line(1, 500)), pool, 1, BUDGET, false, ops::add).get(0);
+        assertThat(o.kind()).isEqualTo(Kind.INFERRED);
+        assertThat(ops).hasSize(1).allMatch(n -> n > 0);
+        assertThat(SubsetSum.solveCounted(new long[] {2, 3}, 5, BUDGET, false))
+                .as("the whole set: a fast path, no engine").isEqualTo(new SubsetSum.Counted(
+                        new SubsetSum.Unique(List.of(0, 1)), 0));
+        assertThat(SubsetSum.solveCounted(new long[] {2, 3, 4, 7, 9, 11}, 12, 1, false).ops())
+                .as("over budget: no engine ran").isZero();
     }
 
     @Test

@@ -1,0 +1,77 @@
+# promtool test rules alerts.test.yml: each alert fires when it should and stays quiet when it should not.
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'driftline_outbox_oldest_pending_seconds{instance="a"}'
+        values: '0 300 601'
+      - series: 'driftline_deadline_headroom_seconds{type="DEBITED_NO_ORDER"}'
+        values: '30000 21600 21599'
+      - series: 'driftline_deadline_headroom_seconds{type="SHORT_SETTLEMENT"}'
+        values: '90000 90000 90000'
+      - series: 'driftline_breaks_open{type="FEED_STALL",state="DETECTED"}'
+        values: '0 0 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: OutboxCommandStuck
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: OutboxCommandStuck
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "An outbox command has been pending for more than 10 minutes"
+              description: "Oldest pending command: 10m 1s. Check the dispatcher and its targets."
+      - eval_time: 1m
+        alertname: BreakDeadlineNear
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BreakDeadlineNear
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              type: DEBITED_NO_ORDER
+            exp_annotations:
+              summary: "An open DEBITED_NO_ORDER break has less than 6 hours before its deadline"
+              description: "Headroom: 5h 59m 59s (negative: the deadline has passed)."
+      - eval_time: 1m
+        alertname: SettlementFeedStalled
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: SettlementFeedStalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: "A merchant's settlement feed has stalled"
+              description: "1 FEED_STALL alerts are open: no complete settlement file long after it was due."
+  - interval: 1m
+    input_series:
+      # lag growing by 10 records a minute for 30 minutes on one partition, flat on another
+      - series: 'driftline_consumer_lag_records{partition="0"}'
+        values: '0+10x30'
+      - series: 'driftline_consumer_lag_records{partition="1"}'
+        values: '5x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConsumerLagGrowing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ConsumerLagGrowing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "Matcher consumer lag has been growing for 10 minutes"
+              description: "255 records behind and rising."
+  - interval: 1m
+    input_series:
+      - series: 'driftline_consumer_lag_records{partition="0"}'
+        values: '50x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ConsumerLagGrowing
+        exp_alerts: []

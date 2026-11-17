@@ -27,6 +27,7 @@ stack_secrets() {
         echo "DRIFTLINE_SECRETS_KEY=$(openssl rand -base64 32)"
         echo "DRIFTLINE_PII_KEY=$(openssl rand -base64 32)"
         echo "DRIFTLINE_PII_INDEX_KEY=$(openssl rand -base64 32)"
+        echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)"
         echo "DRIFTLINE_SERVICE_TOKEN=$service_token"
         for line in "$@"; do
             echo "$line"

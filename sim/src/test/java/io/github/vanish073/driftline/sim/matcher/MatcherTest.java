@@ -114,6 +114,9 @@ class MatcherTest {
 
         BatchOutcome redelivered = process(List.of(payment("e1", EventType.PAYMENT_SUCCEEDED, 1)));
         assertThat(redelivered.duplicates()).isEqualTo(1);
+        // D78: each record's fate by offset, for the per-source metrics; a replayed record has none
+        assertThat(replay.fates()).isEmpty();
+        assertThat(redelivered.fates().values()).containsExactly(BatchOutcome.RecordFate.DUPLICATE);
         assertThat(store.committedLedger()).hasSize(1);
         assertThat(store.committedPaymentTransitions()).hasSize(1);
     }

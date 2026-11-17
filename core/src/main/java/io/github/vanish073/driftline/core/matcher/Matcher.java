@@ -158,16 +158,24 @@ public final class Matcher {
             EventEnvelope e = record.envelope();
             DedupeRepo.Claim claim = dedupeOff ? DedupeRepo.Claim.FIRST : tx.dedupe().claim(
                     e.merchantId(), e.source(), e.eventKey(), e.payloadSha256(), record.partition(), record.offset());
+            run.current = record.offset();
             switch (claim) {
-                case DUPLICATE -> duplicates++;
+                case DUPLICATE -> {
+                    duplicates++;
+                    run.fates.put(record.offset(), BatchOutcome.RecordFate.DUPLICATE);
+                }
                 case KEY_REUSED -> {
+                    run.fates.put(record.offset(), BatchOutcome.RecordFate.KEY_REUSED);
                     tx.quarantine().add(new QuarantineRepo.Entry(record.partition(), record.offset(), e.merchantId(),
                             e.source(), e.eventKey(), e.payloadSha256(), QuarantineRepo.Reason.IDEMPOTENCY_CONFLICT));
                     run.idempotencyConflict(e, record.partition(), record.offset());
                     keyReused++;
                 }
                 case FIRST -> {
+                    int lateBefore = run.lateEvents;
                     run.observe(e);
+                    run.fates.put(record.offset(), run.lateEvents > lateBefore
+                            ? BatchOutcome.RecordFate.APPLIED_LATE : BatchOutcome.RecordFate.APPLIED);
                     switch (e.eventType()) {
                         case PAYMENT_PENDING, PAYMENT_SUCCEEDED, PAYMENT_FAILED -> {
                             run.applyPayment(e);
@@ -194,6 +202,7 @@ public final class Matcher {
                 }
             }
         }
+        run.current = null;
         run.finish();
         tx.partitions().commitOffset(batch.partition(), batch.epoch(), committed);
         return run.outcome(applied, alreadyProcessed, duplicates, keyReused, notYetHandled);
@@ -311,6 +320,11 @@ public final class Matcher {
         private int posted;
         private int timersFired;
         private int lateEvents;
+        /** The offset of the record being applied; null while timers fire (D78). */
+        private Long current;
+        private final TreeMap<Long, BatchOutcome.RecordFate> fates = new TreeMap<>();
+        private final TreeMap<String, Long> raisedBy = new TreeMap<>();
+        private final List<Long> solveOps = new ArrayList<>();
 
         Run(Tx tx, int partition, Instant now) {
             this.tx = tx;
@@ -321,7 +335,7 @@ public final class Matcher {
 
         BatchOutcome outcome(int applied, int alreadyProcessed, int duplicates, int keyReused, int notYetHandled) {
             return new BatchOutcome(applied, alreadyProcessed, duplicates, keyReused, notYetHandled, posted, conflicts,
-                    raised, timersFired, lateEvents, nextWakeAt(), recorder.delta());
+                    raised, timersFired, lateEvents, nextWakeAt(), recorder.delta(), fates, raisedBy, solveOps);
         }
 
         // ---- reads and writes through the keyed-state cache ----
@@ -390,6 +404,9 @@ public final class Matcher {
             BreakRepo.Raised r = tx.breaks().raise(Break.detected(m, type, subject, now, facts), reason);
             if (r.created()) {
                 raised.add(r.current());
+                if (current != null) {
+                    raisedBy.put(r.current().breakId(), current);
+                }
             }
             return r;
         }
@@ -921,7 +938,7 @@ public final class Matcher {
             List<BatchMatching.Line> lines = waiting.stream()
                     .map(l -> new BatchMatching.Line(l.key(), l.settlementDate(), l.amount())).toList();
             List<BatchMatching.Outcome> outcomes = BatchMatching.match(lines, pool, config.batchLookbackDays(),
-                    config.solveBudgetOps(), firstSolutionWins);
+                    config.solveBudgetOps(), firstSolutionWins, solveOps::add);
             List<BatchMatching.Candidate> possible = possibleMembers(m, terms, date);
             if (!possible.isEmpty() && !firstSolutionWins) {
                 outcomes = soundAgainstPending(lines, pool, possible, outcomes);
@@ -1111,7 +1128,7 @@ public final class Matcher {
             List<BatchMatching.Candidate> wider = new ArrayList<>(pool);
             wider.addAll(possible);
             List<BatchMatching.Outcome> all = BatchMatching.match(lines, wider, config.batchLookbackDays(),
-                    config.solveBudgetOps(), false);
+                    config.solveBudgetOps(), false, solveOps::add);
             List<BatchMatching.Outcome> out = new ArrayList<>(outcomes.size());
             for (int i = 0; i < outcomes.size(); i++) {
                 BatchMatching.Outcome known = outcomes.get(i);

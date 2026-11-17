@@ -5,8 +5,9 @@ import java.util.regex.Pattern;
 
 /**
  * Masks personal data in text (DESIGN §14, D77): emails and UPI VPAs ({@code ab***@okaxis}) and Indian mobile numbers
- * ({@code 98******21}). Applied to every log message and stack trace by {@link MaskingMessageConverter} and
- * {@link MaskingThrowableConverter}, and to contact details the ops API shows. It is a net under the rule that personal
+ * ({@code 98******21}). Applied to every log message and stack trace by the JSON log encoder
+ * ({@link io.github.vanish073.driftline.app.observability.JsonLogEncoder}, D78), and to contact details the ops API
+ * shows. It is a net under the rule that personal
  * data is never logged, not a licence to log it: it masks what looks like a contact, so it can miss an unusual one and
  * may mask a harmless string that looks like one.
  */

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.LongConsumer;
 
 /**
  * Batch matching of the unreferenced lines of one settlement file (DESIGN §6.4): conservative narrowing, the exact
@@ -115,6 +116,15 @@ public final class BatchMatching {
      */
     public static List<Outcome> match(List<Line> lines, List<Candidate> pool, int lookbackDays, long budgetOps,
                                       boolean firstSolutionWins) {
+        return match(lines, pool, lookbackDays, budgetOps, firstSolutionWins, ops -> { });
+    }
+
+    /**
+     * {@link #match(List, List, int, long, boolean)}, telling {@code solved} the cost in operations of every subset-sum
+     * search actually run ({@link SubsetSum.Counted}; a cached answer runs none), for §13 {@code driftline_subset_sum_ops}.
+     */
+    public static List<Outcome> match(List<Line> lines, List<Candidate> pool, int lookbackDays, long budgetOps,
+                                      boolean firstSolutionWins, LongConsumer solved) {
         if (lookbackDays < 0) {
             throw new IllegalArgumentException("lookbackDays must not be negative");
         }
@@ -132,7 +142,7 @@ public final class BatchMatching {
                 if (decided.containsKey(line.key())) {
                     continue;
                 }
-                Outcome o = solveOne(line, pool, open, lookbackDays, budgetOps, firstSolutionWins, lastSolved);
+                Outcome o = solveOne(line, pool, open, lookbackDays, budgetOps, firstSolutionWins, lastSolved, solved);
                 if (o.kind() == Kind.INFERRED) {
                     decided.put(line.key(), o);
                     o.matched().forEach(p -> open.remove(p.value()));
@@ -148,13 +158,14 @@ public final class BatchMatching {
         for (Line line : lines) {
             Outcome o = decided.get(line.key());
             out.add(o != null ? o
-                    : solveOne(line, pool, open, lookbackDays, budgetOps, firstSolutionWins, lastSolved));
+                    : solveOne(line, pool, open, lookbackDays, budgetOps, firstSolutionWins, lastSolved, solved));
         }
         return out;
     }
 
     private static Outcome solveOne(Line line, List<Candidate> pool, TreeSet<String> open, int lookbackDays,
-                                    long budgetOps, boolean firstSolutionWins, TreeMap<String, Outcome> lastSolved) {
+                                    long budgetOps, boolean firstSolutionWins, TreeMap<String, Outcome> lastSolved,
+                                    LongConsumer solved) {
         LocalDate from = line.settlementDate().minusDays(lookbackDays);
         List<Candidate> candidates = pool.stream()
                 .filter(c -> open.contains(c.paymentId().value()))
@@ -166,13 +177,13 @@ public final class BatchMatching {
         if (previous != null && previous.candidates().equals(ids)) {
             return previous;   // the same candidates give the same answer: the solver is a pure function
         }
-        Outcome o = solveFresh(line, candidates, ids, budgetOps, firstSolutionWins);
+        Outcome o = solveFresh(line, candidates, ids, budgetOps, firstSolutionWins, solved);
         lastSolved.put(line.key(), o);
         return o;
     }
 
     private static Outcome solveFresh(Line line, List<Candidate> candidates, List<PaymentId> ids, long budgetOps,
-                                      boolean firstSolutionWins) {
+                                      boolean firstSolutionWins, LongConsumer solved) {
         Sha256 hash = hash(candidates);
         if (line.amount().isZero()) {
             return new Outcome(line, Kind.ZERO_AMOUNT, List.of(), List.of(), ids, hash, 0);
@@ -182,7 +193,9 @@ public final class BatchMatching {
         if (!SubsetSum.fitsExactly(values, target)) {
             return new Outcome(line, Kind.OUT_OF_RANGE, List.of(), List.of(), ids, hash, 0);
         }
-        return switch (SubsetSum.solve(values, target, budgetOps, firstSolutionWins)) {
+        SubsetSum.Counted counted = SubsetSum.solveCounted(values, target, budgetOps, firstSolutionWins);
+        solved.accept(counted.ops());
+        return switch (counted.result()) {
             case SubsetSum.Unique u ->
                     new Outcome(line, Kind.INFERRED, pick(candidates, u.subset()), List.of(), ids, hash, 0);
             case SubsetSum.Ambiguous a -> new Outcome(line, Kind.AMBIGUOUS, List.of(),

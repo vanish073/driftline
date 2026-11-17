@@ -93,8 +93,12 @@ public record DriftlineProperties(
     public record Worker(@DefaultValue("1s") Duration pollInterval, @DefaultValue("10") int batchSize) {
     }
 
-    /** The resolver role (§8): it sleeps at most {@code pollInterval}, since breaks are raised by another process. */
-    public record Resolver(@DefaultValue("1s") Duration pollInterval, @DefaultValue("20") int batchSize) {
+    /**
+     * The resolver role (§8): it sleeps at most {@code pollInterval}, since breaks are raised by another process. It also
+     * reads the books for the metrics of §13 every {@code metricsInterval} (D78).
+     */
+    public record Resolver(@DefaultValue("1s") Duration pollInterval, @DefaultValue("20") int batchSize,
+                           @DefaultValue("15s") Duration metricsInterval) {
     }
 
     /**

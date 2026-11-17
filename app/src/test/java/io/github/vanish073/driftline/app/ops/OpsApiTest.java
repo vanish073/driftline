@@ -20,6 +20,8 @@ import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
 import io.github.vanish073.driftline.app.merchant.SecretRefresher;
+import io.github.vanish073.driftline.app.observability.IngestMetrics;
+import io.github.vanish073.driftline.app.observability.Tracing;
 import io.github.vanish073.driftline.app.pii.CustomerContacts;
 import io.github.vanish073.driftline.app.pii.PiiCipher;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
@@ -114,6 +116,10 @@ class OpsApiTest {
     SecretRefresher refresher;
     @MockitoBean
     CustomerContacts contacts;
+    @MockitoBean
+    IngestMetrics ingestMetrics;
+    @MockitoBean
+    Tracing tracing;
 
     @BeforeEach
     void world() {

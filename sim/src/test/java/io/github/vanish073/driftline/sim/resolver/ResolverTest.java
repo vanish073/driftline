@@ -176,9 +176,12 @@ class ResolverTest {
         assertThat(p.deadlineAt()).isEqualTo(Instant.parse("2026-11-18T18:30:00Z"));
 
         answer(CommandKind.STATUS_QUERY_PAYMENT, Map.of("status", "SUCCEEDED"), now.plusSeconds(1));
-        resolve(now.plusSeconds(2));
+        Resolver.Outcome decided = resolve(now.plusSeconds(2));
         assertThat(brk(BreakType.DEBITED_NO_ORDER, "pay_1").state()).isEqualTo(BreakState.ACTION_PENDING);
         Command refund = c(CommandKind.REFUND);
+        assertThat(decided.reviewed()).as("D78: the review names the commands it enqueued")
+                .containsExactly(new Resolver.Decision(b.breakId(), BreakState.ACTION_PENDING,
+                        List.of(refund.commandId())));
         assertThat(refund.idempotencyKey()).as("payment-scoped (D11)").contains(Resolver.refundKey(M, P1));
         assertThat(refund.args()).containsEntry("amount", "499.00").containsEntry("order_id", "ord_1");
         assertThat(plan(b).action()).contains("REFUND");

@@ -92,6 +92,24 @@ public final class SubsetSum {
      *                          check for a second one. Never true outside the simulator.
      */
     public static Result solve(long[] values, long target, long budgetOps, boolean firstSolutionWins) {
+        return solveCounted(values, target, budgetOps, firstSolutionWins).result();
+    }
+
+    /**
+     * An answer with the cost of the engine that produced it, in the budget's operations (§13 {@code
+     * driftline_subset_sum_ops}): 0 for the fast paths, and 0 for {@link BudgetExceeded}, since no engine ran.
+     */
+    public record Counted(Result result, long ops) {
+        public Counted {
+            Objects.requireNonNull(result, "result");
+            if (ops < 0) {
+                throw new IllegalArgumentException("ops must not be negative");
+            }
+        }
+    }
+
+    /** {@link #solve(long[], long, long, boolean)}, with the operations the chosen engine cost. */
+    public static Counted solveCounted(long[] values, long target, long budgetOps, boolean firstSolutionWins) {
         Objects.requireNonNull(values, "values");
         if (budgetOps < 0) {
             throw new IllegalArgumentException("the budget must not be negative");
@@ -101,7 +119,7 @@ public final class SubsetSum {
         }
         int n = values.length;
         if (n == 0) {
-            return new None();
+            return new Counted(new None(), 0);
         }
         long[] v = values.clone();
         long t = target;
@@ -113,12 +131,12 @@ public final class SubsetSum {
         }
         if (g == 0) {   // every value is zero: any non-empty subset sums to zero
             if (t != 0) {
-                return new None();
+                return new Counted(new None(), 0);
             }
-            return n == 1 ? new Unique(List.of(0)) : pick(List.of(0), List.of(1), firstSolutionWins);
+            return new Counted(n == 1 ? new Unique(List.of(0)) : pick(List.of(0), List.of(1), firstSolutionWins), 0);
         }
         if (t % g != 0) {
-            return new None();
+            return new Counted(new None(), 0);
         }
         if (g > 1) {
             for (int i = 0; i < n; i++) {
@@ -136,15 +154,15 @@ public final class SubsetSum {
         }
         if (allPositive) {
             if (t <= 0 || sum < t) {
-                return new None();
+                return new Counted(new None(), 0);
             }
             if (sum == t) {
-                return new Unique(all(n));
+                return new Counted(new Unique(all(n)), 0);
             }
             long complement = sum - t;
             if (complement < t) {
-                Result r = engines(v, complement, budgetOps, true, firstSolutionWins);
-                return complementOf(r, n);
+                Counted r = engines(v, complement, budgetOps, true, firstSolutionWins);
+                return new Counted(complementOf(r.result(), n), r.ops());
             }
         }
 
@@ -152,18 +170,19 @@ public final class SubsetSum {
         return engines(v, t, budgetOps, allPositive, firstSolutionWins);
     }
 
-    private static Result engines(long[] v, long t, long budgetOps, boolean allPositive, boolean firstSolutionWins) {
+    private static Counted engines(long[] v, long t, long budgetOps, boolean allPositive, boolean firstSolutionWins) {
         int n = v.length;
         long mitmCost = n <= MITM_MAX_N ? mitmCost(n) : Long.MAX_VALUE;
         long dpCost = allPositive && t > 0 ? dpCost(n, t) : Long.MAX_VALUE;
         long cheapest = Math.min(mitmCost, dpCost);
         if (cheapest == Long.MAX_VALUE) {
-            return new BudgetExceeded(Long.MAX_VALUE);
+            return new Counted(new BudgetExceeded(Long.MAX_VALUE), 0);
         }
         if (cheapest > budgetOps) {
-            return new BudgetExceeded(cheapest);
+            return new Counted(new BudgetExceeded(cheapest), 0);
         }
-        return mitmCost <= dpCost ? mitm(v, t, firstSolutionWins) : dp(v, (int) t, firstSolutionWins);
+        return new Counted(mitmCost <= dpCost ? mitm(v, t, firstSolutionWins) : dp(v, (int) t, firstSolutionWins),
+                cheapest);
     }
 
     // ---- meet-in-the-middle --------------------------------------------------------------------------------------

@@ -85,10 +85,27 @@ public final class Resolver {
         }
     }
 
-    /** What one review step decided, in review order, as {@code breakId → state after}. */
-    public record Outcome(List<String> decisions) {
+    /**
+     * One break's review: its state after, and the ids of the outbox commands this review enqueued (the driver uses them
+     * to carry the break's trace on to the dispatcher, D78).
+     */
+    public record Decision(String breakId, BreakState state, List<String> enqueued) {
+        public Decision {
+            Objects.requireNonNull(breakId, "breakId");
+            Objects.requireNonNull(state, "state");
+            enqueued = List.copyOf(enqueued);
+        }
+    }
+
+    /** What one review step decided, in review order. */
+    public record Outcome(List<Decision> reviewed) {
         public Outcome {
-            decisions = List.copyOf(decisions);
+            reviewed = List.copyOf(reviewed);
+        }
+
+        /** The decisions as {@code breakId->state}, for logs and traces. */
+        public List<String> decisions() {
+            return reviewed.stream().map(d -> d.breakId() + "->" + d.state()).toList();
         }
     }
 
@@ -123,11 +140,11 @@ public final class Resolver {
 
     /** Reviews up to {@code limit} due breaks in {@code tx}, at processing time {@code now}. */
     public Outcome step(Tx tx, Instant now, int limit) {
-        List<String> decisions = new ArrayList<>();
+        List<Decision> decisions = new ArrayList<>();
         for (Break b : tx.breaks().dueForReview(now, limit)) {
             Review r = new Review(tx, b, now);
             r.decide();
-            decisions.add(b.breakId() + "->" + r.state);
+            decisions.add(new Decision(b.breakId(), r.state, r.enqueued));
         }
         if (!decisions.isEmpty()) {
             crashPoints.reached(CrashPoint.CP1);
@@ -146,6 +163,7 @@ public final class Resolver {
         Plan plan;
         BreakState state;
         final List<Command> commands;
+        final List<String> enqueued = new ArrayList<>();
 
         Review(Tx tx, Break b, Instant now) {
             this.tx = tx;
@@ -468,6 +486,7 @@ public final class Resolver {
             Command c = Command.pending(id, m, Optional.of(b.breakId()), kind, all, key, at);
             tx.outbox().enqueue(c);
             commands.add(c);
+            enqueued.add(id);
         }
 
         // ---- moves ----

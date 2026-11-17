@@ -43,6 +43,22 @@ import org.springframework.context.SmartLifecycle;
  */
 public final class DispatcherDriver implements SmartLifecycle {
 
+    /**
+     * What the driver did with each call (§13, D78). Called on the dispatcher thread; must not throw.
+     */
+    public interface Listener {
+        Listener NONE = new Listener() { };
+
+        /** Hands one call to the network by running {@code send}; a trace span may be current while it runs. */
+        default void send(OutboundCall call, Runnable send) {
+            send.run();
+        }
+
+        /** How an attempt ended: {@code answered}, {@code no_reply}, {@code no_result} or {@code lost} (see below). */
+        default void attempt(OutboundCall call, String result) {
+        }
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(DispatcherDriver.class);
     static final Duration MIN_SLEEP = Duration.ofMillis(50);
 
@@ -53,6 +69,7 @@ public final class DispatcherDriver implements SmartLifecycle {
     private final Network network;
     private final String owner;
     private final Duration pollInterval;
+    private final Listener listener;
     /** Replies, and {@code Optional.empty()} as a wake. */
     private final LinkedBlockingQueue<Optional<HttpNetwork.CallOutcome>> inbox = new LinkedBlockingQueue<>();
 
@@ -64,6 +81,13 @@ public final class DispatcherDriver implements SmartLifecycle {
     public DispatcherDriver(Store store, Dispatcher dispatcher, Clock clock, CrashPoints crashPoints,
                             Function<Consumer<HttpNetwork.CallOutcome>, Network> network, String owner,
                             Duration pollInterval) {
+        this(store, dispatcher, clock, crashPoints, network, owner, pollInterval, Listener.NONE);
+    }
+
+    public DispatcherDriver(Store store, Dispatcher dispatcher, Clock clock, CrashPoints crashPoints,
+                            Function<Consumer<HttpNetwork.CallOutcome>, Network> network, String owner,
+                            Duration pollInterval, Listener listener) {
+        this.listener = Objects.requireNonNull(listener, "listener");
         this.store = Objects.requireNonNull(store, "store");
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -157,7 +181,7 @@ public final class DispatcherDriver implements SmartLifecycle {
 
     private void send(OutboundCall call) {
         LOG.info("dispatcher sends {} {} to {}", call.callId(), call.request().getClass().getSimpleName(), call.target());
-        network.send(call);
+        listener.send(call, () -> network.send(call));
         crashPoints.reached(CrashPoint.CP4);
     }
 
@@ -190,12 +214,14 @@ public final class DispatcherDriver implements SmartLifecycle {
         if (outcome.status().isEmpty()) {
             LOG.info("dispatcher: no reply to {} ({}); retried after its lease", call.callId(),
                     outcome.error().orElse("no status"));
+            listener.attempt(call, "no_reply");
             return false;
         }
         Optional<TreeMap<String, String>> facts = CallWire.reply(call.request(), outcome.status().get(), outcome.body());
         if (facts.isEmpty()) {
             LOG.info("dispatcher: {} answered {} with no result; retried after its lease", call.callId(),
                     outcome.status().get());
+            listener.attempt(call, "no_result");
             return false;
         }
         List<OutboundCall> then;
@@ -205,9 +231,11 @@ public final class DispatcherDriver implements SmartLifecycle {
         } catch (StoreUnavailable | StoreConflict e) {
             LOG.warn("dispatcher: the result of {} is lost ({}); the call is retried after its lease", call.callId(),
                     e.getMessage());
+            listener.attempt(call, "lost");
             return false;
         }
         LOG.info("dispatcher records {} {}", call.callId(), facts.get());
+        listener.attempt(call, "answered");
         for (OutboundCall c : then) {
             send(c);
         }
