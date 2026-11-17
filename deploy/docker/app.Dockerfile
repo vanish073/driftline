@@ -3,7 +3,7 @@
 #
 # The OpenTelemetry Java agent (DESIGN §13, D78) is fetched from Maven Central and checked against its SHA-256 (whose
 # SHA-1 matches the one Central publishes). It is loaded always and stays off unless OTEL_JAVAAGENT_ENABLED=true.
-FROM eclipse-temurin:21.0.12.1_1-jre-noble@sha256:cd35bb33859641c5374415826a5951845104093eaa401cbe9d3d9023444f1c13
+FROM eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
 RUN groupadd --system driftline && useradd --system --gid driftline --no-create-home --shell /usr/sbin/nologin driftline \
     && mkdir -p /app/otel
 WORKDIR /app

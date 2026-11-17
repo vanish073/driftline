@@ -25,6 +25,9 @@ testing {
                 implementation(libs.postgresql)
                 implementation(libs.hikaricp)
                 implementation(libs.flyway.core)
+                // Flyway brings Jackson 3.1.1, which has high-severity advisories; the BOM lifts it to the version the
+                // rest of the build uses (D79)
+                implementation(platform(libs.jackson.bom))
                 runtimeOnly(libs.flyway.database.postgresql)
                 implementation(libs.testcontainers.postgresql)
                 implementation(libs.jqwik)

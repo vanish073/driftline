@@ -28,17 +28,9 @@ public final class Tracing {
     /** At most this many records are linked from one {@code matcher.batch} span. */
     public static final int MAX_LINKS = 128;
 
-    private static final TextMapGetter<String> TRACEPARENT = new TextMapGetter<>() {
-        @Override
-        public Iterable<String> keys(String carrier) {
-            return List.of("traceparent");
-        }
-
-        @Override
-        public String get(String carrier, String key) {
-            return "traceparent".equals(key) ? carrier : null;
-        }
-    };
+    /** The carrier is the {@code traceparent} value itself; nothing else is read from it. */
+    private static final TextMapGetter<String> TRACEPARENT =
+            (carrier, key) -> "traceparent".equals(key) ? carrier : null;
 
     private final Tracer tracer;
     private final boolean enabled;

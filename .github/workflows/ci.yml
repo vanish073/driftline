@@ -1,4 +1,4 @@
-# CI. DESIGN §16 lists the jobs; `security` arrives in Shift 9. Every third-party action is pinned by commit SHA.
+# CI. DESIGN §16 lists the jobs. Every third-party action is pinned by commit SHA, every container image by digest.
 name: ci
 
 on:
@@ -198,6 +198,63 @@ jobs:
             build/e2e/chaos-compose.txt
             deploy/compose/.dev/compose.log
           retention-days: 14
+
+  # DESIGN §14, §16, D79: no secret anywhere in the git history (gitleaks; .gitleaksignore lists each accepted finding),
+  # the committed Gradle lockfiles match the build files, and no locked dependency has a high, critical or unscored
+  # advisory (OSV-Scanner).
+  security:
+    name: security (gitleaks, lockfiles, OSV-Scanner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Secrets in the git history (gitleaks)
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git --redact --no-banner --exit-code 1 /repo
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Lockfiles match the build files
+        run: scripts/check-lockfiles.sh
+
+      - name: Advisories in the locked dependencies (OSV-Scanner)
+        run: scripts/osv-scan.sh
+
+  # DESIGN §14, §16, D79: the Gradle dependency graph is submitted for every push to main and every pull request, and a
+  # pull request that adds a dependency with a high or critical advisory fails GitHub's dependency review.
+  dependency-review:
+    name: dependency-review (dependency graph; review on pull requests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write   # the dependency submission API needs it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Submit the Gradle dependency graph
+        uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          retry-on-snapshot-warnings: true
 
   # DESIGN §13, D78: the Prometheus config and alert rules (with promtool unit tests), the collector config, and the
   # Grafana dashboard against its generator.
