@@ -25,6 +25,7 @@ public record DriftlineProperties(
         @DefaultValue("local") String instanceId,
         @DefaultValue Kafka kafka,
         @DefaultValue Secrets secrets,
+        @DefaultValue Pii pii,
         @DefaultValue Store store,
         @DefaultValue Worker worker,
         @DefaultValue Resolver resolver,
@@ -63,6 +64,26 @@ public record DriftlineProperties(
         public String toString() {
             return "Secrets[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", refreshInterval=" + refreshInterval
                     + "]";
+        }
+    }
+
+    /**
+     * Keys for customers' contact details (D77): an AES-256-GCM keyring (base64 by key id; {@code activeKid} encrypts)
+     * separate from the webhook-secret keys, and a base64 HMAC key of at least 32 bytes for the VPA blind index. All
+     * empty: personal data storage is off, and contacts on webhooks are discarded.
+     */
+    public record Pii(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys,
+                      @DefaultValue("") String indexKey) {
+
+        public boolean configured() {
+            return !activeKid.isBlank() && !keys.isEmpty() && !indexKey.isBlank();
+        }
+
+        /** Never prints a key. */
+        @Override
+        public String toString() {
+            return "Pii[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", indexKey="
+                    + (indexKey.isBlank() ? "unset" : "***") + "]";
         }
     }
 

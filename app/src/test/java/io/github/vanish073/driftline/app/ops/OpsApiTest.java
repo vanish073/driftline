@@ -20,6 +20,8 @@ import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
 import io.github.vanish073.driftline.app.merchant.SecretRefresher;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
+import io.github.vanish073.driftline.app.pii.PiiCipher;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
@@ -38,6 +40,7 @@ import io.github.vanish073.driftline.core.port.AuditRepo;
 import io.github.vanish073.driftline.core.port.BreakRepo;
 import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.LedgerRepo;
+import io.github.vanish073.driftline.core.port.OrderRepo;
 import io.github.vanish073.driftline.core.port.PaymentRepo;
 import io.github.vanish073.driftline.core.port.SettlementRepo;
 import io.github.vanish073.driftline.core.port.Store;
@@ -109,6 +112,8 @@ class OpsApiTest {
     SecretCipher cipher;
     @MockitoBean
     SecretRefresher refresher;
+    @MockitoBean
+    CustomerContacts contacts;
 
     @BeforeEach
     void world() {
@@ -457,5 +462,38 @@ class OpsApiTest {
                 .thenReturn(PostgresDirectory.Rotation.UNKNOWN_MERCHANT);
         mvc.perform(post(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isNotFound());
         verify(refresher, never()).refresh();
+    }
+
+    // ---- customer contacts (D77) ----------------------------------------------------------------------------------
+
+    @Test
+    void aVpaSearchUsesTheBlindIndexWithinTheTokensMerchantAndAnswers503WhenStorageIsOff() throws Exception {
+        when(contacts.enabled()).thenReturn(true);
+        when(contacts.paymentsByVpa(A, "buyer@okaxis")).thenReturn(List.of(PaymentId.of("pay_2")));
+        mvc.perform(get("/v1/payments/search?vpa=buyer@okaxis").header("Authorization", "Bearer test-token-a"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.payments[0].payment_id").value("pay_2"))
+                .andExpect(jsonPath("$.payments[0].merchant_id").value("m_a"));
+        verify(contacts, never()).paymentsByVpa(eq(B), anyString());
+        mvc.perform(get("/v1/payments/search?vpa=buyer@okaxis&merchantId=m_b").header("Authorization", "Bearer test-token-a"))
+                .andExpect(status().isForbidden());
+
+        when(contacts.enabled()).thenReturn(false);
+        mvc.perform(get("/v1/payments/search?vpa=buyer@okaxis").header("Authorization", "Bearer test-token-a"))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    void aTimelineShowsTheCustomerMaskedNeverInClear() throws Exception {
+        when(tx.orders()).thenReturn(Mockito.mock(OrderRepo.class));
+        when(contacts.find(A, PaymentId.of("pay_2"))).thenReturn(Optional.of(new PiiCipher.Opened(
+                Optional.of("buyer.one@okaxis"), Optional.of("9876543210"), Optional.empty())));
+        String body = mvc.perform(get("/v1/payments/pay_2/timeline").header("Authorization", "Bearer test-token-a"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customer.vpa").value("bu***@okaxis"))
+                .andExpect(jsonPath("$.customer.phone").value("98******10"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("buyer.one@okaxis").doesNotContain("9876543210");
     }
 }

@@ -3,7 +3,9 @@ package io.github.vanish073.driftline.app.ingest;
 import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
 import io.github.vanish073.driftline.app.security.MerchantAccess;
+import io.github.vanish073.driftline.core.event.PaymentPayload;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.core.port.Clock;
@@ -17,6 +19,7 @@ import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFileParser;
+import io.github.vanish073.driftline.wire.webhook.CustomerContact;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -52,12 +55,15 @@ public class IngestController {
     private final EventPublisher publisher;
     private final SettlementInbox inbox;
     private final Clock clock;
+    private final CustomerContacts contacts;
 
-    public IngestController(MerchantRegistry merchants, EventPublisher publisher, SettlementInbox inbox, Clock clock) {
+    public IngestController(MerchantRegistry merchants, EventPublisher publisher, SettlementInbox inbox, Clock clock,
+                            CustomerContacts contacts) {
         this.merchants = merchants;
         this.publisher = publisher;
         this.inbox = inbox;
         this.clock = clock;
+        this.contacts = contacts;
     }
 
     /** Authenticated by its HMAC signature over the raw bytes, verified before any parsing (§10.2, D21). */
@@ -74,7 +80,22 @@ public class IngestController {
         if (body.isEmpty()) {
             return error(413, "body larger than " + WebhookSignature.MAX_BODY_BYTES + " bytes");
         }
-        return accept(IngestNormaliser.webhook(merchant.get(), body.get(), signature, clock.now(), traceparent));
+        IngestResult result = IngestNormaliser.webhook(merchant.get(), body.get(), signature, clock.now(), traceparent);
+        if (result instanceof IngestResult.Accepted a && a.customer().isPresent()
+                && a.envelope().payload() instanceof PaymentPayload payment) {
+            // D77: the contact goes to the encrypted vault before the event is published, never into the event
+            CustomerContact contact = a.customer().get();
+            if (contact.dropped() > 0) {
+                LOG.info("webhook {}: {} customer fields did not validate and were not stored", a.envelope().eventKey(),
+                        contact.dropped());
+            }
+            try {
+                contacts.store(merchant.get().merchantId(), payment.paymentId(), contact, clock.now());
+            } catch (StoreUnavailable e) {
+                return error(503, "the store is unavailable; retry with the same event");
+            }
+        }
+        return accept(result);
     }
 
     /** {@code Idempotency-Key} is required (§10.3); the token needs {@code events:write} for this merchant. */

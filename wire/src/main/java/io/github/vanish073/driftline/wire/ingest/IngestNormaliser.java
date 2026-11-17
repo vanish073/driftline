@@ -10,6 +10,7 @@ import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.wire.hmac.WebhookSignature;
 import io.github.vanish073.driftline.wire.order.OrderEventCodec;
 import io.github.vanish073.driftline.wire.order.OrderEventMessage;
+import io.github.vanish073.driftline.wire.webhook.CustomerContact;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhook;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhookCodec;
 import java.nio.charset.StandardCharsets;
@@ -41,10 +42,12 @@ public final class IngestNormaliser {
         }
         try {
             GatewayWebhook webhook = GatewayWebhookCodec.decode(body);
-            byte[] canonical = GatewayWebhookCodec.encode(webhook);
+            byte[] canonical = GatewayWebhookCodec.encode(webhook);   // without the customer: never hashed (D77)
+            Optional<CustomerContact> customer = webhook.payload() instanceof PaymentPayload
+                    ? GatewayWebhookCodec.customer(body) : Optional.empty();
             return new IngestResult.Accepted(new EventEnvelope(EventEnvelope.SCHEMA_VERSION, merchant.merchantId(),
                     merchant.partition(), Source.GATEWAY, webhook.eventId(), webhook.type(), webhook.occurredAt(),
-                    receivedAt, Sha256.of(canonical), webhook.payload(), validTraceparent(traceparent)));
+                    receivedAt, Sha256.of(canonical), webhook.payload(), validTraceparent(traceparent)), customer);
         } catch (IllegalArgumentException e) {   // includes MalformedJson
             return new IngestResult.Rejected(400, e.getMessage());
         }

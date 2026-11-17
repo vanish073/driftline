@@ -8,7 +8,7 @@ stack_build() {
 }
 
 # A fresh merchant pool (random webhook secrets and tokens, the dispatcher's service token) and random database
-# passwords and secrets key under $DEV (git-ignored; nothing secret is ever committed). Extra env lines may follow.
+# passwords, secrets key and personal-data keys (D77) under $DEV (git-ignored; nothing secret is ever committed). Extra env lines may follow.
 #   stack_secrets MERCHANTS [EXTRA_ENV_LINE...]
 stack_secrets() {
     local merchants=$1
@@ -25,6 +25,8 @@ stack_secrets() {
         echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
         echo "DRIFTLINE_DB_PASSWORD=$(openssl rand -hex 16)"
         echo "DRIFTLINE_SECRETS_KEY=$(openssl rand -base64 32)"
+        echo "DRIFTLINE_PII_KEY=$(openssl rand -base64 32)"
+        echo "DRIFTLINE_PII_INDEX_KEY=$(openssl rand -base64 32)"
         echo "DRIFTLINE_SERVICE_TOKEN=$service_token"
         for line in "$@"; do
             echo "$line"
@@ -33,10 +35,16 @@ stack_secrets() {
     umask 022
 }
 
-# The EXIT trap: saves the Compose logs to $DEV/compose.log and removes the stack, volumes included.
+# The EXIT trap: saves the Compose logs to $DEV/compose.log, scans the stack for leaked personal data (D77; it fails the
+# run if any is found, or if the vault is empty while the run otherwise passed) and removes the stack, volumes included.
 stack_teardown() {
     local status=$?
     "${COMPOSE[@]}" logs --no-color --timestamps > "$DEV/compose.log" 2>&1 || true
+    local scan=0
+    scripts/pii-scan.sh "$DEV/compose.log" "${COMPOSE[@]}" || scan=$?
+    if [ "$status" -eq 0 ] && [ "$scan" -ne 0 ]; then
+        status=$scan
+    fi
     "${COMPOSE[@]}" down --volumes --remove-orphans > /dev/null 2>&1 || true
     exit "$status"
 }

@@ -5,6 +5,9 @@ import io.github.vanish073.driftline.app.ingest.BoundedBody;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
 import io.github.vanish073.driftline.app.merchant.SecretRefresher;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
+import io.github.vanish073.driftline.app.pii.PiiCipher;
+import io.github.vanish073.driftline.app.pii.PiiMasking;
 import io.github.vanish073.driftline.app.security.MerchantAccess;
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
@@ -76,15 +79,17 @@ public class OpsController {
     private final PostgresDirectory directory;
     private final SecretCipher cipher;
     private final SecretRefresher refresher;
+    private final CustomerContacts contacts;
 
     public OpsController(Store store, MerchantRegistry merchants, Clock clock, PostgresDirectory directory,
-                         SecretCipher cipher, SecretRefresher refresher) {
+                         SecretCipher cipher, SecretRefresher refresher, CustomerContacts contacts) {
         this.store = store;
         this.merchants = merchants;
         this.clock = clock;
         this.directory = directory;
         this.cipher = cipher;
         this.refresher = refresher;
+        this.contacts = contacts;
     }
 
     /** Overlap bounds for a webhook secret rotation (D76): long enough for the gateway to switch, at most a week. */
@@ -354,9 +359,64 @@ public class OpsController {
         }
     }
 
+    /** A customer's contact as the ops API shows it: masked, never in clear (D77). */
+    static Map<String, Object> maskedContact(PiiCipher.Opened c) {
+        Map<String, Object> v = new LinkedHashMap<>();
+        v.put("vpa", c.vpa().map(PiiMasking::maskAddress).orElse(null));
+        v.put("phone", c.phone().map(PiiMasking::maskPhone).orElse(null));
+        v.put("email", c.email().map(PiiMasking::maskAddress).orElse(null));
+        return v;
+    }
+
     /**
-     * {@code GET /v1/payments/{id}/timeline}: the payment, its decisions, its order, its settlement match and its breaks.
-     * Payment ids are unique per merchant, so an ops token names the merchant with {@code merchantId}.
+     * {@code GET /v1/payments/search?vpa=&merchantId=} (D77): the payments whose customer paid with this UPI VPA, found
+     * through the blind index, so the VPA itself is never compared or stored in clear. A merchant token searches its own
+     * merchant; an ops token searches the named merchant, or every merchant. 503 if personal data storage is off.
+     */
+    @GetMapping("/v1/payments/search")
+    @PreAuthorize("hasAuthority('SCOPE_breaks:read')")
+    public ResponseEntity<?> searchByVpa(Authentication auth, @RequestParam String vpa,
+                                         @RequestParam Optional<String> merchantId) {
+        if (!contacts.enabled()) {
+            return error(503, "personal data storage is not configured on this instance");
+        }
+        Optional<MerchantId> bound = MerchantAccess.boundMerchant(auth);
+        List<MerchantId> scope = new ArrayList<>();
+        try {
+            Optional<MerchantId> requested = merchantId.map(MerchantId::of);
+            if (bound.isPresent() && requested.isPresent() && !requested.get().equals(bound.get())) {
+                return error(403, "forbidden");
+            }
+            if (bound.isPresent()) {
+                scope.add(bound.get());
+            } else if (requested.isPresent()) {
+                scope.add(requested.get());
+            } else {
+                merchants.merchants().stream().map(MerchantTerms::merchantId).forEach(scope::add);
+            }
+        } catch (IllegalArgumentException e) {
+            return error(400, "merchantId is not a merchant id");
+        }
+        try {
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (MerchantId m : scope) {
+                for (PaymentId p : contacts.paymentsByVpa(m, vpa)) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("merchant_id", m.value());
+                    row.put("payment_id", p.value());
+                    rows.add(row);
+                }
+            }
+            return ResponseEntity.ok(Map.of("payments", rows, "count", rows.size()));
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        }
+    }
+
+    /**
+     * {@code GET /v1/payments/{id}/timeline}: the payment, its decisions, its order, its settlement match and its breaks,
+     * and its customer's contact, masked (D77). Payment ids are unique per merchant, so an ops token names the merchant
+     * with {@code merchantId}.
      */
     @GetMapping("/v1/payments/{paymentId}/timeline")
     @PreAuthorize("hasAuthority('SCOPE_breaks:read')")
@@ -430,6 +490,8 @@ public class OpsController {
                 v.put("breaks", breaks);
                 return Optional.of(v);
             });
+            found.ifPresent(v -> v.put("customer", contacts.find(merchant, payment).map(OpsController::maskedContact)
+                    .orElse(null)));
             return found.<ResponseEntity<?>>map(ResponseEntity::ok).orElseGet(() -> error(404, "no such payment"));
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");

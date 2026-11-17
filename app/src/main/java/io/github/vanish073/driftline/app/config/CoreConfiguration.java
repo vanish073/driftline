@@ -5,13 +5,17 @@ import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
 import io.github.vanish073.driftline.app.merchant.SecretCipher;
 import io.github.vanish073.driftline.app.merchant.SecretRefresher;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
+import io.github.vanish073.driftline.app.pii.PiiCipher;
 import io.github.vanish073.driftline.app.port.SystemClock;
 import io.github.vanish073.driftline.core.hooks.Canaries;
 import io.github.vanish073.driftline.core.hooks.CrashPoints;
 import io.github.vanish073.driftline.core.port.Clock;
+import io.github.vanish073.driftline.store.postgres.CustomerVault;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.store.postgres.PostgresStore;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
+import java.util.Optional;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +81,23 @@ public class CoreConfiguration {
     @Bean
     SecretCipher secretCipher(DriftlineProperties properties) {
         return new SecretCipher(properties.secrets().activeKid(), properties.secrets().keys());
+    }
+
+    @Bean
+    CustomerVault customerVault(DataSource dataSource) {
+        return new CustomerVault(dataSource);
+    }
+
+    /** Customers' contact details (D77): stored encrypted when the personal-data keys are configured, else discarded. */
+    @Bean
+    CustomerContacts customerContacts(CustomerVault vault, DriftlineProperties properties) {
+        DriftlineProperties.Pii pii = properties.pii();
+        if (!pii.configured()) {
+            LOG.warn("personal data storage is off (no driftline.pii keys): customer contacts on webhooks are "
+                    + "discarded");
+            return new CustomerContacts(vault, Optional.empty());
+        }
+        return new CustomerContacts(vault, Optional.of(new PiiCipher(pii.activeKid(), pii.keys(), pii.indexKey())));
     }
 
     /** Reloads the active webhook secrets while running (D76). */

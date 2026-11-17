@@ -13,7 +13,8 @@ x-app-image: &app-image
     dockerfile: deploy/docker/app.Dockerfile
   image: driftline-app:dev
 
-# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key and the dev bootstrap.
+# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key, the personal-data keys
+# (D77: the vault's AES keyring and the VPA blind-index key) and the dev bootstrap.
 x-app-env: &app-env
   SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
   SPRING_DATASOURCE_USERNAME: driftline
@@ -21,6 +22,9 @@ x-app-env: &app-env
   DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   DRIFTLINE_SECRETS_ACTIVE_KID: dev
   DRIFTLINE_SECRETS_KEYS_DEV: ${DRIFTLINE_SECRETS_KEY:?missing}
+  DRIFTLINE_PII_ACTIVE_KID: dev
+  DRIFTLINE_PII_KEYS_DEV: ${DRIFTLINE_PII_KEY:?missing}
+  DRIFTLINE_PII_INDEX_KEY: ${DRIFTLINE_PII_INDEX_KEY:?missing}
   DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
   JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
 
