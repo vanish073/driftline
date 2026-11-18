@@ -1,5 +1,5 @@
 # The sandbox (DESIGN §15.2, D20, D51), from `./gradlew :sandbox:installDist`. Runs as a non-root user.
-FROM eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+FROM eclipse-temurin:24.0.2_12-jre-noble@sha256:b416d02335e702b0403ff280de9475a3348e29382285969c9d4e17862ce632e7
 RUN groupadd --system --gid 10001 sandbox \
     && useradd --system --uid 10001 --gid sandbox --no-create-home --shell /usr/sbin/nologin sandbox
 WORKDIR /app
