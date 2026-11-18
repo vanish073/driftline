@@ -4,7 +4,7 @@
 #
 # The OpenTelemetry Java agent (DESIGN §13, D78) is fetched from Maven Central and checked against its SHA-256 (whose
 # SHA-1 matches the one Central publishes). It is loaded always and stays off unless OTEL_JAVAAGENT_ENABLED=true.
-FROM eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+FROM eclipse-temurin:24.0.2_12-jre-noble@sha256:b416d02335e702b0403ff280de9475a3348e29382285969c9d4e17862ce632e7
 # A fixed numeric user, so Kubernetes can check runAsNonRoot (D80).
 RUN groupadd --system --gid 10001 driftline \
     && useradd --system --uid 10001 --gid driftline --no-create-home --shell /usr/sbin/nologin driftline \
