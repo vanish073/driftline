@@ -1,0 +1,15 @@
+# Driftline on Kubernetes, the base (DESIGN §15.3, D80): one Deployment per role, the migration Job, the API Service,
+# the ingest HPA, PodDisruptionBudgets and NetworkPolicies. PostgreSQL, Kafka and the Secrets (see
+# secrets.example.yaml) come from the environment; overlays/kind supplies throwaway ones. Every resource carries
+# driftline.io/stage (infra, migrate, app), so a deployment can apply them in order and wait between stages.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - config.yaml
+  - network-policies.yaml
+  - migrate-job.yaml
+  - ingest.yaml
+  - matcher.yaml
+  - settlement-worker.yaml
+  - resolver.yaml
+  - dispatcher.yaml

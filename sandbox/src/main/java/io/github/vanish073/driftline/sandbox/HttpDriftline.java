@@ -23,7 +23,8 @@ import java.util.function.IntConsumer;
  * as real requests to the ingest API (D51). The world runs on virtual time in the past, so its webhooks are re-signed
  * here with the real clock: each delivery attempt is signed with a fresh timestamp anyway (§10.2), and the event time
  * inside the body stays the world's. A transport error or a 503 is retried a few times in real time before the world
- * sees a failure (and retries on its own schedule).
+ * sees a failure (and retries on its own schedule). A payment webhook gains a fake customer contact here
+ * ({@link FakeContacts}, D77), as a real gateway's would carry; the simulator itself never adds one.
  */
 final class HttpDriftline implements Ingress, SettlementUploads {
 
@@ -51,9 +52,10 @@ final class HttpDriftline implements Ingress, SettlementUploads {
         switch (request) {
             case Request.Webhook w -> {
                 webhooks.incrementAndGet();
-                reply.accept(post("/v1/webhooks/gateway/" + m.id().value(), w.body(), () -> Map.of(
+                byte[] body = FakeContacts.addTo(w.body());
+                reply.accept(post("/v1/webhooks/gateway/" + m.id().value(), body, () -> Map.of(
                         WebhookSignature.HEADER, WebhookSignature.sign(m.secret().getBytes(StandardCharsets.US_ASCII),
-                                Instant.now(), w.body()))));
+                                Instant.now(), body))));
             }
             case Request.OrderEvent o -> {
                 orderEvents.incrementAndGet();

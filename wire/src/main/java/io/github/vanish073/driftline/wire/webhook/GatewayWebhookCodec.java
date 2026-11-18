@@ -10,6 +10,7 @@ import io.github.vanish073.driftline.wire.WireTime;
 import io.github.vanish073.driftline.wire.json.JsonObject;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
 import io.github.vanish073.driftline.wire.json.StrictJson;
+import java.util.Optional;
 
 /**
  * Encodes and decodes {@link GatewayWebhook}. The body is:
@@ -21,6 +22,9 @@ import io.github.vanish073.driftline.wire.json.StrictJson;
  *  "refund":{"payment_id":"pay_…","amount_paise":49900,"currency":"INR"}}
  * </pre>
  *
+ * A payment event may also carry the customer's contact details, {@code "customer":{"vpa","phone","email"}} (all
+ * optional): personal data, read separately by {@link #customer} and never part of the canonical form (D77).
+ *
  * Unknown fields are ignored, as gateways add fields over time; required ones are checked strictly. The encoding is
  * canonical, so {@code encode(decode(body))} is the form that is hashed into {@code payloadSha256}.
  */
@@ -30,6 +34,11 @@ public final class GatewayWebhookCodec {
     }
 
     public static byte[] encode(GatewayWebhook webhook) {
+        return encode(webhook, Optional.empty());
+    }
+
+    /** The body a gateway sends, with the customer's contact details on a payment event (D77). */
+    public static byte[] encode(GatewayWebhook webhook, Optional<CustomerContact> customer) {
         return StrictJson.write(g -> {
             g.writeStringProperty("id", webhook.eventId());
             g.writeStringProperty("type", webhook.type().wireName());
@@ -42,6 +51,15 @@ public final class GatewayWebhookCodec {
                 g.writeNumberProperty("amount_paise", p.amount().paise());
                 g.writeStringProperty("currency", "INR");
                 g.writeEndObject();
+                if (customer.isPresent() && !customer.get().isEmpty()) {
+                    CustomerContact c = customer.get();
+                    g.writeName("customer");
+                    g.writeStartObject();
+                    c.vpa().ifPresent(v -> g.writeStringProperty("vpa", v));
+                    c.phone().ifPresent(v -> g.writeStringProperty("phone", v));
+                    c.email().ifPresent(v -> g.writeStringProperty("email", v));
+                    g.writeEndObject();
+                }
             } else if (webhook.payload() instanceof RefundPayload r) {
                 g.writeName("refund");
                 g.writeStartObject();
@@ -80,6 +98,21 @@ public final class GatewayWebhookCodec {
         } catch (IllegalArgumentException | ArithmeticException e) {
             throw new MalformedJson("invalid webhook: " + e.getMessage());
         }
+    }
+
+    /**
+     * The customer's contact details on a payment event, if any, validated field by field (D77); empty when there are
+     * none, or none valid. A malformed {@code customer} member (not an object) counts as none.
+     *
+     * @throws MalformedJson if the body is not JSON at all
+     */
+    public static Optional<CustomerContact> customer(byte[] body) {
+        JsonObject root = StrictJson.parse(body);
+        if (!root.has("customer") || !(root.fields().get("customer") instanceof JsonObject c)) {
+            return Optional.empty();
+        }
+        CustomerContact contact = CustomerContact.from(c);
+        return contact.isEmpty() && contact.dropped() == 0 ? Optional.empty() : Optional.of(contact);
     }
 
     static EventType eventType(String wireName) {

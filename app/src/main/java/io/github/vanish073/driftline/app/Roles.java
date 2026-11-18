@@ -9,7 +9,8 @@ import java.util.Locale;
  * runs ingest, the matcher, the settlement worker, the resolver and the dispatcher in one JVM, and a comma-separated
  * list of those runs just them ({@code scripts/chaos.sh} runs the matcher and the dispatcher in containers of their
  * own, so it can kill them). {@code migrate} is the one-shot Flyway service of the Compose stack (§15.2) and
- * {@code verify} the one-shot post-run check ({@code driftline verify}); each runs alone.
+ * {@code verify} the one-shot post-run check ({@code driftline verify}), and {@code verify-audit} walks the audit
+ * chain ({@code driftline verify-audit}, §7.6); each runs alone.
  */
 public final class Roles {
 
@@ -20,8 +21,9 @@ public final class Roles {
     public static final String DISPATCHER = "dispatcher";
     public static final String MIGRATE = "migrate";
     public static final String VERIFY = "verify";
+    public static final String VERIFY_AUDIT = "verify-audit";
     /** A Spring profile expression: every service role, not a one-shot. */
-    public static final String SERVICE = "!" + MIGRATE + " & !" + VERIFY;
+    public static final String SERVICE = "!" + MIGRATE + " & !" + VERIFY + " & !" + VERIFY_AUDIT;
 
     private static final List<String> SERVICES = List.of(INGEST, MATCHER, SETTLEMENT_WORKER, RESOLVER, DISPATCHER);
 
@@ -34,7 +36,7 @@ public final class Roles {
             case "all" -> {
                 return SERVICES;
             }
-            case MIGRATE, VERIFY -> {
+            case MIGRATE, VERIFY, VERIFY_AUDIT -> {
                 return List.of(r);
             }
             default -> {
@@ -42,8 +44,9 @@ public final class Roles {
                 for (String part : r.split(",", -1)) {
                     String p = part.trim();
                     if (!SERVICES.contains(p)) {
-                        throw new IllegalArgumentException("DRIFTLINE_ROLE must be all, migrate, verify, or one or more "
-                                + "of ingest, matcher, settlement-worker, resolver and dispatcher, comma-separated");
+                        throw new IllegalArgumentException("DRIFTLINE_ROLE must be all, migrate, verify, verify-audit, "
+                                + "or one or more of ingest, matcher, settlement-worker, resolver and dispatcher, "
+                                + "comma-separated");
                     }
                     if (!out.contains(p)) {
                         out.add(p);

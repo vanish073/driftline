@@ -8,6 +8,9 @@ import io.github.vanish073.driftline.app.kafka.KafkaClients;
 import io.github.vanish073.driftline.app.kafka.KafkaEventPublisher;
 import io.github.vanish073.driftline.app.kafka.PartitionDriver;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.observability.DispatcherObserver;
+import io.github.vanish073.driftline.app.observability.MatcherObserver;
+import io.github.vanish073.driftline.app.observability.ResolverObserver;
 import io.github.vanish073.driftline.app.port.HttpNetwork;
 import io.github.vanish073.driftline.app.resolver.ResolverDriver;
 import io.github.vanish073.driftline.app.settlement.SettlementWorker;
@@ -64,12 +67,12 @@ public class RoleConfiguration {
     @Bean
     @Profile(Roles.MATCHER)
     PartitionDriver partitionDriver(Store store, Matcher matcher, Clock clock, CrashPoints crashPoints,
-                                    DriftlineProperties properties) {
+                                    DriftlineProperties properties, MatcherObserver observer) {
         DriftlineProperties.Kafka kafka = properties.kafka();
         String owner = leaseOwner(properties);
         return new PartitionDriver(store, matcher, clock,
                 () -> new KafkaConsumer<>(KafkaClients.consumer(kafka, "driftline-matcher-" + owner)), kafka.topic(),
-                owner, crashPoints, PartitionDriver.Listener.NONE, kafka.pollTimeout(), kafka.maxTickInterval(),
+                owner, crashPoints, observer, kafka.pollTimeout(), kafka.maxTickInterval(),
                 kafka.sessionTimeout().multipliedBy(3));
     }
 
@@ -105,10 +108,12 @@ public class RoleConfiguration {
     @Bean
     @Profile(Roles.RESOLVER)
     ResolverDriver resolverDriver(Store store, Clock clock, Canaries canaries, CrashPoints crashPoints,
-                                  DriftlineProperties properties, ObjectProvider<DispatcherDriver> dispatcher) {
+                                  DriftlineProperties properties, ObjectProvider<DispatcherDriver> dispatcher,
+                                  ResolverObserver observer) {
         DriftlineProperties.Resolver r = properties.resolver();
         return new ResolverDriver(store, new Resolver(Resolver.Config.DEFAULT, canaries, crashPoints), clock,
-                crashPoints, r.pollInterval(), r.batchSize(), () -> dispatcher.ifAvailable(DispatcherDriver::wake));
+                crashPoints, r.pollInterval(), r.batchSize(), () -> dispatcher.ifAvailable(DispatcherDriver::wake),
+                observer);
     }
 
     @Bean
@@ -123,7 +128,7 @@ public class RoleConfiguration {
     @Bean
     @Profile(Roles.DISPATCHER)
     DispatcherDriver dispatcherDriver(Store store, Clock clock, Canaries canaries, CrashPoints crashPoints,
-                                      DriftlineProperties properties) {
+                                      DriftlineProperties properties, DispatcherObserver observer) {
         DriftlineProperties.Dispatcher d = properties.dispatcher();
         d.requireComplete();
         Dispatcher dispatcher = new Dispatcher(new Dispatcher.Config(d.callTimeout(), d.backoffBase(), d.backoffCap(),
@@ -133,7 +138,7 @@ public class RoleConfiguration {
                 d.merchantUrl(), CallTarget.OPS, d.opsUrl(), CallTarget.DRIFTLINE, d.observationsUrl());
         return new DispatcherDriver(store, dispatcher, clock, crashPoints,
                 inbox -> new HttpNetwork(client, targets, CallCodecs.all(d.serviceToken()), inbox, d.requestTimeout()),
-                leaseOwner(properties), d.pollInterval());
+                leaseOwner(properties), d.pollInterval(), observer);
     }
 
     @Bean

@@ -19,7 +19,7 @@ class MigrateRoleIT {
             assertThat(ctx.getBeanNamesForType(io.github.vanish073.driftline.core.port.Store.class)).isEmpty();
         }
         assertThat(Containers.count(url, "SELECT count(*) FROM flyway_schema_history WHERE success"))
-                .as("V1 to V8").isEqualTo(8);
+                .as("V1 to V11").isEqualTo(11);
         assertThat(Containers.count(url, "SELECT count(*) FROM information_schema.columns WHERE table_name = "
                 + "'settlement_lines' AND column_name IN ('candidate_hash', 'witnesses')")).as("V6").isEqualTo(2);
         assertThat(Containers.count(url, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'outbox'"))

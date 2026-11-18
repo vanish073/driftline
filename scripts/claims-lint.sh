@@ -10,7 +10,9 @@ cd "$(dirname "$0")/.."
 PATTERN='exactly[- ]once|zero data loss|guaranteed delivery'
 files=()
 [ -f README.md ] && files+=(README.md)
-while IFS= read -r -d '' f; do files+=("$f"); done < <(find docs/results deploy -type f -print0 2>/dev/null)
+# Images (the dashboard and trace screenshots) hold no text a linter can read; they are skipped.
+while IFS= read -r -d '' f; do files+=("$f"); done < <(find docs/results deploy -type f \
+    -not -name '*.png' -not -name '*.jpg' -print0 2>/dev/null)
 
 status=0
 for f in "${files[@]}"; do

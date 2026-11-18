@@ -1,0 +1,255 @@
+# scripts/obs-evidence.sh, 2026-11-17T23:50:04Z, commit 6eb8cc6+uncommitted
+# host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3 GB RAM; Compose profiles core and obs, tracing on; EVIDENCE_ROUNDS=3 EVIDENCE_SECONDS=300
+wrote deploy/compose/.dev/bootstrap.json (first settlement date 2026-11-15)
+ Image driftline-app:dev Building 
+ Image driftline-sandbox:dev Building 
+ Image driftline-app:dev Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.40kB done
+#1 DONE 0.0s
+
+#2 [sandbox internal] load build definition from sandbox.Dockerfile
+#2 transferring dockerfile: 524B 0.0s done
+#2 DONE 0.1s
+
+#3 [driftline internal] load build definition from app.Dockerfile
+#3 transferring dockerfile: 1.58kB 0.0s done
+#3 DONE 0.1s
+
+#4 [sandbox internal] load metadata for docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#4 ...
+
+#5 [auth] library/eclipse-temurin:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 [sandbox internal] load metadata for docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#4 DONE 3.0s
+
+#6 [sandbox internal] load .dockerignore
+#6 transferring context: 187B done
+#6 DONE 0.0s
+
+#7 [migrate 4/5] ADD --chmod=444     --checksum=sha256:e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149     https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.33.1/opentelemetry-javaagent-2.33.1.jar     /app/otel/opentelemetry-javaagent.jar
+#7 DONE 0.0s
+
+#8 [migrate internal] load build context
+#8 ...
+
+#9 [driftline 1/4] FROM docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#9 resolve docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515 0.1s done
+#9 DONE 0.1s
+
+#8 [migrate internal] load build context
+#8 ...
+
+#10 [sandbox internal] load build context
+#10 transferring context: 1.27MB 0.1s done
+#10 DONE 0.2s
+
+#11 [sandbox 2/4] RUN groupadd --system --gid 10001 sandbox     && useradd --system --uid 10001 --gid sandbox --no-create-home --shell /usr/sbin/nologin sandbox
+#11 CACHED
+
+#12 [sandbox 3/4] WORKDIR /app
+#12 CACHED
+
+#13 [sandbox 4/4] COPY sandbox/build/install/sandbox /app
+#13 CACHED
+
+#8 [migrate internal] load build context
+#8 ...
+
+#14 [sandbox] exporting to image
+#14 exporting layers 0.0s done
+#14 exporting manifest sha256:dde5a5585f5f97398ee94d5f9f6b156c9c196e95b8bdfaef88ee861af3c1e92b done
+#14 exporting config sha256:acdce8523c494ecbb2098f1bf41a1719402e5596a554c6c1edc8bac55a4eea95 done
+#14 exporting attestation manifest sha256:799e1ea0a77bdec946d6aeb98dfe3e5216b218cdc84333e05e6acd29c712bce1 0.1s done
+#14 exporting manifest list sha256:9c3756f29a0894dd034efd5bb45e93f3b6fce219124ff5424bd1aa1ea5a2165e 0.0s done
+#14 naming to docker.io/library/driftline-sandbox:dev done
+#14 unpacking to docker.io/library/driftline-sandbox:dev 0.0s done
+#14 DONE 0.4s
+
+#8 [migrate internal] load build context
+#8 ...
+
+#15 [sandbox] resolving provenance for metadata file
+#15 DONE 0.0s
+
+#8 [migrate internal] load build context
+#8 transferring context: 53.84MB 1.8s done
+#8 DONE 1.8s
+
+#16 [driftline 3/5] WORKDIR /app
+#16 CACHED
+
+#17 [driftline 4/5] ADD --chmod=444     --checksum=sha256:e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149     https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.33.1/opentelemetry-javaagent-2.33.1.jar     /app/otel/opentelemetry-javaagent.jar
+#17 CACHED
+
+#18 [driftline 2/5] RUN groupadd --system --gid 10001 driftline     && useradd --system --uid 10001 --gid driftline --no-create-home --shell /usr/sbin/nologin driftline     && mkdir -p /app/otel
+#18 CACHED
+
+#19 [driftline 5/5] COPY app/build/libs/app-0.1.0-SNAPSHOT.jar /app/driftline.jar
+#19 CACHED
+
+#20 [driftline] exporting to image
+#20 exporting layers 0.0s done
+#20 exporting manifest sha256:daf59d9a6a855fa61a22b0ba38543b36956144da6b72bc820fb5713e56d0fce6 0.0s done
+#20 exporting config sha256:f88f882dd5a4a2de7cea292ed0c215e39d26efde495f3e9e537db88ff120d80c 0.0s done
+#20 exporting attestation manifest sha256:22941abdddaf78ace67f71c01138e2181d3ef1b7995cdcc60c2a62cda4d7e06c 0.1s done
+#20 exporting manifest list sha256:ae2c591e05c10765eb1f9e18ef5e162dfed642774dd765b90bdcf5f6f234a93f
+#20 exporting manifest list sha256:ae2c591e05c10765eb1f9e18ef5e162dfed642774dd765b90bdcf5f6f234a93f 0.0s done
+#20 naming to docker.io/library/driftline-app:dev 0.0s done
+#20 unpacking to docker.io/library/driftline-app:dev 0.0s done
+#20 DONE 0.3s
+
+#21 [migrate] exporting to image
+#21 exporting layers 0.0s done
+#21 exporting manifest sha256:e73d6c668f48eabc089351ca1cf1233b77749d02ff95ec5e49587c6c9a2cce97 0.0s done
+#21 exporting config sha256:29a9e93e21119e5b1a884bf6a21176651ed6a21e14a6f01d5af1df55af03bef0 0.0s done
+#21 exporting attestation manifest sha256:fca872f62ebb5d110a838cffcdbc393d9102d497ebe1a332181a544244c85627 0.1s done
+#21 exporting manifest list sha256:d41cf2d55473ffd2aedd3a0863ae02bb7690f48c387b1240d14e255bb4432201 0.1s done
+#21 naming to docker.io/library/driftline-app:dev done
+#21 unpacking to docker.io/library/driftline-app:dev 0.0s done
+#21 DONE 0.4s
+
+#22 [driftline] resolving provenance for metadata file
+#22 DONE 0.1s
+
+#23 [migrate] resolving provenance for metadata file
+#23 DONE 0.0s
+ Image driftline-app:dev Built 
+ Image driftline-app:dev Built 
+ Image driftline-sandbox:dev Built 
+ Network driftline_default Creating 
+ Network driftline_default Creating 
+ Network driftline_default Created 
+ Network driftline_default Created 
+ Container driftline-kafka-1 Creating 
+ Container driftline-prometheus-1 Creating 
+ Container driftline-postgres-1 Creating 
+ Container driftline-jaeger-1 Creating 
+ Container driftline-jaeger-1 Created 
+ Container driftline-otel-collector-1 Creating 
+ Container driftline-prometheus-1 Created 
+ Container driftline-grafana-1 Creating 
+ Container driftline-postgres-1 Created 
+ Container driftline-migrate-1 Creating 
+ Container driftline-kafka-1 Created 
+ Container driftline-kafka-init-1 Creating 
+ Container driftline-otel-collector-1 Created 
+ Container driftline-grafana-1 Created 
+ Container driftline-migrate-1 Created 
+ Container driftline-kafka-init-1 Created 
+ Container driftline-driftline-1 Creating 
+ Container driftline-driftline-1 Created 
+ Container driftline-sandbox-1 Creating 
+ Container driftline-sandbox-1 Created 
+ Container driftline-jaeger-1 Starting 
+ Container driftline-kafka-1 Starting 
+ Container driftline-postgres-1 Starting 
+ Container driftline-prometheus-1 Starting 
+ Container driftline-jaeger-1 Started 
+ Container driftline-otel-collector-1 Starting 
+ Container driftline-kafka-1 Started 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Started 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-prometheus-1 Started 
+ Container driftline-grafana-1 Starting 
+ Container driftline-otel-collector-1 Started 
+ Container driftline-grafana-1 Started 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Exited 
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-driftline-1 Starting 
+ Container driftline-driftline-1 Started 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-sandbox-1 Starting 
+ Container driftline-sandbox-1 Started 
+waiting for the stack (sandbox up implies a healthy Driftline)...
+NAME                         IMAGE                                                                                                          COMMAND                  SERVICE          CREATED         STATUS                        PORTS
+driftline-driftline-1        driftline-app:dev                                                                                              "java -javaagent:/ap…"   driftline        2 minutes ago   Up About a minute (healthy)   127.0.0.1:8080->8080/tcp
+driftline-grafana-1          grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205                 "/run.sh"                grafana          2 minutes ago   Up 2 minutes                  127.0.0.1:3000->3000/tcp
+driftline-jaeger-1           jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17            "/cmd/jaeger/jaeger-…"   jaeger           2 minutes ago   Up 2 minutes                  127.0.0.1:16686->16686/tcp
+driftline-kafka-1            apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69                     "/__cacert_entrypoin…"   kafka            2 minutes ago   Up 2 minutes (healthy)        9092/tcp
+driftline-otel-collector-1   otel/opentelemetry-collector:0.164.0@sha256:28b6d41ac51bff6b41ba5e8fe503569ffb9d6a1ea90f7a78419e86f34e44f750   "/otelcol --config=/…"   otel-collector   2 minutes ago   Up 2 minutes                  4317-4318/tcp, 55679/tcp
+driftline-postgres-1         postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07                            "docker-entrypoint.s…"   postgres         2 minutes ago   Up 2 minutes (healthy)        5432/tcp
+driftline-prometheus-1       prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2                "/bin/prometheus --c…"   prometheus       2 minutes ago   Up 2 minutes                  127.0.0.1:9090->9090/tcp
+driftline-sandbox-1          driftline-sandbox:dev                                                                                          "/app/bin/sandbox se…"   sandbox          2 minutes ago   Up 22 seconds (healthy)       127.0.0.1:8085->8085/tcp
+evidence: 3 rounds of 7 injections (count 5) over 300 s
+evidence: injected DEBITED_NO_ORDER (round 1)
+evidence: injected LATE_SUCCESS (round 1)
+evidence: injected DUPLICATE_CAPTURE (round 1)
+evidence: injected SHORT_SETTLEMENT (round 1)
+evidence: injected MISSING_SETTLEMENT (round 1)
+evidence: injected ORPHAN_SETTLEMENT (round 1)
+evidence: injected NORMAL (round 1)
+evidence: injected DEBITED_NO_ORDER (round 2)
+evidence: injected LATE_SUCCESS (round 2)
+evidence: injected DUPLICATE_CAPTURE (round 2)
+evidence: injected SHORT_SETTLEMENT (round 2)
+evidence: injected MISSING_SETTLEMENT (round 2)
+evidence: injected ORPHAN_SETTLEMENT (round 2)
+evidence: injected NORMAL (round 2)
+evidence: injected DEBITED_NO_ORDER (round 3)
+evidence: injected LATE_SUCCESS (round 3)
+evidence: injected DUPLICATE_CAPTURE (round 3)
+evidence: injected SHORT_SETTLEMENT (round 3)
+evidence: injected MISSING_SETTLEMENT (round 3)
+evidence: injected ORPHAN_SETTLEMENT (round 3)
+evidence: injected NORMAL (round 3)
+evidence: traffic done; letting the system settle and Prometheus scrape for 90 s
+obs-check: Prometheus scrapes 1 Driftline target(s), all up
+obs-check: Prometheus has loaded the 4 alert rules
+obs-check: Prometheus has driftline_events_consumed_total = 882
+obs-check: Grafana serves the Driftline dashboard (26 panels)
+obs-check: Grafana's Prometheus datasource is healthy
+obs-check: Jaeger trace 1db6ed4883feb835a48a408fdafaa7c5: POST /v1/webhooks/gateway/{merchantId} -> ingest.webhook -> matcher.detect -> resolver.decide -> dispatcher.call | under dispatcher.call: GET
+obs-check: the obs profile works
+evidence: the numbers behind the board (Prometheus, at the end of the run)
+  events consumed{source=gateway} = 302
+  events consumed{source=merchant} = 397
+  events consumed{source=bank} = 183
+  ingest requests{route=order_event,status=202} = 397
+  ingest requests{route=webhook,status=202} = 278
+  ingest requests{route=settlement_file,status=202} = 63
+  event-to-match p50 (s){} = 0.10816702912658227
+  event-to-match p99 (s){} = 5.558914814242846
+  breaks detected{type=FEED_STALL} = 56
+  breaks detected{type=DEBITED_NO_ORDER} = 83
+  breaks detected{type=LATE_SUCCESS} = 15
+  breaks detected{type=DUPLICATE_CAPTURE} = 15
+  breaks detected{type=SHORT_SETTLEMENT} = 15
+  breaks detected{type=MISSING_SETTLEMENT} = 15
+  breaks detected{type=ORPHAN_SETTLEMENT} = 15
+  breaks closed{how=auto,type=DEBITED_NO_ORDER} = 15
+  breaks closed{how=auto,type=LATE_SUCCESS} = 8
+  breaks closed{how=self_healed,type=LATE_SUCCESS} = 7
+  breaks closed{how=self_healed,type=DEBITED_NO_ORDER} = 56
+  breaks closed{how=auto,type=SHORT_SETTLEMENT} = 6
+  outbox attempts{kind=ESCALATION_NOTIFY,result=no_reply} = 23
+  outbox attempts{kind=ESCALATION_NOTIFY,result=answered} = 95
+  outbox attempts{kind=PUBLISH_OBSERVATION,result=answered} = 24
+  outbox attempts{kind=REFUND,result=answered} = 23
+  outbox attempts{kind=STATUS_QUERY_ORDER,result=answered} = 105
+  outbox attempts{kind=STATUS_QUERY_PAYMENT,result=answered} = 53
+  compensation exposure (INR){} = 0
+evidence: these times are for injected traffic whose events lie in the past (D51); they are not latency results
+evidence: saved trace 1db6ed4883feb835a48a408fdafaa7c5 to docs/results/jaeger-trace-shift9.json
+screenshot: /out/grafana-shift9.png
+evidence: saved docs/results/grafana-shift9.png (290113 bytes)
+screenshot: /out/jaeger-trace-shift9.png
+evidence: saved docs/results/jaeger-trace-shift9.png (85932 bytes)
+evidence: done
+pii-scan: the Compose logs: clean
+pii-scan: the Kafka topic (882 records): clean
+pii-scan: the database outside the vault: clean
+pii-scan: the vault holds 120 encrypted contacts
+pii-scan: no raw customer contact outside the vault

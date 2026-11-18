@@ -1,0 +1,887 @@
+{
+    "result": {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {
+                            "key": "container.id",
+                            "value": {
+                                "stringValue": "e6ad7ffad2963d4bfa4701878946af1a98a83a667cff0a4c7280567cd51ffb2e"
+                            }
+                        },
+                        {
+                            "key": "host.arch",
+                            "value": {
+                                "stringValue": "amd64"
+                            }
+                        },
+                        {
+                            "key": "host.name",
+                            "value": {
+                                "stringValue": "e6ad7ffad296"
+                            }
+                        },
+                        {
+                            "key": "os.description",
+                            "value": {
+                                "stringValue": "Linux 6.6.87.2-microsoft-standard-WSL2"
+                            }
+                        },
+                        {
+                            "key": "os.type",
+                            "value": {
+                                "stringValue": "linux"
+                            }
+                        },
+                        {
+                            "key": "os.version",
+                            "value": {
+                                "stringValue": "6.6.87.2-microsoft-standard-WSL2"
+                            }
+                        },
+                        {
+                            "key": "process.command_args",
+                            "value": {
+                                "arrayValue": {
+                                    "values": [
+                                        {
+                                            "stringValue": "/opt/java/openjdk/bin/java"
+                                        },
+                                        {
+                                            "stringValue": "-javaagent:/app/otel/opentelemetry-javaagent.jar"
+                                        },
+                                        {
+                                            "stringValue": "-jar"
+                                        },
+                                        {
+                                            "stringValue": "/app/driftline.jar"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "key": "process.executable.path",
+                            "value": {
+                                "stringValue": "/opt/java/openjdk/bin/java"
+                            }
+                        },
+                        {
+                            "key": "process.pid",
+                            "value": {
+                                "intValue": "1"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.description",
+                            "value": {
+                                "stringValue": "Eclipse Adoptium OpenJDK 64-Bit Server VM 21.0.13+9-LTS"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.name",
+                            "value": {
+                                "stringValue": "OpenJDK Runtime Environment"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.version",
+                            "value": {
+                                "stringValue": "21.0.13+9-LTS"
+                            }
+                        },
+                        {
+                            "key": "service.instance.id",
+                            "value": {
+                                "stringValue": "0be31751-4f4e-4f32-8e90-8842300c731b"
+                            }
+                        },
+                        {
+                            "key": "service.name",
+                            "value": {
+                                "stringValue": "driftline"
+                            }
+                        },
+                        {
+                            "key": "service.version",
+                            "value": {
+                                "stringValue": "0.1.0-SNAPSHOT"
+                            }
+                        },
+                        {
+                            "key": "telemetry.distro.name",
+                            "value": {
+                                "stringValue": "opentelemetry-java-instrumentation"
+                            }
+                        },
+                        {
+                            "key": "telemetry.distro.version",
+                            "value": {
+                                "stringValue": "2.33.1"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.language",
+                            "value": {
+                                "stringValue": "java"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.name",
+                            "value": {
+                                "stringValue": "opentelemetry"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.version",
+                            "value": {
+                                "stringValue": "1.67.0"
+                            }
+                        }
+                    ],
+                    "entityRefs": [
+                        {
+                            "schemaUrl": "https://opentelemetry.io/schemas/1.40.0",
+                            "type": "service.instance",
+                            "idKeys": [
+                                "service.instance.id"
+                            ]
+                        },
+                        {
+                            "schemaUrl": "https://opentelemetry.io/schemas/1.40.0",
+                            "type": "service",
+                            "idKeys": [
+                                "service.name"
+                            ]
+                        }
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "scope": {
+                            "name": "io.opentelemetry.java-http-client",
+                            "version": "2.33.1-alpha"
+                        },
+                        "spans": [
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "c3c4c4af767d9a93",
+                                "parentSpanId": "ce9b54d62a430659",
+                                "flags": 259,
+                                "name": "GET",
+                                "kind": 3,
+                                "startTimeUnixNano": "1794959634767234635",
+                                "endTimeUnixNano": "1794959634789315598",
+                                "attributes": [
+                                    {
+                                        "key": "http.request.method",
+                                        "value": {
+                                            "stringValue": "GET"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.response.status_code",
+                                        "value": {
+                                            "intValue": "200"
+                                        }
+                                    },
+                                    {
+                                        "key": "network.protocol.version",
+                                        "value": {
+                                            "stringValue": "1.1"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.address",
+                                        "value": {
+                                            "stringValue": "sandbox"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.port",
+                                        "value": {
+                                            "intValue": "8085"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "45"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "dispatcher"
+                                        }
+                                    },
+                                    {
+                                        "key": "url.full",
+                                        "value": {
+                                            "stringValue": "http://sandbox:8085/gateway/v1/merchants/m_e2e_02/payments/pay_3_a"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.41.0"
+                    },
+                    {
+                        "scope": {
+                            "name": "io.opentelemetry.tomcat-10.0",
+                            "version": "2.33.1-alpha"
+                        },
+                        "spans": [
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "b9040c1ec6be32c3",
+                                "flags": 259,
+                                "name": "POST /v1/webhooks/gateway/{merchantId}",
+                                "kind": 2,
+                                "startTimeUnixNano": "1794959633615593794",
+                                "endTimeUnixNano": "1794959633683798708",
+                                "attributes": [
+                                    {
+                                        "key": "client.address",
+                                        "value": {
+                                            "stringValue": "172.21.0.9"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.request.method",
+                                        "value": {
+                                            "stringValue": "POST"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.response.status_code",
+                                        "value": {
+                                            "intValue": "202"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.route",
+                                        "value": {
+                                            "stringValue": "/v1/webhooks/gateway/{merchantId}"
+                                        }
+                                    },
+                                    {
+                                        "key": "network.peer.address",
+                                        "value": {
+                                            "stringValue": "172.21.0.9"
+                                        }
+                                    },
+                                    {
+                                        "key": "network.peer.port",
+                                        "value": {
+                                            "intValue": "60726"
+                                        }
+                                    },
+                                    {
+                                        "key": "network.protocol.version",
+                                        "value": {
+                                            "stringValue": "1.1"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.address",
+                                        "value": {
+                                            "stringValue": "driftline"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.port",
+                                        "value": {
+                                            "intValue": "8080"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "192"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "tomcat-handler-70"
+                                        }
+                                    },
+                                    {
+                                        "key": "url.path",
+                                        "value": {
+                                            "stringValue": "/v1/webhooks/gateway/m_e2e_02"
+                                        }
+                                    },
+                                    {
+                                        "key": "url.scheme",
+                                        "value": {
+                                            "stringValue": "http"
+                                        }
+                                    },
+                                    {
+                                        "key": "user_agent.original",
+                                        "value": {
+                                            "stringValue": "Java-http-client/21.0.13"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.41.0"
+                    },
+                    {
+                        "scope": {
+                            "name": "io.github.vanish073.driftline"
+                        },
+                        "spans": [
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "909db007e146e4e3",
+                                "parentSpanId": "b9040c1ec6be32c3",
+                                "flags": 259,
+                                "name": "ingest.webhook",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959633634683109",
+                                "endTimeUnixNano": "1794959633671302119",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.merchant_id",
+                                        "value": {
+                                            "stringValue": "m_e2e_02"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.response.status_code",
+                                        "value": {
+                                            "intValue": "202"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "192"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "tomcat-handler-70"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            },
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "f1aaf35699c44723",
+                                "parentSpanId": "909db007e146e4e3",
+                                "flags": 771,
+                                "name": "matcher.detect",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959633832000000",
+                                "endTimeUnixNano": "1794959633939000000",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.break_id",
+                                        "value": {
+                                            "stringValue": "brk_o2wnk525yiysn7bpqhpzjnd6tr"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.break_type",
+                                        "value": {
+                                            "stringValue": "LATE_SUCCESS"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.partition",
+                                        "value": {
+                                            "intValue": "2"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "42"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "partition-driver-driftline-compose.1794959519"
+                                        }
+                                    }
+                                ],
+                                "links": [
+                                    {
+                                        "traceId": "35779d829120c89b780a2eaf5f28cdee",
+                                        "spanId": "6128bf01f3d7ac73",
+                                        "flags": 259
+                                    }
+                                ],
+                                "status": {}
+                            },
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "c0726df7c4741157",
+                                "parentSpanId": "f1aaf35699c44723",
+                                "flags": 771,
+                                "name": "resolver.decide",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959634653000000",
+                                "endTimeUnixNano": "1794959634717000000",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.break_id",
+                                        "value": {
+                                            "stringValue": "brk_o2wnk525yiysn7bpqhpzjnd6tr"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.break_state",
+                                        "value": {
+                                            "stringValue": "AWAITING_EVIDENCE"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.commands",
+                                        "value": {
+                                            "intValue": "1"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "44"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "resolver"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            },
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "ce9b54d62a430659",
+                                "parentSpanId": "c0726df7c4741157",
+                                "flags": 771,
+                                "name": "dispatcher.call",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959634765000000",
+                                "endTimeUnixNano": "1794959634768469472",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.call_id",
+                                        "value": {
+                                            "stringValue": "cmd_hjwurfkr4hpjlgvxnbvo73hlb2.1"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.command_kind",
+                                        "value": {
+                                            "stringValue": "STATUS_QUERY_PAYMENT"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.target",
+                                        "value": {
+                                            "stringValue": "GATEWAY"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "45"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "dispatcher"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            }
+                        ]
+                    }
+                ],
+                "schemaUrl": "https://opentelemetry.io/schemas/1.40.0"
+            },
+            {
+                "resource": {
+                    "attributes": [
+                        {
+                            "key": "container.id",
+                            "value": {
+                                "stringValue": "e6ad7ffad2963d4bfa4701878946af1a98a83a667cff0a4c7280567cd51ffb2e"
+                            }
+                        },
+                        {
+                            "key": "host.arch",
+                            "value": {
+                                "stringValue": "amd64"
+                            }
+                        },
+                        {
+                            "key": "host.name",
+                            "value": {
+                                "stringValue": "e6ad7ffad296"
+                            }
+                        },
+                        {
+                            "key": "os.description",
+                            "value": {
+                                "stringValue": "Linux 6.6.87.2-microsoft-standard-WSL2"
+                            }
+                        },
+                        {
+                            "key": "os.type",
+                            "value": {
+                                "stringValue": "linux"
+                            }
+                        },
+                        {
+                            "key": "os.version",
+                            "value": {
+                                "stringValue": "6.6.87.2-microsoft-standard-WSL2"
+                            }
+                        },
+                        {
+                            "key": "process.command_args",
+                            "value": {
+                                "arrayValue": {
+                                    "values": [
+                                        {
+                                            "stringValue": "/opt/java/openjdk/bin/java"
+                                        },
+                                        {
+                                            "stringValue": "-javaagent:/app/otel/opentelemetry-javaagent.jar"
+                                        },
+                                        {
+                                            "stringValue": "-jar"
+                                        },
+                                        {
+                                            "stringValue": "/app/driftline.jar"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "key": "process.executable.path",
+                            "value": {
+                                "stringValue": "/opt/java/openjdk/bin/java"
+                            }
+                        },
+                        {
+                            "key": "process.pid",
+                            "value": {
+                                "intValue": "1"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.description",
+                            "value": {
+                                "stringValue": "Eclipse Adoptium OpenJDK 64-Bit Server VM 21.0.13+9-LTS"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.name",
+                            "value": {
+                                "stringValue": "OpenJDK Runtime Environment"
+                            }
+                        },
+                        {
+                            "key": "process.runtime.version",
+                            "value": {
+                                "stringValue": "21.0.13+9-LTS"
+                            }
+                        },
+                        {
+                            "key": "service.instance.id",
+                            "value": {
+                                "stringValue": "0be31751-4f4e-4f32-8e90-8842300c731b"
+                            }
+                        },
+                        {
+                            "key": "service.name",
+                            "value": {
+                                "stringValue": "driftline"
+                            }
+                        },
+                        {
+                            "key": "service.version",
+                            "value": {
+                                "stringValue": "0.1.0-SNAPSHOT"
+                            }
+                        },
+                        {
+                            "key": "telemetry.distro.name",
+                            "value": {
+                                "stringValue": "opentelemetry-java-instrumentation"
+                            }
+                        },
+                        {
+                            "key": "telemetry.distro.version",
+                            "value": {
+                                "stringValue": "2.33.1"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.language",
+                            "value": {
+                                "stringValue": "java"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.name",
+                            "value": {
+                                "stringValue": "opentelemetry"
+                            }
+                        },
+                        {
+                            "key": "telemetry.sdk.version",
+                            "value": {
+                                "stringValue": "1.67.0"
+                            }
+                        }
+                    ],
+                    "entityRefs": [
+                        {
+                            "schemaUrl": "https://opentelemetry.io/schemas/1.40.0",
+                            "type": "service.instance",
+                            "idKeys": [
+                                "service.instance.id"
+                            ]
+                        },
+                        {
+                            "schemaUrl": "https://opentelemetry.io/schemas/1.40.0",
+                            "type": "service",
+                            "idKeys": [
+                                "service.name"
+                            ]
+                        }
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "scope": {
+                            "name": "io.opentelemetry.java-http-client",
+                            "version": "2.33.1-alpha"
+                        },
+                        "spans": [
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "a28bbf5251078bdd",
+                                "parentSpanId": "632caad9312ef52c",
+                                "flags": 259,
+                                "name": "POST",
+                                "kind": 3,
+                                "startTimeUnixNano": "1794959635834486143",
+                                "endTimeUnixNano": "1794959635858058919",
+                                "attributes": [
+                                    {
+                                        "key": "http.request.method",
+                                        "value": {
+                                            "stringValue": "POST"
+                                        }
+                                    },
+                                    {
+                                        "key": "http.response.status_code",
+                                        "value": {
+                                            "intValue": "200"
+                                        }
+                                    },
+                                    {
+                                        "key": "network.protocol.version",
+                                        "value": {
+                                            "stringValue": "1.1"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.address",
+                                        "value": {
+                                            "stringValue": "sandbox"
+                                        }
+                                    },
+                                    {
+                                        "key": "server.port",
+                                        "value": {
+                                            "intValue": "8085"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "45"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "dispatcher"
+                                        }
+                                    },
+                                    {
+                                        "key": "url.full",
+                                        "value": {
+                                            "stringValue": "http://sandbox:8085/gateway/v1/merchants/m_e2e_02/payments/pay_3_a/refunds"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            }
+                        ],
+                        "schemaUrl": "https://opentelemetry.io/schemas/1.41.0"
+                    },
+                    {
+                        "scope": {
+                            "name": "io.github.vanish073.driftline"
+                        },
+                        "spans": [
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "c8d4a2b084a87cc3",
+                                "parentSpanId": "f1aaf35699c44723",
+                                "flags": 771,
+                                "name": "resolver.decide",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959635743000000",
+                                "endTimeUnixNano": "1794959635797000000",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.break_id",
+                                        "value": {
+                                            "stringValue": "brk_o2wnk525yiysn7bpqhpzjnd6tr"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.break_state",
+                                        "value": {
+                                            "stringValue": "ACTION_PENDING"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.commands",
+                                        "value": {
+                                            "intValue": "1"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "44"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "resolver"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            },
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "632caad9312ef52c",
+                                "parentSpanId": "c8d4a2b084a87cc3",
+                                "flags": 771,
+                                "name": "dispatcher.call",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959635833000000",
+                                "endTimeUnixNano": "1794959635835431260",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.call_id",
+                                        "value": {
+                                            "stringValue": "cmd_gzhclafcwzxpcozhrjtjyd57fj.1"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.command_kind",
+                                        "value": {
+                                            "stringValue": "REFUND"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.target",
+                                        "value": {
+                                            "stringValue": "GATEWAY"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "45"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "dispatcher"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            },
+                            {
+                                "traceId": "1db6ed4883feb835a48a408fdafaa7c5",
+                                "spanId": "1e9cd08dad94b01d",
+                                "parentSpanId": "f1aaf35699c44723",
+                                "flags": 771,
+                                "name": "resolver.decide",
+                                "kind": 1,
+                                "startTimeUnixNano": "1794959636809000000",
+                                "endTimeUnixNano": "1794959636843000000",
+                                "attributes": [
+                                    {
+                                        "key": "driftline.break_id",
+                                        "value": {
+                                            "stringValue": "brk_o2wnk525yiysn7bpqhpzjnd6tr"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.break_state",
+                                        "value": {
+                                            "stringValue": "RESOLVED_AUTO"
+                                        }
+                                    },
+                                    {
+                                        "key": "driftline.commands",
+                                        "value": {
+                                            "intValue": "0"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.id",
+                                        "value": {
+                                            "intValue": "44"
+                                        }
+                                    },
+                                    {
+                                        "key": "thread.name",
+                                        "value": {
+                                            "stringValue": "resolver"
+                                        }
+                                    }
+                                ],
+                                "status": {}
+                            }
+                        ]
+                    }
+                ],
+                "schemaUrl": "https://opentelemetry.io/schemas/1.40.0"
+            }
+        ]
+    }
+}

@@ -1,0 +1,48 @@
+# Dependabot version updates (DESIGN §14, D79). Weekly, grouped per ecosystem, with a 14-day cooldown so a release is
+# at least two weeks old before it is proposed; security updates are not held back by the cooldown.
+# A Gradle update also needs new lockfiles: if Dependabot leaves them unchanged, CI's `security` job fails with
+# "lockfiles out of date"; run scripts/check-lockfiles.sh --write on the branch and push.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      gradle:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The app and sandbox base image (pinned by digest).
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      images:
+        patterns: ["*"]
+
+  # PostgreSQL, Kafka and the obs profile's images in Compose (pinned by digest).
+  - package-ecosystem: docker-compose
+    directory: /deploy/compose
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      compose:
+        patterns: ["*"]

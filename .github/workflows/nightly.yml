@@ -1,0 +1,75 @@
+# Nightly (DESIGN §16). Shift 9: the Trivy image scan (D79) and the kind smoke test (D80); the 200,000-seed `nightly`
+# campaign and the full canary matrix join it in Shift 10, with the `nightly` profile. A pull request that changes the
+# Kubernetes manifests, the smoke script or this file runs the kind smoke test too.
+# Every third-party action is pinned by commit SHA, every container image by digest.
+name: nightly
+
+on:
+  schedule:
+    - cron: '30 21 * * *'   # 03:00 IST
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - deploy/k8s/**
+      - deploy/docker/**
+      - scripts/kind-smoke.sh
+      - .github/workflows/nightly.yml
+
+permissions:
+  contents: read
+
+jobs:
+  # The app and sandbox images, built from this commit: fails on any high or critical vulnerability that has a fix,
+  # in the base image's packages or in the jars inside.
+  trivy:
+    name: trivy (app and sandbox images)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Trivy image scan
+        run: scripts/trivy-scan.sh
+
+  # DESIGN §15.3, D80: a fresh kind cluster, the kind overlay applied stage by stage, the NetworkPolicies checked from
+  # an unlabelled pod, the e2e suite against the cluster, then `driftline verify`.
+  kind-smoke:
+    name: kind-smoke (deploy, e2e suite, NetworkPolicies, verify)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Install kind
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          version: v0.33.0
+          install_only: true
+
+      - name: kind smoke
+        run: scripts/kind-smoke.sh build/kind/kind-smoke.txt
+
+      - name: Upload the smoke output and the pod logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kind-smoke
+          path: |
+            build/kind/kind-smoke.txt
+            build/kind/kind.log
+          retention-days: 14

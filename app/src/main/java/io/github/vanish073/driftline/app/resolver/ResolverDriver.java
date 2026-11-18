@@ -29,6 +29,14 @@ import org.springframework.context.SmartLifecycle;
  */
 public final class ResolverDriver implements SmartLifecycle {
 
+    /** What the driver decided (§13, D78). Called on the resolver thread after a commit; must not throw. */
+    public interface Listener {
+        Listener NONE = new Listener() { };
+
+        default void decided(Resolver.Outcome outcome, Instant began, Instant committed) {
+        }
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(ResolverDriver.class);
     static final Duration MIN_SLEEP = Duration.ofMillis(50);
 
@@ -39,6 +47,7 @@ public final class ResolverDriver implements SmartLifecycle {
     private final Duration pollInterval;
     private final int limit;
     private final Runnable afterDecisions;
+    private final Listener listener;
 
     private volatile boolean running;
     private volatile Thread thread;
@@ -47,6 +56,12 @@ public final class ResolverDriver implements SmartLifecycle {
     /** @param afterDecisions run after a step that decided something (wakes a dispatcher in the same process) */
     public ResolverDriver(Store store, Resolver resolver, Clock clock, CrashPoints crashPoints, Duration pollInterval,
                           int limit, Runnable afterDecisions) {
+        this(store, resolver, clock, crashPoints, pollInterval, limit, afterDecisions, Listener.NONE);
+    }
+
+    public ResolverDriver(Store store, Resolver resolver, Clock clock, CrashPoints crashPoints, Duration pollInterval,
+                          int limit, Runnable afterDecisions, Listener listener) {
+        this.listener = Objects.requireNonNull(listener, "listener");
         this.store = Objects.requireNonNull(store, "store");
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -114,8 +129,8 @@ public final class ResolverDriver implements SmartLifecycle {
     /** One resolver step; returns how many breaks it decided. Public for tests. */
     public int stepOnce() {
         Resolver.Outcome outcome;
+        Instant now = clock.now();
         try {
-            Instant now = clock.now();
             outcome = store.transact("resolver", tx -> resolver.step(tx, now, limit));
         } catch (StoreUnavailable | StoreConflict e) {
             LOG.warn("resolver step will be retried: {}", e.getMessage());
@@ -124,6 +139,7 @@ public final class ResolverDriver implements SmartLifecycle {
         int decided = outcome.decisions().size();
         if (decided > 0) {
             LOG.info("resolver decided {}", String.join(" ", outcome.decisions()));
+            listener.decided(outcome, now, clock.now());
             crashPoints.reached(CrashPoint.CP2);
             afterDecisions.run();
         }

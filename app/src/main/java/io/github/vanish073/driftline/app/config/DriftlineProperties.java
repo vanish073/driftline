@@ -25,6 +25,7 @@ public record DriftlineProperties(
         @DefaultValue("local") String instanceId,
         @DefaultValue Kafka kafka,
         @DefaultValue Secrets secrets,
+        @DefaultValue Pii pii,
         @DefaultValue Store store,
         @DefaultValue Worker worker,
         @DefaultValue Resolver resolver,
@@ -51,8 +52,39 @@ public record DriftlineProperties(
             @DefaultValue("60s") Duration maxTickInterval) {
     }
 
-    /** AES-256-GCM keys for stored webhook secrets, by key id, base64; {@code activeKid} encrypts (D48). */
-    public record Secrets(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys) {
+    /**
+     * AES-256-GCM keys for stored webhook secrets, by key id, base64; {@code activeKid} encrypts (D48). Active secrets
+     * are reloaded every {@code refreshInterval} (D76).
+     */
+    public record Secrets(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys,
+                          @DefaultValue("30s") Duration refreshInterval) {
+
+        /** Never prints the keys. */
+        @Override
+        public String toString() {
+            return "Secrets[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", refreshInterval=" + refreshInterval
+                    + "]";
+        }
+    }
+
+    /**
+     * Keys for customers' contact details (D77): an AES-256-GCM keyring (base64 by key id; {@code activeKid} encrypts)
+     * separate from the webhook-secret keys, and a base64 HMAC key of at least 32 bytes for the VPA blind index. All
+     * empty: personal data storage is off, and contacts on webhooks are discarded.
+     */
+    public record Pii(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys,
+                      @DefaultValue("") String indexKey) {
+
+        public boolean configured() {
+            return !activeKid.isBlank() && !keys.isEmpty() && !indexKey.isBlank();
+        }
+
+        /** Never prints a key. */
+        @Override
+        public String toString() {
+            return "Pii[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", indexKey="
+                    + (indexKey.isBlank() ? "unset" : "***") + "]";
+        }
     }
 
     public record Store(@DefaultValue("APPEND_SNAPSHOT") BalanceStrategy balanceStrategy) {
@@ -61,8 +93,12 @@ public record DriftlineProperties(
     public record Worker(@DefaultValue("1s") Duration pollInterval, @DefaultValue("10") int batchSize) {
     }
 
-    /** The resolver role (§8): it sleeps at most {@code pollInterval}, since breaks are raised by another process. */
-    public record Resolver(@DefaultValue("1s") Duration pollInterval, @DefaultValue("20") int batchSize) {
+    /**
+     * The resolver role (§8): it sleeps at most {@code pollInterval}, since breaks are raised by another process. It also
+     * reads the books for the metrics of §13 every {@code metricsInterval} (D78).
+     */
+    public record Resolver(@DefaultValue("1s") Duration pollInterval, @DefaultValue("20") int batchSize,
+                           @DefaultValue("15s") Duration metricsInterval) {
     }
 
     /**

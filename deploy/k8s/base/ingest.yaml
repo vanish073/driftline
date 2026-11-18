@@ -1,0 +1,125 @@
+# Generated once from one pod template (D80) and kept by hand; every role runs the same hardened pod.
+# Ingest (§3.3): the public API. Stateless, so it scales on CPU; its replica count belongs to the HPA.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest
+  labels:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: ingest
+    driftline.io/stage: app
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: driftline
+      app.kubernetes.io/component: ingest
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: driftline
+        app.kubernetes.io/component: ingest
+        driftline.io/stage: app
+    spec:
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: driftline
+          image: driftline-app
+          env:
+            - name: DRIFTLINE_ROLE
+              value: ingest
+            - name: DRIFTLINE_INSTANCE_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+          envFrom:
+            - configMapRef: {name: driftline-config}
+            - secretRef: {name: driftline-secrets}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9091
+          startupProbe:
+            httpGet: {path: /actuator/health/liveness, port: management}
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: management}
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: management}
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 100m, memory: 320Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest
+  labels:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: ingest
+    driftline.io/stage: app
+spec:
+  selector:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: ingest
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingest
+  labels:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: ingest
+    driftline.io/stage: app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ingest
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ingest
+  labels:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: ingest
+    driftline.io/stage: app
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: driftline
+      app.kubernetes.io/component: ingest

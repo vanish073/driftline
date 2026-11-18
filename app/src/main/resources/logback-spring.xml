@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Console logging as one JSON object per line, with trace_id and span_id when a span is current, and personal data
+     masked in every message and stack trace (DESIGN §13, §14, D77, D78). -->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="io.github.vanish073.driftline.app.observability.JsonLogEncoder"/>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

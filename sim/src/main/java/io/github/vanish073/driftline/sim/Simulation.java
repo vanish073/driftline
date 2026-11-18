@@ -208,6 +208,7 @@ public final class Simulation {
             resolverNode.wake();
             dispatcherNode.wake();
         }));
+        worker.afterConflict(resolverNode::wake);   // BUG-011: a FILE_CONFLICT the worker raised must be reviewed
         ResolutionNodes resolution = new ResolutionNodes(resolverNode, dispatcherNode);
         LocalDate lastFileDate = IstCalendar.istDate(EPOCH).plusDays(profile.trafficDays + profile.drainDays);
         invariants.world(gateway, feed, merchants, EPOCH, CYCLE_DAYS, config.graceDays(), lastFileDate);

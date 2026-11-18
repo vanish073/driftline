@@ -1,6 +1,8 @@
 # Driftline on one laptop (DESIGN §15.1, §15.2). Profile `core`: PostgreSQL, Kafka (KRaft, one node), the one-shot
 # migration and topic services, Driftline with every role in one JVM (ingest, matcher, settlement worker, resolver,
-# dispatcher), and the sandbox, which also serves the gateway, merchant and ops APIs the dispatcher calls. Every image is pinned by digest;
+# dispatcher), and the sandbox, which also serves the gateway, merchant and ops APIs the dispatcher calls. Profile `obs`
+# (D78): the OpenTelemetry collector, Jaeger, Prometheus and Grafana; set DRIFTLINE_TRACING=true in the env file to turn
+# on the Java agent in the Driftline containers. Every image is pinned by digest;
 # every service has a memory cap sized for the 4 GB WSL machine. scripts/e2e.sh generates the env file and the
 # bootstrap file (random secrets, never committed) under deploy/compose/.dev/ and runs the e2e suite against it.
 # Ports published to the host: 8080 (ingest and ops API) and 8085 (sandbox control API). Actuator (9091) stays inside
@@ -12,8 +14,13 @@ x-app-image: &app-image
     context: ../..
     dockerfile: deploy/docker/app.Dockerfile
   image: driftline-app:dev
+  # Non-root (uid 10001), read-only root filesystem, only /tmp writable (DESIGN §14, D80).
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m
 
-# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key and the dev bootstrap.
+# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key, the personal-data keys
+# (D77: the vault's AES keyring and the VPA blind-index key) and the dev bootstrap.
 x-app-env: &app-env
   SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
   SPRING_DATASOURCE_USERNAME: driftline
@@ -21,8 +28,22 @@ x-app-env: &app-env
   DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   DRIFTLINE_SECRETS_ACTIVE_KID: dev
   DRIFTLINE_SECRETS_KEYS_DEV: ${DRIFTLINE_SECRETS_KEY:?missing}
+  DRIFTLINE_PII_ACTIVE_KID: dev
+  DRIFTLINE_PII_KEYS_DEV: ${DRIFTLINE_PII_KEY:?missing}
+  DRIFTLINE_PII_INDEX_KEY: ${DRIFTLINE_PII_INDEX_KEY:?missing}
   DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
   JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
+  # The OpenTelemetry Java agent (D78): off unless DRIFTLINE_TRACING=true. Spans only, over OTLP to the collector of the
+  # `obs` profile; metrics go through Prometheus instead. Its Kafka instrumentation is off, since Driftline carries
+  # `traceparent` on records itself (D46), and so is JDBC, so the drivers' polling does not flood the traces.
+  OTEL_JAVAAGENT_ENABLED: ${DRIFTLINE_TRACING:-false}
+  OTEL_SERVICE_NAME: driftline
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+  OTEL_INSTRUMENTATION_KAFKA_ENABLED: "false"
+  OTEL_INSTRUMENTATION_JDBC_ENABLED: "false"
 
 # The dispatcher (D65): the sandbox serves the gateway, the merchant callback and the ops sink. Its gateway forgets an
 # idempotency key after 5 minutes; every refund retry looks the refund up first, so no setting depends on that (BUG-008).
@@ -149,6 +170,7 @@ services:
       <<: *app-env
       DRIFTLINE_ROLE: matcher
       DRIFTLINE_INSTANCE_ID: matcher-compose
+      OTEL_SERVICE_NAME: driftline-matcher
     volumes:
       - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
     healthcheck: *ready
@@ -165,6 +187,7 @@ services:
       <<: [*app-env, *dispatcher-env]
       DRIFTLINE_ROLE: dispatcher
       DRIFTLINE_INSTANCE_ID: dispatcher-compose
+      OTEL_SERVICE_NAME: driftline-dispatcher
       DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://driftline:8080
     volumes:
       - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
@@ -194,6 +217,9 @@ services:
       context: ../..
       dockerfile: deploy/docker/sandbox.Dockerfile
     image: driftline-sandbox:dev
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
     depends_on:
       driftline:
         condition: service_healthy
@@ -209,3 +235,58 @@ services:
       timeout: 3s
       retries: 30
     mem_limit: 256m
+
+  # ---- Profile `obs` (DESIGN §13, §15.1, D78): about 0.8 GB of memory caps in all. -----------------------------------
+
+  otel-collector:
+    profiles: [obs]
+    image: otel/opentelemetry-collector:0.164.0@sha256:28b6d41ac51bff6b41ba5e8fe503569ffb9d6a1ea90f7a78419e86f34e44f750
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ../otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      - jaeger
+    mem_limit: 96m
+
+  # Jaeger v2 all-in-one, traces in memory only; UI on 16686.
+  jaeger:
+    profiles: [obs]
+    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    ports:
+      - "127.0.0.1:16686:16686"
+    mem_limit: 160m
+
+  prometheus:
+    profiles: [obs]
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d",
+              "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 160m
+
+  # Anonymous users may view; the admin password is generated per run. No phoning home. Grafana 13 needs about 340 MB
+  # to render the board; at 160 MB it thrashed and queries took minutes (D78).
+  grafana:
+    profiles: [obs]
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?missing}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/driftline.json
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 384m

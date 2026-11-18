@@ -1,0 +1,33 @@
+# The alert rules of DESIGN §13 (D78). Each has a unit test in alerts.test.yml (promtool test rules).
+groups:
+  - name: driftline
+    rules:
+      - alert: OutboxCommandStuck
+        expr: max(driftline_outbox_oldest_pending_seconds) > 600
+        labels:
+          severity: page
+        annotations:
+          summary: "An outbox command has been pending for more than 10 minutes"
+          description: "Oldest pending command: {{ $value | humanizeDuration }}. Check the dispatcher and its targets."
+      - alert: BreakDeadlineNear
+        expr: min by (type) (driftline_deadline_headroom_seconds) < 6 * 3600
+        labels:
+          severity: page
+        annotations:
+          summary: "An open {{ $labels.type }} break has less than 6 hours before its deadline"
+          description: "Headroom: {{ $value | humanizeDuration }} (negative: the deadline has passed)."
+      - alert: SettlementFeedStalled
+        expr: max(driftline_breaks_open{type="FEED_STALL"}) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A merchant's settlement feed has stalled"
+          description: "{{ $value }} FEED_STALL alerts are open: no complete settlement file long after it was due."
+      - alert: ConsumerLagGrowing
+        expr: sum(driftline_consumer_lag_records) > 0 and deriv(sum(driftline_consumer_lag_records)[10m:1m]) > 0
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Matcher consumer lag has been growing for 10 minutes"
+          description: "{{ $value }} records behind and rising."

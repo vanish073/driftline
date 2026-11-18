@@ -45,10 +45,20 @@ spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
 spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
+# Shift 9 (§13, D78): the OpenTelemetry API for manual spans, at the version Spring Boot manages. Without the Java agent
+# it is a no-op. The SDK is for app tests only, to capture spans in memory.
+# 1.67.0, not Spring Boot's 1.62.0: the API the Java agent 2.33.1 bundles, and the fix for GHSA-ccrj-gw8r-854m (D79).
+opentelemetry-bom = { module = "io.opentelemetry:opentelemetry-bom", version = "1.67.0" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing" }
 spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }
 spring-security-test = { module = "org.springframework.security:spring-security-test" }
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
 kafka-clients = { module = "org.apache.kafka:kafka-clients" }
+# Shift 9 (D79): kafka-clients 4.2.2 brings lz4-java 1.11.2 and snappy-java 1.1.10.7, which have high-severity
+# advisories (GHSA-mcr4-qmvw-px4g; GHSA-gwq9-9ffj-mvrv, GHSA-q233-g92q-qxp6). app constrains them to patch releases.
+lz4-java = { module = "at.yawk.lz4:lz4-java", version = "1.11.4" }
+snappy-java = { module = "org.xerial.snappy:snappy-java", version = "1.1.10.12" }
 boot-flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
 boot-postgresql = { module = "org.postgresql:postgresql" }
 boot-testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }

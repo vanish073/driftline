@@ -3,7 +3,11 @@ package io.github.vanish073.driftline.app.ingest;
 import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.observability.IngestMetrics;
+import io.github.vanish073.driftline.app.observability.Tracing;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
 import io.github.vanish073.driftline.app.security.MerchantAccess;
+import io.github.vanish073.driftline.core.event.PaymentPayload;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.port.CallRequest;
 import io.github.vanish073.driftline.core.port.Clock;
@@ -17,12 +21,16 @@ import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFileParser;
+import io.github.vanish073.driftline.wire.webhook.CustomerContact;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.Span;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -52,12 +60,19 @@ public class IngestController {
     private final EventPublisher publisher;
     private final SettlementInbox inbox;
     private final Clock clock;
+    private final CustomerContacts contacts;
+    private final IngestMetrics metrics;
+    private final Tracing tracing;
 
-    public IngestController(MerchantRegistry merchants, EventPublisher publisher, SettlementInbox inbox, Clock clock) {
+    public IngestController(MerchantRegistry merchants, EventPublisher publisher, SettlementInbox inbox, Clock clock,
+                            CustomerContacts contacts, IngestMetrics metrics, Tracing tracing) {
         this.merchants = merchants;
         this.publisher = publisher;
         this.inbox = inbox;
         this.clock = clock;
+        this.contacts = contacts;
+        this.metrics = metrics;
+        this.tracing = tracing;
     }
 
     /** Authenticated by its HMAC signature over the raw bytes, verified before any parsing (§10.2, D21). */
@@ -68,13 +83,39 @@ public class IngestController {
         Optional<MerchantContext> merchant = merchant(merchantId);
         if (merchant.isEmpty()) {
             // The same answer as a bad signature: an unauthenticated caller learns nothing about which merchants exist.
+            metrics.webhookRejected("unknown_merchant");
             return error(401, "signature NO_MATCH");
         }
         Optional<byte[]> body = BoundedBody.read(request, WebhookSignature.MAX_BODY_BYTES);
         if (body.isEmpty()) {
+            metrics.webhookRejected("too_large");
             return error(413, "body larger than " + WebhookSignature.MAX_BODY_BYTES + " bytes");
         }
-        return accept(IngestNormaliser.webhook(merchant.get(), body.get(), signature, clock.now(), traceparent));
+        return traced("ingest.webhook", merchant.get(), traceparent, context ->
+                webhook(merchant.get(), body.get(), signature, context));
+    }
+
+    private ResponseEntity<Map<String, Object>> webhook(MerchantContext merchant, byte[] body, Optional<String> signature,
+                                                        Optional<String> traceparent) {
+        IngestResult result = IngestNormaliser.webhook(merchant, body, signature, clock.now(), traceparent);
+        if (result instanceof IngestResult.Rejected r) {
+            metrics.webhookRejected(IngestMetrics.rejectionReason(r.status(), r.reason()));
+        }
+        if (result instanceof IngestResult.Accepted a && a.customer().isPresent()
+                && a.envelope().payload() instanceof PaymentPayload payment) {
+            // D77: the contact goes to the encrypted vault before the event is published, never into the event
+            CustomerContact contact = a.customer().get();
+            if (contact.dropped() > 0) {
+                LOG.info("webhook {}: {} customer fields did not validate and were not stored", a.envelope().eventKey(),
+                        contact.dropped());
+            }
+            try {
+                contacts.store(merchant.merchantId(), payment.paymentId(), contact, clock.now());
+            } catch (StoreUnavailable e) {
+                return error(503, "the store is unavailable; retry with the same event");
+            }
+        }
+        return accept(result);
     }
 
     /** {@code Idempotency-Key} is required (§10.3); the token needs {@code events:write} for this merchant. */
@@ -91,7 +132,8 @@ public class IngestController {
         if (body.isEmpty()) {
             return error(413, "body larger than " + WebhookSignature.MAX_BODY_BYTES + " bytes");
         }
-        return accept(IngestNormaliser.orderEvent(merchant.get(), body.get(), idempotencyKey, clock.now(), traceparent));
+        return traced("ingest.order_event", merchant.get(), traceparent, context -> accept(
+                IngestNormaliser.orderEvent(merchant.get(), body.get(), idempotencyKey, clock.now(), context)));
     }
 
     /**
@@ -160,6 +202,29 @@ public class IngestController {
             return merchants.context(MerchantId.of(merchantId));
         } catch (IllegalArgumentException notAnId) {
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Runs {@code handle} inside an ingest span when tracing is on (§13, D78), handing it the {@code traceparent} the
+     * envelope should carry: the span's own, so the matcher's spans join this trace. With tracing off it hands on the
+     * caller's header unchanged (D46).
+     */
+    private ResponseEntity<Map<String, Object>> traced(String name, MerchantContext merchant,
+            Optional<String> traceparent,
+            Function<Optional<String>, ResponseEntity<Map<String, Object>>> handle) {
+        if (!tracing.enabled()) {
+            return handle.apply(traceparent);
+        }
+        Span span = tracing.startForRequest(name, traceparent, Attributes.builder()
+                .put("driftline.merchant_id", merchant.merchantId().value()).build());
+        try {
+            ResponseEntity<Map<String, Object>> response = handle.apply(
+                    Optional.of(Tracing.traceparent(span.getSpanContext())));
+            span.setAttribute("http.response.status_code", response.getStatusCode().value());
+            return response;
+        } finally {
+            span.end();
         }
     }
 

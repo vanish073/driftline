@@ -24,6 +24,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
@@ -77,6 +79,19 @@ public final class PartitionDriver implements SmartLifecycle {
         }
 
         default void fenced(int partition) {
+        }
+
+        /**
+         * A chunk or a tick committed (§13, D78): the chunk's decoded records by offset (none for a tick), what the
+         * matcher made of them, and when the transaction began and committed. Called on the driver thread; an
+         * implementation must not throw, since anything thrown here stops the driver.
+         */
+        default void chunk(int partition, SortedMap<Long, EventEnvelope> records, List<BatchOutcome> outcomes,
+                           Instant began, Instant committed) {
+        }
+
+        /** How many records of an owned partition Kafka holds beyond this consumer's position, when it knows. */
+        default void lag(int partition, long records) {
         }
     }
 
@@ -201,6 +216,7 @@ public final class PartitionDriver implements SmartLifecycle {
                 for (TopicPartition tp : records.partitions()) {
                     process(tp, records.records(tp));
                 }
+                reportLag();
                 acquirePending();
                 tickDue();
                 reacquireFenced();
@@ -255,6 +271,15 @@ public final class PartitionDriver implements SmartLifecycle {
         }
         if (!partitions.isEmpty()) {
             LOG.info("{}: partitions {} {}", owner, partitions.stream().map(TopicPartition::partition).toList(), how);
+        }
+    }
+
+    private void reportLag() {
+        for (Integer p : owned.keySet()) {
+            OptionalLong lag = consumer.currentLag(tp(p));
+            if (lag.isPresent()) {
+                listener.lag(p, lag.getAsLong());
+            }
         }
     }
 
@@ -371,6 +396,13 @@ public final class PartitionDriver implements SmartLifecycle {
                 LOG.warn("{}: quarantined {} undecodable records on p{}", owner, quarantined[0], p);
             }
             listener.committed(p, outcomes, quarantined[0]);
+            TreeMap<Long, EventEnvelope> decoded = new TreeMap<>();
+            for (Item item : items) {
+                if (item.record() != null) {
+                    decoded.put(item.offset(), item.record().envelope());
+                }
+            }
+            listener.chunk(p, decoded, outcomes, now, clock.now());
         } catch (StoreUnavailable e) {
             LOG.warn("{}: store unavailable on p{}; re-reading from offset {}", owner, p, records.get(0).offset());
             consumer.seek(tp, records.get(0).offset());
@@ -429,6 +461,7 @@ public final class PartitionDriver implements SmartLifecycle {
                 }
                 o.nextTickAt = next;
                 listener.committed(p, List.of(outcome), 0);
+                listener.chunk(p, new TreeMap<>(), List.of(outcome), now, clock.now());
             } catch (StoreUnavailable e) {
                 o.nextTickAt = now.plus(STORE_RETRY);
             } catch (StoreConflict e) {

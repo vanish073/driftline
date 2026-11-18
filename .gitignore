@@ -29,3 +29,4 @@ Thumbs.db
 
 # Compose dev files: generated secrets and logs (scripts/e2e.sh)
 deploy/compose/.dev/
+deploy/k8s/overlays/kind/.dev/

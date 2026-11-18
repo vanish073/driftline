@@ -2,6 +2,8 @@
 # End to end in Docker Compose (Milestones M3 and M4; DESIGN §15.1, §15.2, D51, D65).
 #
 #   scripts/e2e.sh [results-file]
+#   OBS=1 scripts/e2e.sh [results-file]   also starts the `obs` profile with tracing on, and runs scripts/obs-check.sh
+#                                          after the suite (D78)
 #
 # 1. Builds the Boot jar, the sandbox and the packaged e2e suite with Gradle, then stops Gradle to free memory.
 # 2. Generates a fresh merchant pool (random webhook secrets and tokens, the dispatcher's service token) and random
@@ -15,11 +17,17 @@ cd "$(dirname "$0")/.."
 RESULTS=${1:-}
 DEV=deploy/compose/.dev
 COMPOSE=(docker compose -f deploy/compose/compose.yaml --env-file "$DEV/env" --profile core)
+OBS=${OBS:-0}
+EXTRA_ENV=()
+if [ "$OBS" = 1 ]; then
+    COMPOSE+=(--profile obs)
+    EXTRA_ENV+=("DRIFTLINE_TRACING=true")
+fi
 # shellcheck source=lib/compose-stack.sh
 . scripts/lib/compose-stack.sh
 
 stack_build :sandbox:e2eDist
-stack_secrets 12
+stack_secrets 12 "${EXTRA_ENV[@]}"
 trap stack_teardown EXIT
 stack_up
 
@@ -31,13 +39,25 @@ run_suite() {
         --class-path "$CP" --select-package io.github.vanish073.driftline.e2e --details=tree --disable-banner \
         --disable-ansi-colors
 }
+run_all() {
+    local status=0
+    run_suite || status=$?
+    if [ "$OBS" = 1 ]; then
+        scripts/obs-check.sh || status=1
+    fi
+    return "$status"
+}
 if [ -n "$RESULTS" ]; then
     mkdir -p "$(dirname "$RESULTS")"
     {
-        stack_header scripts/e2e.sh "Compose profile core"
-        run_suite
+        if [ "$OBS" = 1 ]; then
+            stack_header scripts/e2e.sh "Compose profiles core and obs, tracing on"
+        else
+            stack_header scripts/e2e.sh "Compose profile core"
+        fi
+        run_all
     } 2>&1 | tee "$RESULTS"
     exit "${PIPESTATUS[0]}"
 else
-    run_suite
+    run_all
 fi

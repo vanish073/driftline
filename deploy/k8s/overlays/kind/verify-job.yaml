@@ -1,0 +1,44 @@
+# `driftline verify` (Shift 8), run last by scripts/kind-smoke.sh: read-only SQL checks of the books against the
+# sandbox's world, re-checked for up to 5 minutes while the system settles; non-zero exit on any violation.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify
+  labels: {app.kubernetes.io/name: driftline, app.kubernetes.io/component: verify, driftline.io/stage: verify}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: driftline, app.kubernetes.io/component: verify, driftline.io/stage: verify}
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: driftline
+          image: driftline-app
+          env:
+            - {name: DRIFTLINE_ROLE, value: verify}
+            - {name: DRIFTLINE_VERIFY_SANDBOX_URL, value: "http://sandbox:8085"}
+            - {name: DRIFTLINE_VERIFY_WAIT_FOR, value: 5m}
+            - {name: JAVA_TOOL_OPTIONS, value: "-Xmx128m -XX:+UseSerialGC -Xss512k"}
+            - {name: SPRING_DATASOURCE_URL, value: "jdbc:postgresql://postgres:5432/driftline"}
+            - {name: SPRING_DATASOURCE_USERNAME, value: driftline}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: driftline-secrets, key: SPRING_DATASOURCE_PASSWORD}
+          resources:
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}

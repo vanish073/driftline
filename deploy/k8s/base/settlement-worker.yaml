@@ -1,0 +1,71 @@
+# Generated once from one pod template (D80) and kept by hand; every role runs the same hardened pod.
+# The settlement worker (§6.2, D48): parses stored uploads and emits their records; idempotent, so one is enough.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-worker
+  labels:
+    app.kubernetes.io/name: driftline
+    app.kubernetes.io/component: settlement-worker
+    driftline.io/stage: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: driftline
+      app.kubernetes.io/component: settlement-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: driftline
+        app.kubernetes.io/component: settlement-worker
+        driftline.io/stage: app
+    spec:
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: driftline
+          image: driftline-app
+          env:
+            - name: DRIFTLINE_ROLE
+              value: settlement-worker
+            - name: DRIFTLINE_INSTANCE_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+          envFrom:
+            - configMapRef: {name: driftline-config}
+            - secretRef: {name: driftline-secrets}
+          ports:
+            - name: management
+              containerPort: 9091
+          startupProbe:
+            httpGet: {path: /actuator/health/liveness, port: management}
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: management}
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: management}
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 100m, memory: 320Mi}
+            limits: {memory: 448Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}

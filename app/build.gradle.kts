@@ -16,6 +16,13 @@ dependencies {
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.flyway)
     implementation(libs.kafka.clients)
+    implementation(platform(libs.opentelemetry.bom))
+    implementation(libs.opentelemetry.api)
+    constraints {
+        // D79: patch releases that fix high-severity advisories in what kafka-clients brings (the producer uses lz4)
+        implementation(libs.lz4.java) { because("GHSA-mcr4-qmvw-px4g and two lower ones, fixed in 1.11.4") }
+        implementation(libs.snappy.java) { because("GHSA-gwq9-9ffj-mvrv and GHSA-q233-g92q-qxp6, fixed in 1.1.10.9") }
+    }
     runtimeOnly(libs.micrometer.registry.prometheus)
     runtimeOnly(libs.boot.flyway.database.postgresql)
     runtimeOnly(libs.boot.postgresql)
@@ -24,6 +31,10 @@ dependencies {
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.spring.boot.starter.webmvc.test)
     testImplementation(libs.spring.security.test)
+    testImplementation(platform(libs.opentelemetry.bom))
+    testImplementation(libs.opentelemetry.sdk.testing)
+    // the names the Grafana board and the alert rules use are checked against a real Prometheus scrape (D78)
+    testImplementation(libs.micrometer.registry.prometheus)
     // The shared ArchUnit rules (canary confinement). ArchUnit itself has no JUnit dependency.
     testImplementation(testFixtures(project(":core")))
     testRuntimeOnly(libs.junit.platform.launcher)
@@ -45,6 +56,8 @@ testing {
                 // OutboxCrashIT runs the sandbox's gateway in-process (the simulator's world models over HTTP, D65)
                 implementation(project(":sandbox"))
                 implementation(libs.spring.boot.starter.test)
+                implementation(platform(libs.opentelemetry.bom))
+                implementation(libs.opentelemetry.sdk.testing)
                 implementation(libs.kafka.clients)
                 implementation(libs.boot.testcontainers.kafka)
                 implementation(libs.boot.testcontainers.postgresql)

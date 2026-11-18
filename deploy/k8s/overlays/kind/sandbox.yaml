@@ -1,0 +1,59 @@
+# The sandbox (§15.2, D51): the simulator's world models over HTTP, the dev bootstrap's merchants, and the gateway,
+# merchant and ops APIs the dispatcher calls. Hardened like the roles.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox
+  labels: {app.kubernetes.io/name: sandbox, driftline.io/stage: app}
+spec:
+  selector: {app.kubernetes.io/name: sandbox}
+  ports:
+    - {name: http, port: 8085, targetPort: 8085}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox
+  labels: {app.kubernetes.io/name: sandbox, driftline.io/stage: app}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: sandbox}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: sandbox, driftline.io/stage: app}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sandbox
+          image: driftline-sandbox
+          args: ["serve", "--bootstrap", "/bootstrap/bootstrap.json", "--driftline", "http://ingest:8080",
+                 "--port", "8085"]
+          env:
+            - {name: JAVA_OPTS, value: "-Xmx128m -XX:+UseSerialGC"}
+          ports:
+            - {name: http, containerPort: 8085}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 3
+            failureThreshold: 100
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 32Mi}
+        - name: bootstrap
+          secret: {secretName: driftline-bootstrap}

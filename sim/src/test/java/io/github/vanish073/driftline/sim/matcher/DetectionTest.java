@@ -44,6 +44,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -232,6 +233,9 @@ class DetectionTest {
         pay(P1, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(90));
         BatchOutcome inOrder = batch(T0.plusSeconds(91));
         assertThat(inOrder.raised()).extracting(Break::type).containsExactly(BreakType.LATE_SUCCESS);
+        // D78: the record that raised it is named, so its trace can carry on to the resolver
+        long successOffset = inOrder.fates().lastKey();
+        assertThat(inOrder.raisedBy()).containsExactly(Map.entry(inOrder.raised().get(0).breakId(), successOffset));
 
         pay(P2, EventType.PAYMENT_SUCCEEDED, T0.plusSeconds(90));
         pay(P2, EventType.PAYMENT_FAILED, T0.plusSeconds(5));

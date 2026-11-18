@@ -3,9 +3,12 @@ package io.github.vanish073.driftline.core.matcher;
 import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.ledger.PostResult;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 /**
  * What one batch or tick did. {@code ledgerConflicts} must always be empty: a ledger conflict means two different
@@ -23,15 +26,35 @@ import java.util.Optional;
  * @param timersFired      timers that fired in this batch
  * @param lateEvents       events that arrived behind their stream watermark (processed normally, §5.4)
  * @param nextWakeAt       the processing time at which a tick may fire timers that are not due yet, if any
+ * @param fates            what became of each record processed now, by offset (records already processed are absent);
+ *                         the driver's metrics read it per source (§13, D78)
+ * @param raisedBy         for each break in {@code raised} that a record raised while it was applied, that record's
+ *                         offset; a break raised by a timer firing at the end of the batch is absent (D78)
+ * @param solveOps         the cost in operations of each subset-sum search this batch ran (§13, D78)
  */
 public record BatchOutcome(int applied, int alreadyProcessed, int duplicates, int keyReused, int notYetHandled,
                            int postings, List<PostResult.LedgerConflict> ledgerConflicts, List<Break> raised,
-                           int timersFired, int lateEvents, Optional<Instant> nextWakeAt, KeyedState.Delta delta) {
+                           int timersFired, int lateEvents, Optional<Instant> nextWakeAt, KeyedState.Delta delta,
+                           SortedMap<Long, RecordFate> fates, SortedMap<String, Long> raisedBy, List<Long> solveOps) {
+
+    /** What became of one record. */
+    public enum RecordFate {
+        APPLIED,
+        /** Applied, and behind its stream's watermark (§5.4). */
+        APPLIED_LATE,
+        /** Its event key was already applied (dedupe, D3). */
+        DUPLICATE,
+        /** Its event key was applied with a different payload; quarantined (§10.3). */
+        KEY_REUSED
+    }
 
     public BatchOutcome {
         ledgerConflicts = List.copyOf(ledgerConflicts);
         raised = List.copyOf(raised);
         Objects.requireNonNull(nextWakeAt, "nextWakeAt");
         Objects.requireNonNull(delta, "delta");
+        fates = Collections.unmodifiableSortedMap(new TreeMap<>(fates));
+        raisedBy = Collections.unmodifiableSortedMap(new TreeMap<>(raisedBy));
+        solveOps = List.copyOf(solveOps);
     }
 }

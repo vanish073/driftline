@@ -11,6 +11,7 @@ import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.wire.json.MalformedJson;
+import io.github.vanish073.driftline.wire.json.StrictJson;
 import io.github.vanish073.driftline.wire.order.OrderEventCodec;
 import io.github.vanish073.driftline.wire.order.OrderEventMessage;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhook;
@@ -80,11 +81,25 @@ class CodecTest {
         "{\"id\":\"e\",\"type\":\"order.paid\",\"occurred_at\":\"2026-11-13T06:00:00Z\"}",                         // not a gateway type
         "{\"id\":\"e\",\"type\":\"payment.teleported\",\"occurred_at\":\"2026-11-13T06:00:00Z\"}",                 // unknown type
         "{\"id\":\"e\",\"type\":\"payment.pending\",\"occurred_at\":\"2026-11-13T06:00:00Z\"} {}",                // trailing content
+        "{\"id\":\"e\",\"type\":\"payment.pending\",\"occurred_at\":\"2026-11-13T06:00:00Z\",\"x\":[1]}",          // an array
+        "{\"id\":\"e\",\"type\":\"payment.pending\",\"x\":{\"y\":{\"z\":{}}}}",                         // depth 4 > 3
         "{\"id\":\"e\",\"type\":\"payment.pending\",\"occurred_at\":\"2026-11-13T06:00:00Z\","
                 + "\"payment\":{\"id\":\"p\",\"order_id\":\"o\",\"amount_paise\":99999999999999999999,\"currency\":\"INR\"}}", // too big
     })
     void rejectsMalformedWebhooks(String body) {
         assertThatThrownBy(() -> GatewayWebhookCodec.decode(utf8(body))).isInstanceOf(MalformedJson.class);
+    }
+
+    /** StrictJson's own limits (docs/THREAT_MODEL.md, denial of service): depth at most 3, no arrays, no duplicates. */
+    @Test
+    void strictJsonRefusesDepthBeyondThreeArraysAndDuplicateKeys() {
+        assertThat(StrictJson.parse(utf8("{\"a\":{\"b\":{\"c\":1}}}"))).as("depth 3 is allowed").isNotNull();
+        assertThatThrownBy(() -> StrictJson.parse(utf8("{\"a\":{\"b\":{\"c\":{\"d\":1}}}}")))
+                .isInstanceOf(MalformedJson.class).hasMessageContaining("nested too deeply");
+        assertThatThrownBy(() -> StrictJson.parse(utf8("{\"a\":[1]}")))
+                .isInstanceOf(MalformedJson.class).hasMessageContaining("unsupported JSON type");
+        assertThatThrownBy(() -> StrictJson.parse(utf8("{\"a\":1,\"a\":2}")))
+                .isInstanceOf(MalformedJson.class).hasMessageContaining("not valid JSON");
     }
 
     @Test

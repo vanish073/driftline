@@ -14,6 +14,14 @@ java {
     }
 }
 
+// Every resolved dependency, transitive ones included, is pinned in a committed gradle.lockfile per module (D79): the
+// build resolves exactly those versions, and OSV-Scanner checks them in CI. A version a BOM manages would silently stay
+// at its locked value after a bump, so CI also fails when the lockfiles differ from what the build files declare
+// (scripts/check-lockfiles.sh). After changing a version: scripts/check-lockfiles.sh --write
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.release = 21
     options.encoding = "UTF-8"

@@ -1,0 +1,9 @@
+# gitleaks findings accepted by fingerprint (DESIGN §14, D79). Each one is listed with why.
+#
+# Commit 87e00df (Shift 6): fake webhook secrets in tests, shaped like a vendor's ("whsec_" + hex). They were never
+# real keys; later commits replaced them with "test-only-…-not-a-real-key" strings, which the current tree uses. The
+# history is public, so it is not rewritten; only these four lines of that one commit are ignored.
+87e00df41cd8eafc625f7b63a03d7866b30964a8:app/src/integrationTest/java/io/github/vanish073/driftline/app/ApplicationSmokeIT.java:generic-api-key:48
+87e00df41cd8eafc625f7b63a03d7866b30964a8:app/src/test/java/io/github/vanish073/driftline/app/merchant/SecretCipherTest.java:generic-api-key:17
+87e00df41cd8eafc625f7b63a03d7866b30964a8:app/src/test/java/io/github/vanish073/driftline/app/ingest/IngestApiTest.java:generic-api-key:70
+87e00df41cd8eafc625f7b63a03d7866b30964a8:app/src/test/java/io/github/vanish073/driftline/app/ingest/IngestApiTest.java:generic-api-key:71

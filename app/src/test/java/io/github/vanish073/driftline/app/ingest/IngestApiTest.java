@@ -2,7 +2,9 @@ package io.github.vanish073.driftline.app.ingest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -16,7 +18,12 @@ import io.github.vanish073.driftline.app.Roles;
 import io.github.vanish073.driftline.app.kafka.EventPublisher;
 import io.github.vanish073.driftline.app.merchant.DevBootstrap;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.merchant.SecretCipher;
+import io.github.vanish073.driftline.app.merchant.SecretRefresher;
 import io.github.vanish073.driftline.app.ops.OpsController;
+import io.github.vanish073.driftline.app.observability.IngestMetrics;
+import io.github.vanish073.driftline.app.observability.Tracing;
+import io.github.vanish073.driftline.app.pii.CustomerContacts;
 import io.github.vanish073.driftline.app.security.SecurityConfiguration;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.EventType;
@@ -30,12 +37,14 @@ import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.Store;
+import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
 import io.github.vanish073.driftline.wire.hmac.WebhookSignature;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import io.github.vanish073.driftline.wire.order.OrderEventCodec;
 import io.github.vanish073.driftline.wire.order.OrderEventMessage;
+import io.github.vanish073.driftline.wire.webhook.CustomerContact;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhook;
 import io.github.vanish073.driftline.wire.webhook.GatewayWebhookCodec;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +55,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -88,6 +98,16 @@ class IngestApiTest {
     Store store;
     @MockitoBean
     PostgresDirectory directory;
+    @MockitoBean
+    SecretCipher cipher;
+    @MockitoBean
+    SecretRefresher refresher;
+    @MockitoBean
+    CustomerContacts contacts;
+    @MockitoBean
+    IngestMetrics ingestMetrics;
+    @MockitoBean
+    Tracing tracing;
 
     @BeforeEach
     void world() {
@@ -350,5 +370,49 @@ class IngestApiTest {
                         .header("Authorization", "Bearer " + SERVICE_TOKEN))
                 .andExpect(status().isNotFound());
         verify(publisher, never()).publish(any());
+    }
+
+    // ---- customer contacts (D77) ----------------------------------------------------------------------------------
+
+    static byte[] webhookWithContact(String eventId) {
+        return GatewayWebhookCodec.encode(new GatewayWebhook(eventId, EventType.PAYMENT_SUCCEEDED, NOW.minusSeconds(30),
+                new PaymentPayload(PaymentId.of("pay_1"), OrderId.of("ord_1"), Money.ofPaise(49_900))),
+                Optional.of(CustomerContact.of(Optional.of("buyer@okaxis"), Optional.of("9876543210"),
+                        Optional.of("not an email"))));
+    }
+
+    @Test
+    void aContactOnAWebhookGoesToTheVaultBeforeTheEventIsPublished() throws Exception {
+        byte[] body = webhookWithContact("evt_c1");
+        mvc.perform(post("/v1/webhooks/gateway/m_a").content(body)
+                        .header(WebhookSignature.HEADER, WebhookSignature.sign(SECRET_A, NOW, body)))
+                .andExpect(status().isAccepted());
+        InOrder order = inOrder(contacts, publisher);
+        ArgumentCaptor<CustomerContact> contact = ArgumentCaptor.forClass(CustomerContact.class);
+        order.verify(contacts).store(eq(A), eq(PaymentId.of("pay_1")), contact.capture(), any());
+        order.verify(publisher).publish(any());
+        assertThat(contact.getValue().vpa()).contains("buyer@okaxis");
+        assertThat(contact.getValue().email()).as("an invalid field is dropped").isEmpty();
+        assertThat(published().get(0).toString()).as("the event carries no contact").doesNotContain("buyer");
+    }
+
+    @Test
+    void aVaultThatIsDownMeans503AndNothingIsPublishedSoTheGatewayRetries() throws Exception {
+        doThrow(new StoreUnavailable("down", null)).when(contacts)
+                .store(any(), any(), any(), any());
+        byte[] body = webhookWithContact("evt_c2");
+        mvc.perform(post("/v1/webhooks/gateway/m_a").content(body)
+                        .header(WebhookSignature.HEADER, WebhookSignature.sign(SECRET_A, NOW, body)))
+                .andExpect(status().isServiceUnavailable());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void aWebhookWithoutAContactNeverTouchesTheVault() throws Exception {
+        byte[] body = webhook("evt_c3");
+        mvc.perform(post("/v1/webhooks/gateway/m_a").content(body)
+                        .header(WebhookSignature.HEADER, WebhookSignature.sign(SECRET_A, NOW, body)))
+                .andExpect(status().isAccepted());
+        verify(contacts, never()).store(any(), any(), any(), any());
     }
 }

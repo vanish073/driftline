@@ -33,7 +33,8 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * Merchants are an object keyed by merchant id (no arrays), so the sandbox reads the same file with the strict parser
  * of {@code wire}. A merchant token gets {@code events:write}, {@code settlement:write} and {@code breaks:read} for its merchant; the
- * ops token gets {@code breaks:read} and {@code breaks:resolve} across merchants; the service token, which the dispatcher
+ * ops token gets {@code breaks:read}, {@code breaks:resolve}, {@code ledger:adjust} and {@code secrets:write} across
+ * merchants; the service token, which the dispatcher
  * sends to {@code /internal/v1/observations}, gets {@code observations:write} only.
  */
 public final class DevBootstrap {
@@ -72,7 +73,7 @@ public final class DevBootstrap {
                     List.of("events:write", "settlement:write", "breaks:read"), now, Optional.empty()));
         }
         directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "ops_token")), Optional.empty(),
-                List.of("breaks:read", "breaks:resolve"), now, Optional.empty()));
+                List.of("breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write"), now, Optional.empty()));
         directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "service_token")), Optional.empty(),
                 List.of("observations:write"), now, Optional.empty()));
         LOG.info("bootstrap file applied: {} merchants onboarded now, {} listed", onboarded, root.path("merchants").size());
