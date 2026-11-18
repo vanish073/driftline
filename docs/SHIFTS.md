@@ -16,7 +16,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 6 | Ingest API, Kafka drivers, settlement worker, Compose e2e | **M3 done** | **DONE** (2026-11-15); **M3 DONE** |
 | 7 | Batch settlement matching and test corpus | M4 (part 1) | **DONE** (2026-11-16) |
 | 8 | Resolver, outbox, dispatcher, crash tests | **M4 done** | **DONE** (2026-11-16); **M4 DONE** |
-| 9 | Observability, security, Kubernetes | M5 (part 1) | TODO |
+| 9 | Observability, security, Kubernetes | M5 (part 1) | **DONE** (2026-11-17) |
 | 10 | Load test, hot-account benchmark, results, README | **M5 done** | TODO |
 
 ## Human tasks (only you can do these)
@@ -295,6 +295,7 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 - The kind smoke test passes in CI (nightly or a manual trigger).
 
 **Exit:** the observability and security checklist is complete; the manifests deploy.
+**Carry-over:** Build list done; the design details are D74–D80 (MANUAL_ADJUSTMENT D74, verify-audit and the CSV export D75, webhook secret rotation D76, personal data D77, observability D78, supply chain and the threat model D79, Kubernetes and container hardening D80). Prove, locally: the dashboard with live data from a Compose run (`docs/results/grafana-shift9.png`, by `scripts/obs-evidence.sh`); one trace from the webhook through ingest, Kafka, the matcher and the resolver to the dispatcher's calls (`jaeger-trace-shift9.png` and `.json`; also checked by `scripts/obs-check.sh` in CI's e2e job); every §14 row with its tests and CI jobs (`docs/results/security-shift9.md`); the Compose e2e (8 of 8, with the obs profile and tracing on) and the chaos run green after every phase, with the PII scan clean. The kind smoke test first runs in CI (nightly, and on pull requests that change the manifests): it cannot run on the 4 GB laptop (§15.1). What the first scans found was fixed, not suppressed: lz4-java, snappy-java, Jackson in store-postgres's integration tests, OpenTelemetry, and `apt` in the base image (D79). No simulator-found bug this shift, so BUGS.md is unchanged. **For Shift 10:** `nightly.yml` still lacks §16's 200,000-seed `nightly` campaign and the full canary matrix (the `nightly` profile does not exist yet); the README's known weaknesses are now D73 as superseded by D74 (manual adjustments are built) and D76 (secrets rotate while running), plus D77 (no retention or erasure of stored contacts) and the residual risks of `docs/THREAT_MODEL.md`.
 
 ---
 
@@ -306,8 +307,9 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 - `bench`: an open-model load generator (signed webhooks plus order events, step-rate) and scripts that save Prometheus queries to `docs/results/load-*.json`.
 - The hot-account benchmark: `ROW_LOCK` vs `APPEND_SNAPSHOT` × concurrency {1, 4, 16, 64}, giving `docs/results/hot-accounts.csv` and a chart.
 - The final simulation campaign (≥ 1,000,000 seeds across nightly runs and local runs), the canary table, the cumulative seed count, and the per-type auto-resolution shares.
+- The `nightly` simulator profile, and `nightly.yml`'s 200,000-seed campaign and full canary matrix (DESIGN §16; carried from Shift 9).
 - `scripts/render-results` fills in the README tables.
-- **README:** the problem; the architecture diagram; **Guarantees and limits** (copied from DESIGN §2, with the known weaknesses of D73 and D70's refund rule in place of §2.1's out-of-date row); the numbers; simulation and canaries; bug log highlights; security; who would pay (with interview insights); prior art; how to run.
+- **README:** the problem; the architecture diagram; **Guarantees and limits** (copied from DESIGN §2, with the known weaknesses of D73 as superseded by D74 and D76, D77's retention gap, the residual risks of `docs/THREAT_MODEL.md`, and D70's refund rule in place of §2.1's out-of-date row); the numbers; simulation and canaries; bug log highlights; security; who would pay (with interview insights); prior art; how to run.
 - Stretch, only if time remains: seed shrinking.
 - A final pass over the traceability matrix below: every row needs evidence. Tag `v1.0`.
 
