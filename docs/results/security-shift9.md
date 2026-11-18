@@ -1,7 +1,7 @@
 # DESIGN §14 security checklist, end of Shift 9
 
-Each row of DESIGN §14 with what proves it. Every test and job named here exists and passed on the Shift 9 code;
-the CI run that confirms it is listed at the end.
+Each row of DESIGN §14 with what proves it. Every test and job named here exists and passed on the Shift 9 code; the CI
+runs that confirm it are listed at the end.
 
 | §14 item | Proof (tests) | Proof (scripts and CI jobs) |
 |---|---|---|
@@ -22,4 +22,13 @@ The threats these answer, and what is not mitigated, are in `docs/THREAT_MODEL.m
 
 ## CI confirmation
 
-Filled in at the end of Shift 9 from the pull request's run on its final commit.
+Pull request #6, commit `1863f35`:
+- `ci` run https://github.com/vanish073/driftline/actions/runs/44214835324: every job green: `build`, `integration`,
+  the four `simulation` shards (10,000 `pr` seeds), `canaries-quick`, `e2e-compose` (with the `obs` profile and
+  tracing on), `chaos-compose`, `security`, `dependency-review`, `obs-config`, `k8s-manifests`, `claims-lint`.
+  `dependency-review` first failed because the repository's dependency graph was off; enabling Dependabot alerts
+  turned it on, and the re-run found no vulnerable package of high severity or above and no denied package.
+- `nightly` run https://github.com/vanish073/driftline/actions/runs/44214835542 (triggered by the pull request):
+  `kind-smoke` green on its first run: deployed stage by stage, the NetworkPolicy probe (API open, PostgreSQL and
+  Kafka closed), the e2e suite 8 of 8, `driftline verify` CLEAN on all nine checks, no raw contact in any pod's log.
+  The nightly `trivy` job runs only on schedule or on demand; `scripts/trivy-scan.sh` passed locally.
