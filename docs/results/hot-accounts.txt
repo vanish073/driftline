@@ -1,0 +1,52 @@
+# scripts/hot-accounts.sh, 2026-11-18T03:18:26Z, commit d739aea+uncommitted
+# host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3915 MB RAM, swap used at start 296 MB
+# java: openjdk version "21.0.13.0.3" 2026-10-24
+# postgres: PostgreSQL 17.12 (Debian 17.12-1.pgdg13+1) on x86_64-pc-linux-gnu; container memory 768 MB; shared_buffers=128MB, fsync=on, synchronous_commit=on, isolation READ COMMITTED
+# runs: 5 s warm-up then 20 s measured, per strategy and writer count; one merchant, distinct captures; a reader every 50 ms; APPEND_SNAPSHOT snapshots every 1 s
+Nov 17, 2026 7:19:15 PM org.flywaydb.core.FlywayExecutor init
+INFO: Database: jdbc:postgresql://127.0.0.1:55432/driftline (PostgreSQL 17.12)
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory allAppliedMigrations
+INFO: Schema history table "public"."flyway_schema_history" does not exist yet
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.command.DbValidate validate
+INFO: Successfully validated 11 migrations (execution time 00:00.066s)
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory create
+INFO: Creating Schema History table "public"."flyway_schema_history" ...
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.command.DbMigrate migrateGroup
+INFO: Current version of schema "public": << Empty Schema >>
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "1 - ledger"
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "2 - matcher state"
+Nov 17, 2026 7:19:16 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "3 - fencing and quarantine"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "4 - detection"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "5 - ingest"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "6 - batch matching"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "7 - resolver and outbox"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "8 - payment sweep"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "9 - ops scopes"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "10 - customer vault"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate doMigrateGroup
+INFO: Migrating schema "public" to version "11 - trace contexts"
+Nov 17, 2026 7:19:17 PM org.flywaydb.core.internal.command.DbMigrate logSummary
+INFO: Successfully applied 11 migrations to schema "public", now at version v11 (execution time 00:00.651s)
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+hot-accounts: ROW_LOCK,1,3048,152.4,5.72,15.96,384,1.66,6.17,0
+hot-accounts: ROW_LOCK,4,5043,252.2,14.60,37.00,380,2.27,9.74,0
+hot-accounts: ROW_LOCK,16,5554,277.7,41.75,252.18,382,1.83,7.69,0
+hot-accounts: ROW_LOCK,64,4043,202.2,249.75,1165.18,374,2.67,13.91,0
+hot-accounts: APPEND_SNAPSHOT,1,4352,217.6,3.97,12.26,381,1.98,7.54,0
+hot-accounts: APPEND_SNAPSHOT,4,10484,524.2,5.68,32.25,367,3.83,11.37,0
+hot-accounts: APPEND_SNAPSHOT,16,19493,974.7,13.72,60.97,304,11.08,67.78,0
+hot-accounts: APPEND_SNAPSHOT,64,27209,1360.5,39.38,148.83,219,33.30,138.00,0
+hot-accounts: wrote /home/vansh/Driftline/docs/results/hot-accounts.csv
+# swap-in during the runs: longest streak 4 s, total 761 KB; verdict: ok
