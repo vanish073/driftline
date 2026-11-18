@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Static checks of the Kubernetes manifests (DESIGN §14, §15.3, D80), run by CI's `k8s-manifests` job; needs kubectl
 # (with kustomize) and Docker.
-#   1. the base and the kind overlay render, and kubeconform validates every resource against Kubernetes 1.37;
+#   1. the base and the kind overlay render, and kubeconform validates every resource against Kubernetes 1.37's
+#      strict schemas (fetched first, with retries);
 #   2. every Driftline and sandbox pod runs as non-root with a read-only root filesystem, no privilege escalation, no
 #      capabilities, the RuntimeDefault seccomp profile, no service-account token and a memory limit; every role's
 #      Deployment has startup, liveness and readiness probes;
@@ -33,8 +34,28 @@ if [ ! -d "$OVERLAY/.dev" ]; then
 fi
 kubectl kustomize deploy/k8s/base > "$work/base.yaml"
 kubectl kustomize --load-restrictor LoadRestrictionsNone "$OVERLAY" > "$work/kind.yaml"
+# kubeconform's schemas for exactly the kinds rendered, fetched with retries (a dropped connection must not fail the
+# check), then validated offline. File names follow kubeconform's {kind}{-group}-{version} convention.
+mkdir -p "$work/schemas"
+python3 -I - "$work/base.yaml" "$work/kind.yaml" > "$work/schema-names" <<'PY'
+import sys
+import yaml
+names = set()
+for path in sys.argv[1:]:
+    for d in yaml.safe_load_all(open(path, encoding="utf-8")):
+        if d:
+            group, _, version = d["apiVersion"].rpartition("/")
+            suffix = f"-{group.split('.')[0]}" if group else ""
+            names.add(f"{d['kind'].lower()}{suffix}-{version}")
+print("\n".join(sorted(names)))
+PY
+while read -r name; do
+    curl -fsS --retry 8 --retry-all-errors --retry-delay 2 -o "$work/schemas/$name.json" \
+        "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.37.0-standalone-strict/$name.json"
+done < "$work/schema-names"
 for f in base kind; do
-    docker run --rm -v "$work:/m:ro" "$KUBECONFORM" -strict -summary -kubernetes-version 1.37.0 "/m/$f.yaml"
+    docker run --rm -v "$work:/m:ro" "$KUBECONFORM" -strict -summary \
+        -schema-location '/m/schemas/{{.ResourceKind}}{{.KindSuffix}}.json' "/m/$f.yaml"
 done
 python3 -I - "$work/base.yaml" "$work/kind.yaml" <<'PY'
 import sys
