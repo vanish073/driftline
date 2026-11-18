@@ -236,7 +236,7 @@ services:
       retries: 30
     mem_limit: 256m
 
-  # ---- Profile `obs` (DESIGN §13, §15.1, D78): about 0.55 GB of memory caps in all. ----------------------------------
+  # ---- Profile `obs` (DESIGN §13, §15.1, D78): about 0.8 GB of memory caps in all. -----------------------------------
 
   otel-collector:
     profiles: [obs]
@@ -268,7 +268,8 @@ services:
       - "127.0.0.1:9090:9090"
     mem_limit: 160m
 
-  # Anonymous users may view; the admin password is generated per run. No phoning home.
+  # Anonymous users may view; the admin password is generated per run. No phoning home. Grafana 13 needs about 340 MB
+  # to render the board; at 160 MB it thrashed and queries took minutes (D78).
   grafana:
     profiles: [obs]
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
@@ -288,4 +289,4 @@ services:
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3000:3000"
-    mem_limit: 160m
+    mem_limit: 384m
