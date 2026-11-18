@@ -48,6 +48,8 @@ public final class SettlementWorkerNode implements SettlementUploads {
     private final FaultInjector faults;
     private final Trace trace;
     private final TreeSet<String> conflicts = new TreeSet<>();
+    /** Runs after an upload is refused as a conflict, whose FILE_CONFLICT the resolver must review (BUG-011). */
+    private Runnable afterConflict = () -> { };
     private boolean down;
     private int incarnation = 1;
     private long accepted;
@@ -68,6 +70,15 @@ public final class SettlementWorkerNode implements SettlementUploads {
 
     public SimClock clock() {
         return clock;
+    }
+
+    /**
+     * Called after a conflicting upload raised its FILE_CONFLICT. The simulation wakes the resolver here, as the
+     * matchers do after a commit: the resolver never polls, and without this a conflict raised when nothing else was
+     * happening waited past its deadline (BUG-011). Production's resolver polls every second, so it was not affected.
+     */
+    public void afterConflict(Runnable hook) {
+        this.afterConflict = hook;
     }
 
     public void crash(long downtimeMillis) {
@@ -125,6 +136,7 @@ public final class SettlementWorkerNode implements SettlementUploads {
             case CONFLICT -> {
                 conflicts.add(merchantId + "/" + file.settlementDate());
                 trace.line(scheduler.now(), NAME, "202 CONFLICT " + file.fileId() + " " + sha.hex().substring(0, 12));
+                afterConflict.run();
                 reply.accept(202);
                 return;
             }

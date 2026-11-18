@@ -75,7 +75,10 @@ class SettlementWorkerNodeTest {
 
     @Test
     void aConflictingFileAndEveryLaterCopyOfItNeverReachTheLog() {
+        int[] woken = {0};
+        worker.afterConflict(() -> woken[0]++);
         upload(file(T0));
+        assertThat(woken[0]).as("an accepted file raises nothing to review").isZero();
         upload(file(T0.plusSeconds(3_600)));   // a different file for the same date
         upload(file(T0.plusSeconds(3_600)));   // the same refused bytes again (BUG-002, seed 143)
         assertThat(log.endOffset(0)).as("only the accepted file was emitted").isEqualTo(2);
@@ -83,6 +86,7 @@ class SettlementWorkerNodeTest {
         assertThat(store.committedBreaks().get(0).evidence()).containsKeys("file_id", "settlement_date", "sha256");
         assertThat(worker.conflicts()).containsExactly("m_0/2026-11-14");
         assertThat(replies).containsExactly(202, 202, 202);
+        assertThat(woken[0]).as("each refused upload wakes the resolver (BUG-011)").isEqualTo(2);
     }
 
     @Test
