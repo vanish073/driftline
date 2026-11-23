@@ -2,6 +2,13 @@
 // generator against a running stack. Plain Java, no Spring (D18).
 plugins {
     id("driftline.plain-java")
+    application
+}
+
+// The load generator runs from bench/build/install/bench/bin/bench with no Gradle daemon alive (DESIGN §15.1, §17).
+application {
+    mainClass = "io.github.vanish073.driftline.bench.LoadGenerator"
+    applicationDefaultJvmArgs = listOf("-Xmx192m", "-XX:+UseSerialGC")
 }
 
 dependencies {

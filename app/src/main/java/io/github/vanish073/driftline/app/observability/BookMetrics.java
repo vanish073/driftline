@@ -9,7 +9,7 @@ import io.micrometer.core.instrument.MultiGauge;
 import io.micrometer.core.instrument.Tags;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -45,11 +45,11 @@ public final class BookMetrics implements SmartLifecycle {
     private final Clock clock;
     private final Duration interval;
     private final ConcurrentHashMap<String, AtomicLong> counters = new ConcurrentHashMap<>();
-    private final MultiGauge open;
-    private final MultiGauge headroom;
-    private final MultiGauge pending;
-    private final MultiGauge unresolvedLines;
-    private final MultiGauge watermarkLag;
+    private final GaugeRows open;
+    private final GaugeRows headroom;
+    private final GaugeRows pending;
+    private final GaugeRows unresolvedLines;
+    private final GaugeRows watermarkLag;
     private final AtomicLong compensation = new AtomicLong();
     private final AtomicReference<Double> oldestPending = new AtomicReference<>(0.0);
 
@@ -61,17 +61,17 @@ public final class BookMetrics implements SmartLifecycle {
         this.stats = Objects.requireNonNull(stats, "stats");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.interval = Objects.requireNonNull(interval, "interval");
-        this.open = MultiGauge.builder("driftline.breaks.open").description("Open breaks (not final, not linked)")
-                .register(registry);
-        this.headroom = MultiGauge.builder("driftline.deadline.headroom.seconds")
+        this.open = new GaugeRows(MultiGauge.builder("driftline.breaks.open")
+                .description("Open breaks (not final, not linked)").register(registry));
+        this.headroom = new GaugeRows(MultiGauge.builder("driftline.deadline.headroom.seconds")
                 .description("Time left before the earliest deadline among open breaks; negative once missed")
-                .register(registry);
-        this.pending = MultiGauge.builder("driftline.outbox.pending").description("Outbox commands not done")
-                .register(registry);
-        this.unresolvedLines = MultiGauge.builder("driftline.settlement.lines.unresolved")
-                .description("Settlement lines in a status that can still change").register(registry);
-        this.watermarkLag = MultiGauge.builder("driftline.watermark.lag.seconds")
-                .description("Processing time minus each stream's watermark").register(registry);
+                .register(registry));
+        this.pending = new GaugeRows(MultiGauge.builder("driftline.outbox.pending")
+                .description("Outbox commands not done").register(registry));
+        this.unresolvedLines = new GaugeRows(MultiGauge.builder("driftline.settlement.lines.unresolved")
+                .description("Settlement lines in a status that can still change").register(registry));
+        this.watermarkLag = new GaugeRows(MultiGauge.builder("driftline.watermark.lag.seconds")
+                .description("Processing time minus each stream's watermark").register(registry));
         Gauge.builder("driftline.compensation.exposure.rupees", compensation, AtomicLong::get)
                 .description("What the open breaks would owe under the RBI rules if resolved now").register(registry);
         Gauge.builder("driftline.outbox.oldest.pending.seconds", oldestPending, AtomicReference::get)
@@ -96,38 +96,38 @@ public final class BookMetrics implements SmartLifecycle {
                 "Breaks closed", Tags.of("type", type, "how", how), n)));
         s.escalated().forEach((type, byReason) -> byReason.forEach((reason, n) -> count("driftline.breaks.escalated",
                 "Escalations", Tags.of("type", type, "reason", reason), n)));
-        List<MultiGauge.Row<?>> openRows = new ArrayList<>();
+        Map<Tags, Number> openRows = new LinkedHashMap<>();
         s.open().forEach((type, byState) -> byState.forEach((state, n) ->
-                openRows.add(MultiGauge.Row.of(Tags.of("type", type, "state", state), n))));
-        open.register(openRows, true);
-        List<MultiGauge.Row<?>> headroomRows = new ArrayList<>();
-        s.earliestDeadline().forEach((type, deadline) -> headroomRows.add(MultiGauge.Row.of(Tags.of("type", type),
-                Duration.between(now, deadline).toMillis() / 1000.0)));
-        headroom.register(headroomRows, true);
+                openRows.put(Tags.of("type", type, "state", state), n)));
+        open.set(openRows);
+        Map<Tags, Number> headroomRows = new LinkedHashMap<>();
+        s.earliestDeadline().forEach((type, deadline) -> headroomRows.put(Tags.of("type", type),
+                Duration.between(now, deadline).toMillis() / 1000.0));
+        headroom.set(headroomRows);
         compensation.set(s.compensationRupees());
-        List<MultiGauge.Row<?>> pendingRows = new ArrayList<>();
-        s.outboxPending().forEach((kind, n) -> pendingRows.add(MultiGauge.Row.of(Tags.of("kind", kind), n)));
-        pending.register(pendingRows, true);
+        Map<Tags, Number> pendingRows = new LinkedHashMap<>();
+        s.outboxPending().forEach((kind, n) -> pendingRows.put(Tags.of("kind", kind), n));
+        pending.set(pendingRows);
         oldestPending.set(s.oldestPendingSince().map(t -> Math.max(0, Duration.between(t, now).toMillis()) / 1000.0)
                 .orElse(0.0));
-        List<MultiGauge.Row<?>> unresolved = new ArrayList<>();
+        Map<Tags, Number> unresolved = new LinkedHashMap<>();
         for (Map.Entry<String, Long> e : s.lines().entrySet()) {
             if (UNRESOLVED_LINE_STATUSES.contains(e.getKey())) {
-                unresolved.add(MultiGauge.Row.of(Tags.of("status", e.getKey().toLowerCase(Locale.ROOT)), e.getValue()));
+                unresolved.put(Tags.of("status", e.getKey().toLowerCase(Locale.ROOT)), e.getValue());
             } else {
                 count("driftline.settlement.lines", "Settlement lines received, and in each final status",
                         Tags.of("result", e.getKey().toLowerCase(Locale.ROOT)), e.getValue());
             }
         }
-        unresolvedLines.register(unresolved, true);
+        unresolvedLines.set(unresolved);
         count("driftline.pricing.drift", "Short lines explained by fees that differ from the schedule", Tags.empty(),
                 s.pricingDrift());
-        List<MultiGauge.Row<?>> lagRows = new ArrayList<>();
+        Map<Tags, Number> lagRows = new LinkedHashMap<>();
         for (BookStats.Watermark w : s.watermarks()) {
-            lagRows.add(MultiGauge.Row.of(Tags.of("partition", Integer.toString(w.partition()), "source",
-                    w.source().toLowerCase(Locale.ROOT)), Duration.between(w.value(), now).toMillis() / 1000.0));
+            lagRows.put(Tags.of("partition", Integer.toString(w.partition()), "source",
+                    w.source().toLowerCase(Locale.ROOT)), Duration.between(w.value(), now).toMillis() / 1000.0);
         }
-        watermarkLag.register(lagRows, true);
+        watermarkLag.set(lagRows);
     }
 
     @Override

@@ -27,6 +27,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Optional;
@@ -45,6 +47,12 @@ import org.springframework.context.ConfigurableApplicationContext;
  */
 @ExtendWith(OutputCaptureExtension.class)
 class CustomerVaultIT {
+
+    /**
+     * Two days ahead, whatever today is: a first settlement date already past makes a settlement break due on the
+     * first record, which this test does not expect (it passed until 2026-11-18, then failed).
+     */
+    static final String FIRST_SETTLEMENT = LocalDate.now(ZoneOffset.UTC).plusDays(2).toString();
 
     static final String MERCHANT = "m_vault";
     static final String SECRET = "test-only-webhook-secret-vault-not-a-real-key";
@@ -83,9 +91,9 @@ class CustomerVaultIT {
         Files.writeString(bootstrap, """
                 {"format":"driftline-bootstrap-v1",
                  "merchants":{"%s":{"partition":4,"fee_bps":200,"gst_bps":1800,"cycle_days":1,
-                                    "first_settlement_date":"2026-11-18","webhook_secret":"%s","token":"test-token-vault_m"}},
+                                    "first_settlement_date":"%s","webhook_secret":"%s","token":"test-token-vault_m"}},
                  "ops_token":"%s","service_token":"test-token-vault_service"}
-                """.formatted(MERCHANT, SECRET, OPS_TOKEN));
+                """.formatted(MERCHANT, FIRST_SETTLEMENT, SECRET, OPS_TOKEN));
         try (ConfigurableApplicationContext app = DriftlineApplication.application("ingest,matcher").run(
                 "--spring.datasource.url=" + url,
                 "--spring.datasource.username=" + Containers.APP_USER,

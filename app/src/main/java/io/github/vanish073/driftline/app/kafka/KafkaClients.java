@@ -1,10 +1,23 @@
 package io.github.vanish073.driftline.app.kafka;
 
 import io.github.vanish073.driftline.app.config.DriftlineProperties;
+import java.time.Duration;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.CooperativeStickyAssignor;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 
@@ -60,5 +73,42 @@ public final class KafkaClients {
         p.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         p.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         return p;
+    }
+
+    /** An admin client, for the backlog probe's end offsets (D83). */
+    public static Properties admin(DriftlineProperties.Kafka kafka, String clientId) {
+        Properties p = new Properties();
+        p.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.bootstrapServers());
+        p.put(AdminClientConfig.CLIENT_ID_CONFIG, clientId);
+        long ack = kafka.ackTimeout().toMillis();
+        p.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, Long.toString(Math.max(1_000, ack / 2)));
+        p.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, Long.toString(ack));
+        return p;
+    }
+
+    /**
+     * The end offset (the offset the next record will get) of each of {@code partitions} of {@code topic}, as the
+     * {@code read_uncommitted} consumer sees it; waits at most {@code timeout}.
+     *
+     * @throws IllegalStateException if Kafka did not answer in time or refused
+     */
+    public static Map<Integer, Long> endOffsets(Admin admin, String topic, Collection<Integer> partitions,
+                                                Duration timeout) {
+        Map<TopicPartition, OffsetSpec> request = new LinkedHashMap<>();
+        for (Integer p : partitions) {
+            request.put(new TopicPartition(topic, p), OffsetSpec.latest());
+        }
+        try {
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> result = admin.listOffsets(request).all()
+                    .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            TreeMap<Integer, Long> out = new TreeMap<>();
+            result.forEach((tp, info) -> out.put(tp.partition(), info.offset()));
+            return out;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while listing the end offsets of " + topic, e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("cannot list the end offsets of " + topic + ": " + e, e);
+        }
     }
 }

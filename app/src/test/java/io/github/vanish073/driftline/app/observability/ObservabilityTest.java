@@ -130,7 +130,8 @@ class ObservabilityTest {
         assertThat(registry.get("driftline.detection.lag").tag("type", "MISSING_SETTLEMENT").timer().count())
                 .as("a timer-raised break is measured from the newest record").isEqualTo(1);
         assertThat(registry.get("driftline.subset.sum.ops").summary().totalAmount()).isEqualTo(1_200);
-        assertThat(registry.get("driftline.consumer.lag.records").tag("partition", "0").gauge().value()).isEqualTo(42);
+        assertThat(registry.get("driftline.consumer.client.lag.records").tag("partition", "0").gauge().value())
+                .isEqualTo(42);
         assertThat(registry.get("driftline.partition.fenced").counter().count()).isEqualTo(1);
     }
 
@@ -324,6 +325,8 @@ class ObservabilityTest {
                 new TreeMap<>(Map.of("received", 1L, "AMBIGUOUS", 1L)), 0,
                 List.of(new BookStats.Watermark(0, "GATEWAY", now))));
         new BookMetrics(prometheus, stats, () -> now, Duration.ofSeconds(15)).refresh();
+        new BacklogProbe(prometheus, () -> List.of(0), partitions -> Map.of(0, 5L), partitions -> Map.of(0, 3L),
+                Duration.ofSeconds(5)).refresh();
         String scrape = prometheus.scrape();
 
         Path deploy = Path.of("..", "deploy");

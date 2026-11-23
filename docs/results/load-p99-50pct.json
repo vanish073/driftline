@@ -1,0 +1,267 @@
+{
+  "containers": {
+    "driftline-driftline-1": {
+      "max_cores": 1.395,
+      "mean_cores": 0.268,
+      "samples": 59
+    },
+    "driftline-kafka-1": {
+      "max_cores": 2.337,
+      "mean_cores": 0.666,
+      "samples": 59
+    },
+    "driftline-postgres-1": {
+      "max_cores": 1.896,
+      "mean_cores": 0.332,
+      "samples": 59
+    },
+    "driftline-prometheus-1": {
+      "max_cores": 0.109,
+      "mean_cores": 0.012,
+      "samples": 59
+    },
+    "driftline-sandbox-1": {
+      "max_cores": 0.272,
+      "mean_cores": 0.032,
+      "samples": 59
+    }
+  },
+  "generator": {
+    "accepted": 15000,
+    "arrivals": 15000,
+    "cpu_seconds": 68.3,
+    "first_rejections": [],
+    "http_max_ms": 1025.61,
+    "http_p50_ms": 8.78,
+    "http_p99_ms": 153.05,
+    "label": "p50pct",
+    "max_in_flight": 26,
+    "offered_rate": 25.0,
+    "rejected": 0,
+    "schedule_seconds": 600.0,
+    "seconds": 600,
+    "sent": 15000,
+    "skipped": 0,
+    "statuses": {
+      "202": 15000
+    },
+    "still_in_flight": 0,
+    "transport_errors": 0
+  },
+  "jvm": {
+    "gc_pause_max_s": 0.209,
+    "gc_pause_total_s": 0.275867878239079,
+    "machine_cpu_max_share": 0.4076716164702265,
+    "process_cpu_avg_share_of_machine": 0.022465803531973114,
+    "process_cpu_max_share_of_machine": 0.06408053032163025
+  },
+  "machine": {
+    "busiest_second": 1795426602,
+    "busy_cores_at_busiest": 8.4,
+    "containers_cores_at_busiest": {
+      "driftline-driftline-1": 1.395,
+      "driftline-kafka-1": 1.896,
+      "driftline-postgres-1": 1.281,
+      "driftline-prometheus-1": 0.109,
+      "driftline-sandbox-1": 0.238
+    },
+    "cores": 12,
+    "generator_cores_step_mean": 0.114,
+    "largest_sample_gap_s": 1,
+    "vmstat_samples": 603,
+    "window_max_run_queue": 19,
+    "window_min_idle_cpu_pct": 30
+  },
+  "prometheus": {
+    "consumer_client_lag_max": 0.0,
+    "consumer_client_lag_series": [
+      [
+        1795426595,
+        0.0
+      ],
+      [
+        1795426610,
+        0.0
+      ],
+      [
+        1795426625,
+        0.0
+      ],
+      [
+        1795426640,
+        0.0
+      ],
+      [
+        1795426655,
+        0.0
+      ],
+      [
+        1795426670,
+        0.0
+      ],
+      [
+        1795426685,
+        0.0
+      ],
+      [
+        1795426700,
+        0.0
+      ],
+      [
+        1795426715,
+        0.0
+      ],
+      [
+        1795426730,
+        0.0
+      ],
+      [
+        1795426745,
+        0.0
+      ],
+      [
+        1795426760,
+        0.0
+      ],
+      [
+        1795426775,
+        0.0
+      ],
+      [
+        1795426790,
+        0.0
+      ],
+      [
+        1795426805,
+        0.0
+      ],
+      [
+        1795426820,
+        0.0
+      ],
+      [
+        1795426835,
+        0.0
+      ],
+      [
+        1795426850,
+        0.0
+      ],
+      [
+        1795426865,
+        0.0
+      ],
+      [
+        1795426880,
+        0.0
+      ],
+      [
+        1795426895,
+        0.0
+      ]
+    ],
+    "consumer_lag_max": 57.0,
+    "consumer_lag_series": [
+      [
+        1795426595,
+        57.0
+      ],
+      [
+        1795426610,
+        2.0
+      ],
+      [
+        1795426625,
+        1.0
+      ],
+      [
+        1795426640,
+        1.0
+      ],
+      [
+        1795426655,
+        0.0
+      ],
+      [
+        1795426670,
+        1.0
+      ],
+      [
+        1795426685,
+        0.0
+      ],
+      [
+        1795426700,
+        0.0
+      ],
+      [
+        1795426715,
+        0.0
+      ],
+      [
+        1795426730,
+        1.0
+      ],
+      [
+        1795426745,
+        1.0
+      ],
+      [
+        1795426760,
+        0.0
+      ],
+      [
+        1795426775,
+        1.0
+      ],
+      [
+        1795426790,
+        0.0
+      ],
+      [
+        1795426805,
+        1.0
+      ],
+      [
+        1795426820,
+        0.0
+      ],
+      [
+        1795426835,
+        1.0
+      ],
+      [
+        1795426850,
+        0.0
+      ],
+      [
+        1795426865,
+        1.0
+      ],
+      [
+        1795426880,
+        1.0
+      ],
+      [
+        1795426895,
+        0.0
+      ]
+    ],
+    "consumer_lag_slope_per_s": -0.050216450216450215,
+    "event_to_match_p50_s": 0.016557042141732287,
+    "event_to_match_p99_s": 2.7384393318066587,
+    "events_consumed_per_s": 25.014126822009064,
+    "ingest_accepted_per_s": 24.986048666463102
+  },
+  "swap": {
+    "longest_swap_in_streak_s": 0,
+    "swap_in_streak_threshold_kb_per_s": 256,
+    "swap_in_total_kb": 904
+  },
+  "verdict": "sustained",
+  "window": {
+    "from": 1795426595,
+    "seconds": 300,
+    "to": 1795426895
+  }
+}

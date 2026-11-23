@@ -32,7 +32,9 @@ x-app-env: &app-env
   DRIFTLINE_PII_KEYS_DEV: ${DRIFTLINE_PII_KEY:?missing}
   DRIFTLINE_PII_INDEX_KEY: ${DRIFTLINE_PII_INDEX_KEY:?missing}
   DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
-  JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k"
+  # -Xms equal to -Xmx (D84): a heap that starts small grows only through full collections, and the load test saw one
+  # triggered that way stall the process for 21.8 s; the cap, and so the most the heap can use, is unchanged.
+  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k"
   # The OpenTelemetry Java agent (D78): off unless DRIFTLINE_TRACING=true. Spans only, over OTLP to the collector of the
   # `obs` profile; metrics go through Prometheus instead. Its Kafka instrumentation is off, since Driftline carries
   # `traceparent` on records itself (D46), and so is JDBC, so the drivers' polling does not flood the traces.

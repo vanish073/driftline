@@ -1,0 +1,267 @@
+{
+  "containers": {
+    "driftline-driftline-1": {
+      "max_cores": 2.589,
+      "mean_cores": 0.966,
+      "samples": 56
+    },
+    "driftline-kafka-1": {
+      "max_cores": 2.653,
+      "mean_cores": 1.074,
+      "samples": 56
+    },
+    "driftline-postgres-1": {
+      "max_cores": 2.011,
+      "mean_cores": 0.867,
+      "samples": 56
+    },
+    "driftline-prometheus-1": {
+      "max_cores": 0.315,
+      "mean_cores": 0.027,
+      "samples": 56
+    },
+    "driftline-sandbox-1": {
+      "max_cores": 0.344,
+      "mean_cores": 0.057,
+      "samples": 56
+    }
+  },
+  "generator": {
+    "accepted": 60000,
+    "arrivals": 60000,
+    "cpu_seconds": 189.3,
+    "first_rejections": [],
+    "http_max_ms": 3530.3,
+    "http_p50_ms": 9.11,
+    "http_p99_ms": 1149.31,
+    "label": "s100",
+    "max_in_flight": 245,
+    "offered_rate": 100.0,
+    "rejected": 0,
+    "schedule_seconds": 600.0,
+    "seconds": 600,
+    "sent": 60000,
+    "skipped": 0,
+    "statuses": {
+      "202": 60000
+    },
+    "still_in_flight": 0,
+    "transport_errors": 0
+  },
+  "jvm": {
+    "gc_pause_max_s": 1.293,
+    "gc_pause_total_s": 6.651149074210604,
+    "machine_cpu_max_share": 0.7866329562153703,
+    "process_cpu_avg_share_of_machine": 0.0853420609573732,
+    "process_cpu_max_share_of_machine": 0.22237669645812644
+  },
+  "machine": {
+    "busiest_second": 1795426172,
+    "busy_cores_at_busiest": 11.28,
+    "containers_cores_at_busiest": {
+      "driftline-driftline-1": 2.589,
+      "driftline-kafka-1": 1.098,
+      "driftline-postgres-1": 1.803,
+      "driftline-prometheus-1": 0.022,
+      "driftline-sandbox-1": 0.003
+    },
+    "cores": 12,
+    "generator_cores_step_mean": 0.316,
+    "largest_sample_gap_s": 2,
+    "vmstat_samples": 603,
+    "window_max_run_queue": 66,
+    "window_min_idle_cpu_pct": 6
+  },
+  "prometheus": {
+    "consumer_client_lag_max": 180.0,
+    "consumer_client_lag_series": [
+      [
+        1795425973,
+        0.0
+      ],
+      [
+        1795425988,
+        0.0
+      ],
+      [
+        1795426003,
+        0.0
+      ],
+      [
+        1795426018,
+        0.0
+      ],
+      [
+        1795426033,
+        0.0
+      ],
+      [
+        1795426048,
+        0.0
+      ],
+      [
+        1795426063,
+        0.0
+      ],
+      [
+        1795426078,
+        0.0
+      ],
+      [
+        1795426093,
+        0.0
+      ],
+      [
+        1795426108,
+        0.0
+      ],
+      [
+        1795426123,
+        8.0
+      ],
+      [
+        1795426138,
+        2.0
+      ],
+      [
+        1795426153,
+        0.0
+      ],
+      [
+        1795426168,
+        8.0
+      ],
+      [
+        1795426183,
+        7.0
+      ],
+      [
+        1795426198,
+        44.0
+      ],
+      [
+        1795426213,
+        180.0
+      ],
+      [
+        1795426228,
+        0.0
+      ],
+      [
+        1795426243,
+        0.0
+      ],
+      [
+        1795426258,
+        0.0
+      ],
+      [
+        1795426273,
+        0.0
+      ]
+    ],
+    "consumer_lag_max": 2889.0,
+    "consumer_lag_series": [
+      [
+        1795425973,
+        72.0
+      ],
+      [
+        1795425988,
+        29.0
+      ],
+      [
+        1795426003,
+        12.0
+      ],
+      [
+        1795426018,
+        59.0
+      ],
+      [
+        1795426033,
+        2.0
+      ],
+      [
+        1795426048,
+        219.0
+      ],
+      [
+        1795426063,
+        4.0
+      ],
+      [
+        1795426078,
+        50.0
+      ],
+      [
+        1795426093,
+        1.0
+      ],
+      [
+        1795426108,
+        2.0
+      ],
+      [
+        1795426123,
+        237.0
+      ],
+      [
+        1795426138,
+        345.0
+      ],
+      [
+        1795426153,
+        185.0
+      ],
+      [
+        1795426168,
+        460.0
+      ],
+      [
+        1795426183,
+        1571.0
+      ],
+      [
+        1795426198,
+        2889.0
+      ],
+      [
+        1795426213,
+        2204.0
+      ],
+      [
+        1795426228,
+        106.0
+      ],
+      [
+        1795426243,
+        16.0
+      ],
+      [
+        1795426258,
+        170.0
+      ],
+      [
+        1795426273,
+        58.0
+      ]
+    ],
+    "consumer_lag_slope_per_s": 3.1394805194805193,
+    "event_to_match_p50_s": 1.0505764446956523,
+    "event_to_match_p99_s": 38.267397822875594,
+    "events_consumed_per_s": 99.88133605768893,
+    "ingest_accepted_per_s": 100.05687443388874
+  },
+  "swap": {
+    "longest_swap_in_streak_s": 0,
+    "swap_in_streak_threshold_kb_per_s": 256,
+    "swap_in_total_kb": 1580
+  },
+  "verdict": "not sustained: consumer lag grew 3.14 records/s",
+  "window": {
+    "from": 1795425973,
+    "seconds": 300,
+    "to": 1795426273
+  }
+}

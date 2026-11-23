@@ -1,0 +1,219 @@
+# scripts/load-test.sh, 2026-11-23T08:59:16Z, commit 0a49a63+uncommitted
+# host: Linux 6.6.87.2-microsoft-standard-WSL2, 12 cores, 3 GB RAM; Compose profile core plus Prometheus; LOAD_RATES="25 50 100 200 400" LOAD_STEP_SECONDS=600
+# containers: driftline (every role in one JVM, -Xms256m -Xmx256m SerialGC, 512 MB), Kafka 640 MB, PostgreSQL 256 MB, sandbox 256 MB, Prometheus 160 MB; generator -Xmx192m
+wrote deploy/compose/.dev/bootstrap.json (first settlement date 2026-11-25)
+ Image driftline-app:dev Building 
+ Image driftline-app:dev Building 
+ Image driftline-sandbox:dev Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.40kB done
+#1 DONE 0.0s
+
+#2 [sandbox internal] load build definition from sandbox.Dockerfile
+#2 transferring dockerfile: 524B 0.0s done
+#2 DONE 0.1s
+
+#3 [migrate internal] load build definition from app.Dockerfile
+#3 transferring dockerfile: 1.58kB 0.0s done
+#3 DONE 0.1s
+
+#4 [sandbox internal] load metadata for docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#4 ...
+
+#5 [auth] library/eclipse-temurin:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 [driftline internal] load metadata for docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#4 DONE 2.8s
+
+#6 [migrate internal] load .dockerignore
+#6 transferring context: 187B 0.0s done
+#6 DONE 0.0s
+
+#7 [sandbox internal] load build context
+#7 DONE 0.0s
+
+#8 [migrate 4/5] ADD --chmod=444     --checksum=sha256:e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149     https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.33.1/opentelemetry-javaagent-2.33.1.jar     /app/otel/opentelemetry-javaagent.jar
+#8 DONE 0.0s
+
+#9 [driftline 1/4] FROM docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#9 resolve docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515
+#9 resolve docker.io/library/eclipse-temurin:21.0.13_9-jre-noble@sha256:0d57a8e90c2bb844c5a8e1b2b71e11eff06dad7edcfd803cd21ed4ae203b2515 0.1s done
+#9 DONE 0.1s
+
+#10 [migrate internal] load build context
+#10 transferring context: 147B 0.0s done
+#10 DONE 0.0s
+
+#7 [sandbox internal] load build context
+#7 transferring context: 775B 0.0s done
+#7 DONE 0.1s
+
+#11 [sandbox 2/4] RUN groupadd --system --gid 10001 sandbox     && useradd --system --uid 10001 --gid sandbox --no-create-home --shell /usr/sbin/nologin sandbox
+#11 CACHED
+
+#12 [sandbox 3/4] WORKDIR /app
+#12 CACHED
+
+#13 [sandbox 4/4] COPY sandbox/build/install/sandbox /app
+#13 CACHED
+
+#14 [driftline 2/5] RUN groupadd --system --gid 10001 driftline     && useradd --system --uid 10001 --gid driftline --no-create-home --shell /usr/sbin/nologin driftline     && mkdir -p /app/otel
+#14 CACHED
+
+#15 [driftline 4/5] ADD --chmod=444     --checksum=sha256:e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149     https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.33.1/opentelemetry-javaagent-2.33.1.jar     /app/otel/opentelemetry-javaagent.jar
+#15 CACHED
+
+#16 [driftline 3/5] WORKDIR /app
+#16 CACHED
+
+#17 [driftline 5/5] COPY app/build/libs/app-0.1.0-SNAPSHOT.jar /app/driftline.jar
+#17 CACHED
+
+#18 [sandbox] exporting to image
+#18 exporting layers 0.0s done
+#18 exporting manifest sha256:29ae6fe080682268edb32deac88fa52b1ad0372da22da143fd5db8561ce5e5f7 0.0s done
+#18 exporting config sha256:66fd943a5106a232ce1c878664ef9c08512b657625000caae406ecd9f8824053 0.0s done
+#18 exporting attestation manifest sha256:163fa2a1da2d9a24bdc6c1d5d6828b5e9dfe56a20890b83435150bf6e0b1bbf6
+#18 exporting attestation manifest sha256:163fa2a1da2d9a24bdc6c1d5d6828b5e9dfe56a20890b83435150bf6e0b1bbf6 0.1s done
+#18 exporting manifest list sha256:508d3b77c0940df5ad3acd36bf5bdb2d28e8770c0cc0dd5fb47b1113aea6eebe 0.1s done
+#18 naming to docker.io/library/driftline-sandbox:dev 0.0s done
+#18 unpacking to docker.io/library/driftline-sandbox:dev
+#18 unpacking to docker.io/library/driftline-sandbox:dev 0.1s done
+#18 DONE 0.5s
+
+#19 [migrate] exporting to image
+#19 exporting layers 0.0s done
+#19 exporting manifest sha256:99489b9ae8b76c2c63bfe4cb30f3980db1e316301c0da5aef30ec1e34dba7a63 done
+#19 exporting config sha256:3d714758758e5b012c64f2c78377a8d6377fc886c7a1d51726c3fa616229f05b 0.0s done
+#19 exporting attestation manifest sha256:a412c9243a8980b382f1f70e83479e6cc097a35700ce7fddcc8450665f4c22d6 0.1s done
+#19 exporting manifest list sha256:9c50664e5c2bbc9773948ac8c3eaf4e0c3b7d65b5681d42c9d51580ec95f16f5 0.0s done
+#19 naming to docker.io/library/driftline-app:dev 0.0s done
+#19 unpacking to docker.io/library/driftline-app:dev 0.1s done
+#19 DONE 0.4s
+
+#20 [driftline] exporting to image
+#20 exporting layers 0.0s done
+#20 exporting manifest sha256:1abae8bb49c36d10a52aa45c4df5b791eef6c5a4603740f7747096ba0cfbadcf 0.0s done
+#20 exporting config sha256:ded97a1a69fc87ee71d21c8c1daba9b26990b468f724883145951e7865c268de 0.1s done
+#20 exporting attestation manifest sha256:f7cd396978921c41ca1662515e4047d1ad7f6ee55919a2b0bec381b483f96cb8 0.1s done
+#20 exporting manifest list sha256:b147cea8b4f2f3db388c114d3b1640bafcbca9ff50656710129bbfc95e1a906c 0.1s done
+#20 naming to docker.io/library/driftline-app:dev 0.0s done
+#20 unpacking to docker.io/library/driftline-app:dev 0.0s done
+#20 DONE 0.6s
+
+#21 [migrate] resolving provenance for metadata file
+#21 DONE 0.1s
+
+#22 [sandbox] resolving provenance for metadata file
+#22 DONE 0.1s
+
+#23 [driftline] resolving provenance for metadata file
+#23 DONE 0.0s
+ Image driftline-sandbox:dev Built 
+ Image driftline-app:dev Built 
+ Image driftline-app:dev Built 
+ Network driftline_default Creating 
+ Network driftline_default Creating 
+ Network driftline_default Created 
+ Network driftline_default Created 
+ Container driftline-kafka-1 Creating 
+ Container driftline-postgres-1 Creating 
+ Container driftline-postgres-1 Created 
+ Container driftline-migrate-1 Creating 
+ Container driftline-kafka-1 Created 
+ Container driftline-kafka-init-1 Creating 
+ Container driftline-migrate-1 Created 
+ Container driftline-kafka-init-1 Created 
+ Container driftline-driftline-1 Creating 
+ Container driftline-driftline-1 Created 
+ Container driftline-sandbox-1 Creating 
+ Container driftline-sandbox-1 Created 
+ Container driftline-kafka-1 Starting 
+ Container driftline-postgres-1 Starting 
+ Container driftline-kafka-1 Started 
+ Container driftline-kafka-1 Waiting 
+ Container driftline-postgres-1 Started 
+ Container driftline-postgres-1 Waiting 
+ Container driftline-postgres-1 Healthy 
+ Container driftline-migrate-1 Starting 
+ Container driftline-migrate-1 Started 
+ Container driftline-kafka-1 Healthy 
+ Container driftline-kafka-init-1 Starting 
+ Container driftline-kafka-init-1 Started 
+ Container driftline-kafka-init-1 Waiting 
+ Container driftline-migrate-1 Waiting 
+ Container driftline-kafka-init-1 Exited 
+ Container driftline-migrate-1 Exited 
+ Container driftline-driftline-1 Starting 
+ Container driftline-driftline-1 Started 
+ Container driftline-driftline-1 Waiting 
+ Container driftline-driftline-1 Healthy 
+ Container driftline-sandbox-1 Starting 
+ Container driftline-sandbox-1 Started 
+waiting for the stack (sandbox up implies a healthy Driftline)...
+NAME                    IMAGE                                                                                        COMMAND                  SERVICE     CREATED          STATUS                    PORTS
+driftline-driftline-1   driftline-app:dev                                                                            "java -javaagent:/ap…"   driftline   41 seconds ago   Up 20 seconds (healthy)   127.0.0.1:8080->8080/tcp
+driftline-kafka-1       apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69   "/__cacert_entrypoin…"   kafka       42 seconds ago   Up 40 seconds (healthy)   9092/tcp
+driftline-postgres-1    postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07          "docker-entrypoint.s…"   postgres    42 seconds ago   Up 39 seconds (healthy)   5432/tcp
+driftline-sandbox-1     driftline-sandbox:dev                                                                        "/app/bin/sandbox se…"   sandbox     41 seconds ago   Up 3 seconds (healthy)    127.0.0.1:8085->8085/tcp
+ Container driftline-prometheus-1 Creating 
+ Container driftline-prometheus-1 Created 
+ Container driftline-prometheus-1 Starting 
+ Container driftline-prometheus-1 Started 
+load: step s25 at 25 events/s for 600 s
+load: {"label":"s25","offered_rate":25.0,"seconds":600,"schedule_seconds":600.0,"arrivals":15000,"sent":15000,"accepted":15000,"rejected":0,"transport_errors":0,"skipped":0,"still_in_flight":0,"max_in_flight":59,"statuses":{"202":15000},"first_rejections":[],"http_p50_ms":10.01,"http_p99_ms":80.68,"http_max_ms":2454.58,"cpu_seconds":73.3}
+step s25: offered 25.0/s, consumed 25.002982811984594/s, lag slope -0.0021645021645021645, p50 0.014702794849593496 s, p99 0.045946692079545416 s, swap streak 1 s, largest sample gap 2 s -> sustained
+load: step s50 at 50 events/s for 600 s
+load: {"label":"s50","offered_rate":50.0,"seconds":600,"schedule_seconds":600.0,"arrivals":30000,"sent":30000,"accepted":30000,"rejected":0,"transport_errors":0,"skipped":0,"still_in_flight":0,"max_in_flight":39,"statuses":{"202":30000},"first_rejections":[],"http_p50_ms":7.85,"http_p99_ms":105.90,"http_max_ms":773.66,"cpu_seconds":95.3}
+step s50: offered 50.0/s, consumed 50.007544998017245/s, lag slope 0.0009523809523809515, p50 0.027859517558044805 s, p99 1.5038158337499996 s, swap streak 0 s, largest sample gap 1 s -> sustained
+load: step s100 at 100 events/s for 600 s
+load: {"label":"s100","offered_rate":100.0,"seconds":600,"schedule_seconds":600.0,"arrivals":60000,"sent":60000,"accepted":60000,"rejected":0,"transport_errors":0,"skipped":0,"still_in_flight":0,"max_in_flight":245,"statuses":{"202":60000},"first_rejections":[],"http_p50_ms":9.11,"http_p99_ms":1149.31,"http_max_ms":3530.30,"cpu_seconds":189.3}
+step s100: offered 100.0/s, consumed 99.88133605768893/s, lag slope 3.1394805194805193, p50 1.0505764446956523 s, p99 38.267397822875594 s, swap streak 0 s, largest sample gap 2 s -> not sustained: consumer lag grew 3.14 records/s
+load: highest sustained offered rate 50 events/s
+load: step p50pct at 25 events/s for 600 s
+load: {"label":"p50pct","offered_rate":25.0,"seconds":600,"schedule_seconds":600.0,"arrivals":15000,"sent":15000,"accepted":15000,"rejected":0,"transport_errors":0,"skipped":0,"still_in_flight":0,"max_in_flight":26,"statuses":{"202":15000},"first_rejections":[],"http_p50_ms":8.78,"http_p99_ms":153.05,"http_max_ms":1025.61,"cpu_seconds":68.3}
+step p50pct: offered 25.0/s, consumed 25.014126822009064/s, lag slope -0.050216450216450215, p50 0.016557042141732287 s, p99 2.7384393318066587 s, swap streak 0 s, largest sample gap 1 s -> sustained
+load: step p80pct at 40 events/s for 600 s
+load: {"label":"p80pct","offered_rate":40.0,"seconds":600,"schedule_seconds":600.0,"arrivals":24000,"sent":24000,"accepted":24000,"rejected":0,"transport_errors":0,"skipped":0,"still_in_flight":0,"max_in_flight":305,"statuses":{"202":24000},"first_rejections":[],"http_p50_ms":9.32,"http_p99_ms":1715.04,"http_max_ms":7704.60,"cpu_seconds":102.0}
+step p80pct: offered 40.0/s, consumed 39.84852366729957/s, lag slope -0.04883116883116883, p50 0.025740972373085338 s, p99 2.0020220189030113 s, swap streak 3 s, largest sample gap 2 s -> sustained
+{
+  "at_50pct": {
+    "event_to_match_p50_s": 0.016557042141732287,
+    "event_to_match_p99_s": 2.7384393318066587,
+    "events_consumed_per_s": 25.014126822009064,
+    "offered_rate": 25.0,
+    "verdict": "sustained"
+  },
+  "at_80pct": {
+    "event_to_match_p50_s": 0.025740972373085338,
+    "event_to_match_p99_s": 2.0020220189030113,
+    "events_consumed_per_s": 39.84852366729957,
+    "offered_rate": 40.0,
+    "verdict": "sustained"
+  },
+  "definition": "sustained: over the last 5 minutes of a 10-minute step, consumer lag (end offsets minus stored offsets, D83) did not grow and the generator saw no rejection, error, skip or unanswered request (DESIGN \u00a717)",
+  "highest_sustained_offered_rate": 50,
+  "steps": [
+    {
+      "rate": 25,
+      "result": "sustained"
+    },
+    {
+      "rate": 50,
+      "result": "sustained"
+    },
+    {
+      "rate": 100,
+      "result": "not_sustained"
+    }
+  ],
+  "stopped_by": "not_sustained",
+  "stopped_by_means": "the limit lies between the highest sustained rate and the next step"
+}
+load: done; results in /home/vansh/Driftline/docs/results/load-*.json
+pii-scan: the Compose logs: clean
+pii-scan: the Kafka topic (144000 records): clean
+pii-scan: the database outside the vault: clean
+pii-scan: the vault holds 48000 encrypted contacts
+pii-scan: no raw customer contact outside the vault

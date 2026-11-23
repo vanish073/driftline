@@ -19,8 +19,9 @@ data:
   DRIFTLINE_DISPATCHER_MERCHANT_URL: https://merchant.example.invalid
   DRIFTLINE_DISPATCHER_OPS_URL: https://ops.example.invalid
   DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://ingest:8080
-  # The production heap cap (§15.1); /tmp is the only writable path.
-  JAVA_TOOL_OPTIONS: "-Xmx256m -XX:+UseSerialGC -Xss512k -Djava.io.tmpdir=/tmp"
+  # The production heap cap (§15.1), committed from the start (D84: a heap that grows only through full collections
+  # stalled the process); /tmp is the only writable path.
+  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k -Djava.io.tmpdir=/tmp"
   # The OpenTelemetry Java agent (D78): off unless an overlay turns it on and points it at a collector.
   OTEL_JAVAAGENT_ENABLED: "false"
   OTEL_INSTRUMENTATION_KAFKA_ENABLED: "false"

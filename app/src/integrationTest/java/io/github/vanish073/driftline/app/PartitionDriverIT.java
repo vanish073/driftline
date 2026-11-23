@@ -9,6 +9,7 @@ import io.github.vanish073.driftline.app.config.DriftlineProperties;
 import io.github.vanish073.driftline.app.kafka.KafkaClients;
 import io.github.vanish073.driftline.app.kafka.KafkaEventPublisher;
 import io.github.vanish073.driftline.app.kafka.PartitionDriver;
+import io.github.vanish073.driftline.app.observability.BacklogProbe;
 import io.github.vanish073.driftline.app.port.SystemClock;
 import io.github.vanish073.driftline.core.event.EventEnvelope;
 import io.github.vanish073.driftline.core.event.EventType;
@@ -38,10 +39,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.TreeMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -258,6 +262,71 @@ class PartitionDriverIT {
         assertEffectsAppliedOnce();
         produceRound();
         assertEffectsAppliedOnce();
+    }
+
+    private static long total(Map<Integer, Long> lag) {
+        return lag.values().stream().mapToLong(Long::longValue).sum();
+    }
+
+    /**
+     * D83: while the driver is stuck inside a chunk, the backlog probe counts every record that arrives and is not
+     * processed; the Kafka client's own estimate, which only the stuck loop reports, never sees them.
+     */
+    @Test
+    void theBacklogProbeCountsRecordsPilingUpWhileTheDriverIsStuck() throws InterruptedException {
+        AtomicBoolean armed = new AtomicBoolean();
+        CountDownLatch paused = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CrashPoints stallAtCp7 = point -> {
+            if (point == CrashPoint.CP7 && armed.compareAndSet(true, false)) {
+                paused.countDown();
+                try {
+                    release.await(60, TimeUnit.SECONDS);   // a matcher stuck before a chunk's transaction
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        TreeMap<Integer, Long> clientLag = new TreeMap<>();
+        PartitionDriver.Listener recordClientLag = new PartitionDriver.Listener() {
+            @Override
+            public void lag(int partition, long records) {
+                synchronized (clientLag) {
+                    clientLag.put(partition, records);
+                }
+            }
+        };
+        produceRound();
+        PartitionDriver s = driver("matcher-s", stallAtCp7, recordClientLag, Map.of());
+        await("s owns every partition", Duration.ofSeconds(60), () -> s.ownedPartitions().size() == PARTITIONS);
+        assertEffectsAppliedOnce();
+        try (Admin admin = Admin.create(KafkaClients.admin(kafka(), "it-backlog"))) {
+            BacklogProbe.EndOffsets ends = partitions -> KafkaClients.endOffsets(admin, topic, partitions,
+                    Duration.ofSeconds(10));
+            BacklogProbe.StoredOffsets stored = BacklogProbe.storedOffsets(store);
+            Supplier<Long> backlog = () -> total(BacklogProbe.measure(s.ownedPartitions(), ends, stored));
+            await("no backlog once every event is applied", Duration.ofSeconds(30), () -> backlog.get() == 0);
+
+            armed.set(true);
+            produceRound();
+            assertThat(paused.await(60, TimeUnit.SECONDS)).as("the driver is stuck").isTrue();
+            produceRound();
+            produceRound();
+            long piled = 3L * 3 * PARTITIONS;   // three rounds of three events per partition, none processed
+            await("the probe counts every record not processed", Duration.ofSeconds(30),
+                    () -> backlog.get() == piled);
+            synchronized (clientLag) {
+                assertThat(total(clientLag)).as("the client's estimate, reported only by the stuck loop")
+                        .isLessThan(piled);
+            }
+
+            release.countDown();
+            assertEffectsAppliedOnce();
+            await("the backlog drains", Duration.ofSeconds(30), () -> backlog.get() == 0);
+            assertThat(s.failure()).isEmpty();
+        } finally {
+            release.countDown();
+        }
     }
 
     /** BUG-003, D50: a zombie bumps the epoch of a partition Kafka still assigns here; the driver takes it back. */

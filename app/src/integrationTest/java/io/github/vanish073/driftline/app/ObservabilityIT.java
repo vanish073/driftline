@@ -27,6 +27,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
@@ -43,6 +45,12 @@ import org.springframework.context.ConfigurableApplicationContext;
  * that raised the break to the dispatcher's call belongs to one trace, and Prometheus shows the §13 metrics.
  */
 class ObservabilityIT {
+
+    /**
+     * Two days ahead, whatever today is: a first settlement date already past makes a settlement break due on the
+     * first record, which this test does not expect (it passed until 2026-11-18, then failed).
+     */
+    static final String FIRST_SETTLEMENT = LocalDate.now(ZoneOffset.UTC).plusDays(2).toString();
 
     static final String MERCHANT = "m_obs";
     static final String SECRET = "test-only-webhook-secret-obs-not-a-real-key";
@@ -85,9 +93,9 @@ class ObservabilityIT {
         Files.writeString(bootstrap, """
                 {"format":"driftline-bootstrap-v1",
                  "merchants":{"%s":{"partition":5,"fee_bps":200,"gst_bps":1800,"cycle_days":1,
-                                    "first_settlement_date":"2026-11-18","webhook_secret":"%s","token":"test-token-obs_m"}},
+                                    "first_settlement_date":"%s","webhook_secret":"%s","token":"test-token-obs_m"}},
                  "ops_token":"%s","service_token":"%s"}
-                """.formatted(MERCHANT, SECRET, OPS_TOKEN, SERVICE_TOKEN));
+                """.formatted(MERCHANT, FIRST_SETTLEMENT, SECRET, OPS_TOKEN, SERVICE_TOKEN));
         InMemorySpanExporter spans = InMemorySpanExporter.create();
         OpenTelemetry sdk = OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(spans)).build()).build();
@@ -152,6 +160,7 @@ class ObservabilityIT {
                     "driftline_outbox_attempts_total{kind=",
                     "driftline_watermark_lag_seconds{partition=\"5\",source=\"gateway\"}",
                     "driftline_consumer_lag_records{partition=",
+                    "driftline_consumer_client_lag_records{partition=",
                     "driftline_settlement_lines_total{result=\"received\"} 0.0",
                     "driftline_pricing_drift_total 0.0");
             URI prometheus = URI.create(management + "/actuator/prometheus");

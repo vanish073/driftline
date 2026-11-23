@@ -37,7 +37,8 @@ import org.slf4j.LoggerFactory;
  *       detection lag by break type, from the arrival of the record that raised the break (or, for a break raised by
  *       a timer, of the newest record in that transaction) to its commit. A break a tick raises with no record is not
  *       measured.</li>
- *   <li><b>Progress</b>: consumer lag by partition, fenced commits; subset-sum search costs.</li>
+ *   <li><b>Progress</b>: the Kafka client's own lag estimate by partition (the backlog itself is
+ *       {@link BacklogProbe}'s, D83), fenced commits; subset-sum search costs.</li>
  *   <li><b>Spans</b>: {@code matcher.batch} for each chunk, linked to its records' traces; {@code matcher.detect}
  *       as a child of the trace of the record that raised a break. Each new break's trace context is stored, so the
  *       resolver continues that trace.</li>
@@ -80,7 +81,8 @@ public final class MatcherObserver implements PartitionDriver.Listener {
     public void lag(int partition, long records) {
         lag.computeIfAbsent(partition, p -> {
             AtomicLong value = new AtomicLong();
-            registry.gauge("driftline.consumer.lag.records",
+            // only the driver loop updates this, so it freezes while the loop is stuck; BacklogProbe does not (D83)
+            registry.gauge("driftline.consumer.client.lag.records",
                     List.of(Tag.of("partition", Integer.toString(p))), value);
             return value;
         }).set(records);
