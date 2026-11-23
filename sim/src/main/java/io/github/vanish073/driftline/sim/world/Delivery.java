@@ -10,8 +10,11 @@ import java.util.function.LongFunction;
  * again on a backoff schedule with the same idempotency key. The world never assumes a message arrives once.
  *
  * <p>The schedule is 30 s, 2 min, 10 min, 1 h and 6 h, then every 6 h until {@link #HORIZON_MILLIS} (3 days, as
- * public gateways do) has passed, and then the sender gives up. Giving up is the WEBHOOK_LOST fault, which arrives
- * with the pending-order probe; until then the simulator counts a give-up as a failure to drain.
+ * public gateways do) has passed, and then the sender gives up. A message counts as drained once Driftline has
+ * answered one of its attempts with a 2xx, whether or not that answer got back to the sender (D87): Driftline has then
+ * taken it. With more traffic days than the horizon ({@code nightly}: 5), a sender can give up inside the faulty phase
+ * on a message Driftline took days earlier, every answer lost on the way back. A message Driftline never accepted is
+ * a failure to drain, given up on or not.
  */
 public final class Delivery {
 
@@ -20,9 +23,12 @@ public final class Delivery {
     /** How long a sender keeps retrying, measured from the first attempt. */
     public static final long HORIZON_MILLIS = 3 * 86_400_000L;
 
-    /** Sends one attempt; the attempt replies with an HTTP status, or never. */
+    /**
+     * Sends one attempt. Driftline's HTTP status goes to {@code answered} where Driftline gives it, and to
+     * {@code reply} if it gets back to the sender; either may never happen.
+     */
     public interface Attempt {
-        void send(int attemptNo, IntConsumer reply);
+        void send(int attemptNo, IntConsumer answered, IntConsumer reply);
     }
 
     private final Scheduler scheduler;
@@ -31,6 +37,7 @@ public final class Delivery {
     private final LongFunction<Void> onGiveUp;
     private Runnable onAck = () -> { };
     private boolean acked;
+    private boolean accepted;
     private boolean gaveUp;
     private int attempts;
     private long firstAttemptAt = -1;
@@ -61,6 +68,10 @@ public final class Delivery {
             firstAttemptAt = scheduler.now();
         }
         attempt.send(attemptNo, status -> {
+            if (status >= 200 && status < 300) {
+                accepted = true;
+            }
+        }, status -> {
             if (status >= 200 && status < 300 && !acked) {
                 acked = true;
                 onAck.run();
@@ -79,8 +90,14 @@ public final class Delivery {
         }
     }
 
+    /** Whether a 2xx reached the sender. */
     public boolean acked() {
         return acked;
+    }
+
+    /** Whether Driftline answered an attempt with a 2xx, whether or not the answer reached the sender (D87). */
+    public boolean accepted() {
+        return accepted;
     }
 
     public boolean gaveUp() {

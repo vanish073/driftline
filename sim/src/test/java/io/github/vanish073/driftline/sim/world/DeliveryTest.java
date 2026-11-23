@@ -16,11 +16,13 @@ class DeliveryTest {
     private final List<Long> gaveUpAt = new ArrayList<>();
 
     private Delivery delivery(int ackOnAttempt) {
-        return new Delivery(scheduler, "merchant", (attemptNo, reply) -> {
+        return new Delivery(scheduler, "merchant", (attemptNo, answered, reply) -> {
             attemptsAt.add(scheduler.now());
             if (attemptNo == ackOnAttempt) {
+                answered.accept(200);
                 reply.accept(200);
             } else if (attemptNo % 2 == 0) {
+                answered.accept(503);
                 reply.accept(503);
             }
         }, at -> {
@@ -48,6 +50,7 @@ class DeliveryTest {
         assertThat(attemptsAt.getLast() + 21_600_000L).isGreaterThan(Delivery.HORIZON_MILLIS);
         assertThat(d.gaveUp()).isTrue();
         assertThat(d.acked()).isFalse();
+        assertThat(d.accepted()).as("never answered with a 2xx: a failure to drain").isFalse();
         assertThat(gaveUpAt).containsExactly(attemptsAt.getLast() + 21_600_000L);
         assertThat(d.attempts()).isEqualTo(attemptsAt.size());
     }
@@ -58,8 +61,28 @@ class DeliveryTest {
         d.start();
         drain();
         assertThat(d.acked()).isTrue();
+        assertThat(d.accepted()).isTrue();
         assertThat(d.gaveUp()).isFalse();
         assertThat(attemptsAt).containsExactly(0L, 30_000L, 150_000L);
         assertThat(gaveUpAt).isEmpty();
+    }
+
+    @Test
+    void aMessageDriftlineAcceptedIsDrainedEvenIfEveryAnswerWasLostAndTheSenderGaveUp() {
+        // D87 (seed 209037988302897762, nightly): ingest answered 202 eleven times, every answer was lost on the way
+        // back, and the merchant gave up after 3 days, all inside the 5 faulty traffic days
+        Delivery d = new Delivery(scheduler, "merchant", (attemptNo, answered, reply) -> {
+            attemptsAt.add(scheduler.now());
+            answered.accept(202);
+        }, at -> {
+            gaveUpAt.add(at);
+            return null;
+        });
+        d.start();
+        drain();
+        assertThat(d.gaveUp()).isTrue();
+        assertThat(d.acked()).isFalse();
+        assertThat(d.accepted()).isTrue();
+        assertThat(d.attempts()).isEqualTo(attemptsAt.size()).isGreaterThan(6);
     }
 }
