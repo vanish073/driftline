@@ -1,6 +1,6 @@
-# Nightly (DESIGN §16). Shift 9: the Trivy image scan (D79) and the kind smoke test (D80). Shift 10 (D85): 200,000
-# fresh `pr` seeds, 600 fresh seeds of the larger `nightly` profile, and the full canary matrix (every canary on both
-# profiles, from fresh seeds). A pull request that changes the Kubernetes manifests, the smoke script or this file runs
+# Nightly (DESIGN §16). Shift 9: the Trivy image scan (D79) and the kind smoke test (D80). Shift 10 (D85): §16's
+# 200,000-seed campaign of the `nightly` profile, 200,000 fresh `pr` seeds, and the full canary matrix (every canary on
+# both profiles, from fresh seeds). A pull request that changes the Kubernetes manifests, the smoke script or this file runs
 # the kind smoke test too; the campaigns run on the schedule and by hand (workflow_dispatch).
 # Every third-party action is pinned by commit SHA, every container image by digest.
 name: nightly
@@ -68,17 +68,19 @@ jobs:
           path: sim/build/sim-failures/
           retention-days: 14
 
-  # D85: a `nightly` seed (5 merchants, 6 partitions, about 2,000 orders over 5 days) costs about 40 s of one core, so
-  # 4 shards x 150 = 600 fresh seeds a night, from their own range (2 x 10^17 + run id x 1,000).
+  # D85: §16's 200,000-seed `nightly` campaign, 40 shards x 5,000 fresh seeds from their own range (2 x 10^17 + run
+  # id x 200,000). A `nightly` seed (5 merchants, 6 partitions, about 2,000 orders over 5 days) cost 4.5 to 6.5 s of
+  # one core on these runners (5.6 s on average), so a shard takes about 2 hours on 4 threads.
   campaign-nightly:
-    name: campaign-nightly (shard ${{ matrix.shard }} of 4, 150 nightly seeds)
+    name: campaign-nightly (shard ${{ matrix.shard }} of 40, 5,000 nightly seeds)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -94,9 +96,9 @@ jobs:
           SHARD: ${{ matrix.shard }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          FROM=$(( 200000000000000000 + RUN_ID * 1000 + 1 ))
-          echo "base seed $FROM, shard $SHARD/4"
-          ./gradlew :sim:campaign --args="--profile nightly --from $FROM --count 600 --shard $SHARD/4 --threads 4 --regression none --summary build/sim-results/summary.json"
+          FROM=$(( 200000000000000000 + RUN_ID * 200000 + 1 ))
+          echo "base seed $FROM, shard $SHARD/40"
+          ./gradlew :sim:campaign --args="--profile nightly --from $FROM --count 200000 --shard $SHARD/40 --threads 4 --regression none --summary build/sim-results/summary.json"
 
       - name: Upload the shard's summary
         if: always()
@@ -125,12 +127,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The seed range in units of 10^17: a literal 3 x 10^17 here would reach the shell as 3E+17.
           - profile: pr
             budget: 500
-            offset: 300000000000000000
+            range: 3
           - profile: nightly
             budget: 100
-            offset: 400000000000000000
+            range: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -144,9 +147,9 @@ jobs:
       - name: Canaries
         env:
           RUN_ID: ${{ github.run_id }}
-          OFFSET: ${{ matrix.offset }}
+          RANGE: ${{ matrix.range }}
         run: |
-          FROM=$(( OFFSET + RUN_ID * 10000 + 1 ))
+          FROM=$(( RANGE * 100000000000000000 + RUN_ID * 10000 + 1 ))
           echo "base seed $FROM"
           ./gradlew :sim:canaries --args="--profile ${{ matrix.profile }} --from $FROM --budget ${{ matrix.budget }} --threads 4 --out build/sim-results/canaries-${{ matrix.profile }}.md"
 
