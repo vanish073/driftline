@@ -45,9 +45,10 @@ import java.util.TreeMap;
  *       backoff, {@code min(cap, base × 2^attempt) + H(commandId, attempt) mod base}: a call with no result is claimed
  *       again then, with the same idempotency key.</li>
  *   <li><b>Retried refunds.</b> Every REFUND retry sends a REFUND_LOOKUP first, because the gateway may have forgotten
- *       the key; the refund is resent only if no refund exists, and only while this dispatcher still holds the lease.
- *       Every retry, not only old ones (BUG-008): judging a key's age needs the dispatcher's clock to have been right at
- *       the first send, and a clock that was fast then makes an expired key look fresh. The lookup needs no clock: if the
+ *       the key; the refund is resent only if no refund exists, and only while this dispatcher still holds the lease
+ *       of the attempt whose lookup said so (a late answer to an earlier attempt's lookup is stale, BUG-012). Every
+ *       retry, not only old ones (BUG-008): judging a key's age needs the dispatcher's clock to have been right at the
+ *       first send, and a clock that was fast then makes an expired key look fresh. The lookup needs no clock: if the
  *       gateway has forgotten the key, the refund is older than the key TTL, far past the lookup's lag, so it shows;
  *       if the key is still known, the resend is deduplicated.</li>
  *   <li><b>New facts</b> (a status the matcher has not seen, a capture a payment sweep found, a refund outcome) are
@@ -134,8 +135,10 @@ public final class Dispatcher {
     }
 
     /**
-     * Records a call's result (§9.2 step 3) and returns any call to send at once: only the refund itself, after a lookup
-     * found none and while {@code owner} still holds the command's lease.
+     * Records a call's result (§9.2 step 3) and returns any call to send at once: only the refund itself, after the
+     * lookup of the command's current attempt found none and while {@code owner} still holds that attempt's lease. A
+     * "none" from an earlier attempt is stale, however it arrives (BUG-012): it may predate a refund a later attempt
+     * made, and the gateway may have forgotten that refund's key since.
      */
     public List<OutboundCall> onResult(Tx tx, OutboundCall call, Map<String, String> facts, Instant now, String owner) {
         String commandId = call.callId().substring(0, call.callId().indexOf('.'));
@@ -153,9 +156,10 @@ public final class Dispatcher {
                 if (tx.outbox().complete(commandId, result)) {
                     followUps(tx, c, result, now);
                 }
-            } else if (c.status() == CommandStatus.IN_FLIGHT && c.leaseOwner().filter(owner::equals).isPresent()
+            } else if (attemptOf(call) == c.attempt() && c.status() == CommandStatus.IN_FLIGHT
+                    && c.leaseOwner().filter(owner::equals).isPresent()
                     && c.leaseUntil().filter(now::isBefore).isPresent()) {
-                sendNow.add(call(c));   // no refund exists: send it now, under this lease
+                sendNow.add(call(c));   // no refund existed when this attempt asked: send it now, under its lease
             }
         } else if (tx.outbox().complete(commandId, facts)) {
             followUps(tx, c, facts, now);
@@ -254,6 +258,14 @@ public final class Dispatcher {
 
     private static String callId(Command c, String suffix) {
         return c.commandId() + "." + c.attempt() + suffix;
+    }
+
+    /** The attempt a call was made for, from its id {@code commandId.attempt[.suffix]}. */
+    static int attemptOf(OutboundCall call) {
+        String id = call.callId();
+        int dot = id.indexOf('.');
+        int next = id.indexOf('.', dot + 1);
+        return Integer.parseInt(next < 0 ? id.substring(dot + 1) : id.substring(dot + 1, next));
     }
 
     private static OutboundCall lookupCall(Command c) {

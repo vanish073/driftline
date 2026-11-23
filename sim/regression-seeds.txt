@@ -16,3 +16,4 @@
 1298 pr   # BUG-009: a duplicate was refunded before the merchant paid the order, then the merchant paid with it
 439901216016483 pr   # BUG-010: a duplicate with no trace at all was settled in a batch line; the line was inferred to its twin
 442174189595193 pr   # BUG-011: a FILE_CONFLICT the settlement worker raised was never reviewed; nothing woke the resolver
+209037988302806862 nightly   # BUG-012: a late lookup answer from an earlier attempt was taken as the current one; the refund was sent twice
