@@ -67,7 +67,8 @@ jobs:
 
   # DESIGN §16, Shift 4: 4 shards x 2,500 = 10,000 pr seeds. The base seed is derived from the run id, so every run
   # explores new seeds; a failing seed prints its REPRO line and uploads its full trace. Shard 0 also replays
-  # sim/regression-seeds.txt and runs the determinism double-run in two separate JVMs.
+  # sim/regression-seeds.txt and runs the determinism double-run in two separate JVMs. Each shard uploads its summary,
+  # which scripts/seed-count.sh adds to the cumulative seed count (D85).
   simulation:
     name: simulation (shard ${{ matrix.shard }} of 4, 2,500 pr seeds)
     runs-on: ubuntu-24.04
@@ -94,7 +95,15 @@ jobs:
           FROM=$(( RUN_ID * 10000 + 1 ))
           CORPUS=$([ "$SHARD" = "0" ] && echo "regression-seeds.txt" || echo "none")
           echo "base seed $FROM, shard $SHARD/4, corpus $CORPUS"
-          ./gradlew :sim:campaign --args="--profile pr --from $FROM --count 10000 --shard $SHARD/4 --threads 4 --regression $CORPUS"
+          ./gradlew :sim:campaign --args="--profile pr --from $FROM --count 10000 --shard $SHARD/4 --threads 4 --regression $CORPUS --summary build/sim-results/summary.json"
+
+      - name: Upload the shard's summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-summary-ci-pr-${{ matrix.shard }}
+          path: sim/build/sim-results/summary.json
+          retention-days: 90
 
       - name: Determinism (100 seeds twice in one JVM, then the digests diffed across two JVMs)
         if: matrix.shard == 0

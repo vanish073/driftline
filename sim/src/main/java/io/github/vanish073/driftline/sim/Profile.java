@@ -4,13 +4,17 @@ import java.util.Locale;
 
 /**
  * Run sizes (DESIGN §11.15). A profile gives ranges; each seed draws its own shape from the workload stream.
- * {@code nightly} arrives with the long campaign.
  */
 public enum Profile {
     /** Baseline, no faults: 2 merchants, 2 partitions, about 80 orders, 1 traffic day, drained for 7 days. */
     CALM(2, 2, 2, 2, 20, 70, 90, 1, 7, false),
     /** Every pull request, 10,000 seeds: 2–3 merchants, 1–3 partitions, 60–150 orders over 2 days, swarm faults. */
-    PR(2, 3, 1, 3, 30, 60, 150, 2, 7, true);
+    PR(2, 3, 1, 3, 30, 60, 150, 2, 7, true),
+    /**
+     * The long campaign (D85): 5 merchants on 6 partitions (one stays idle), 1,800–2,200 orders from 500 customers
+     * over 5 days, drained for 7, swarm faults.
+     */
+    NIGHTLY(5, 5, 6, 6, 500, 1_800, 2_200, 5, 7, true);
 
     public final int minMerchants;
     public final int maxMerchants;
@@ -48,6 +52,6 @@ public enum Profile {
                 return p;
             }
         }
-        throw new IllegalArgumentException("unknown profile " + id + "; known: calm, pr");
+        throw new IllegalArgumentException("unknown profile " + id + "; known: calm, pr, nightly");
     }
 }

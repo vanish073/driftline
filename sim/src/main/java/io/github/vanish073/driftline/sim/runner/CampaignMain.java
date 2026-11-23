@@ -23,7 +23,9 @@ import java.util.concurrent.Future;
  * <p>Replays the regression corpus first ({@code --regression}, default {@code regression-seeds.txt}), then runs
  * {@code count} seeds from {@code from} on {@code threads} threads. {@code --shard i/n} runs the i-th of n equal
  * slices (CI's matrix). {@code --double-run k} runs the first k seeds a second time and compares digests in this JVM;
- * {@code --digests file} writes "seed digest" lines so two JVMs can be compared with {@code diff}. Every failing seed
+ * {@code --digests file} writes "seed digest" lines so two JVMs can be compared with {@code diff}; {@code --summary file}
+ * writes the run's counts as JSON (profile, seed range, seeds run and failed, where it ran), which the cumulative seed
+ * count adds up (D85). Every failing seed
  * prints its violation and REPRO line and gets its full trace in {@code build/sim-failures/seed-<n>.trace}. The exit
  * status is 1 if anything failed. This driver sits outside the determinism rules (D22).
  */
@@ -45,6 +47,7 @@ public final class CampaignMain {
         Path regression = Path.of("regression-seeds.txt");
         int doubleRun = 0;
         Path digests = null;
+        Path summary = null;
         int shard = 0;
         int shards = 1;
         for (int i = 0; i < args.length; i++) {
@@ -56,6 +59,7 @@ public final class CampaignMain {
                 case "--regression" -> regression = args[++i].equals("none") ? null : Path.of(args[i]);
                 case "--double-run" -> doubleRun = Integer.parseInt(args[++i]);
                 case "--digests" -> digests = Path.of(args[++i]);
+                case "--summary" -> summary = Path.of(args[++i]);
                 case "--shard" -> {
                     String[] parts = args[++i].split("/");
                     shard = Integer.parseInt(parts[0]);
@@ -96,6 +100,8 @@ public final class CampaignMain {
         TreeMap<Long, String> digestBySeed = new TreeMap<>();
         TreeMap<String, Long> totals = new TreeMap<>();
         long campaignSeeds = 0;
+        long failedSeeds = 0;
+        long failedCorpus = 0;
         for (int i = 0; i < jobs.size(); i++) {
             Job job = jobs.get(i);
             RunResult r = results.get(i);
@@ -113,6 +119,11 @@ public final class CampaignMain {
             }
             if (!r.passed()) {
                 failures.add(report(job, r));
+                if (job.origin().equals("campaign")) {
+                    failedSeeds++;
+                } else {
+                    failedCorpus++;
+                }
             }
         }
         if (digests != null) {
@@ -122,6 +133,10 @@ public final class CampaignMain {
                 Files.createDirectories(digests.getParent());
             }
             Files.write(digests, lines, StandardCharsets.UTF_8);
+        }
+        if (summary != null) {
+            writeSummary(summary, profile, first, n, campaignSeeds, failedSeeds, corpus, failedCorpus,
+                    Math.min(doubleRun, n), failures.size(), seconds, threads, shard, shards);
         }
         System.out.println("totals over " + campaignSeeds + " campaign seeds:");
         totals.forEach((k, v) -> System.out.println("  " + k + " = " + v));
@@ -135,6 +150,25 @@ public final class CampaignMain {
         System.out.println("FAILED: " + failures.size());
         failures.forEach(System.out::println);
         System.exit(1);
+    }
+
+    /** The run's counts as one JSON object; {@code where} is the GitHub run, or "local". */
+    static void writeSummary(Path file, Profile profile, long first, long n, long seeds, long failedSeeds, int corpus,
+                             long failedCorpus, long doubleRuns, int failures, double seconds, int threads, int shard,
+                             int shards) throws IOException {
+        String runId = System.getenv().getOrDefault("GITHUB_RUN_ID", "");
+        String where = runId.isEmpty() ? "local" : "github-run-" + runId;
+        String commit = System.getenv().getOrDefault("GITHUB_SHA", "");
+        String json = String.format(Locale.ROOT, """
+                {"profile":"%s","first_seed":%d,"last_seed":%d,"seeds":%d,"failed_seeds":%d,"corpus_seeds":%d,\
+                "failed_corpus_seeds":%d,"double_runs":%d,"failures":%d,"wall_seconds":%.1f,"threads":%d,\
+                "shard":"%d/%d","where":"%s","commit":"%s","finished_at":"%s"}
+                """, profile.id(), first, first + n - 1, seeds, failedSeeds, corpus, failedCorpus, doubleRuns,
+                failures, seconds, threads, shard, shards, where, commit, java.time.Instant.now().toString());
+        if (file.getParent() != null) {
+            Files.createDirectories(file.getParent());
+        }
+        Files.writeString(file, json, StandardCharsets.UTF_8);
     }
 
     static List<Job> readCorpus(Path file) throws IOException {
