@@ -1,6 +1,6 @@
 # command: ./gradlew -q :sim:campaign --args="--profile pr --from 1000000000001 --count 10000 --threads 8 --double-run 100 --summary docs/results/sim-summaries/local-pr-10k-shift10.json"
-# base commit: ab9d084, the final simulator and core (BUG-012 fixed, D87; uncommitted: scripts/render-results only); same seeds as the a8ed8d3 run it replaces; date: 2026-11-24T11:54Z
-# machine: WSL2, 12 cores, 3915 MB RAM with 753 MB of swap in use at the start, openjdk version "21.0.13.1" 2026-11-17
+# base commit: 52086f6 plus the detection-lag statistic (D89; it adds the detection_lag totals and changes no other line); same seeds as the a8ed8d3 and ab9d084 runs it replaces; date: 2026-11-24T14:01Z
+# machine: WSL2, 12 cores, 3915 MB RAM, openjdk version "21.0.13.1" 2026-11-17; run one after the other, pr then calm
 campaign: profile=pr seeds=1000000000001..1000000010000 (10000) shard=0/1 threads=8 corpus=13 double-run=100
 totals over 10000 campaign seeds:
   breaks.DEBITED_NO_ORDER = 121281
@@ -15,6 +15,29 @@ totals over 10000 campaign seeds:
   breaks.STATUS_CONFLICT = 134
   breaks.late_evidence = 39
   coordinator.reassignments = 29863
+  detection_lag.DEBITED_NO_ORDER.le_10m = 30
+  detection_lag.DEBITED_NO_ORDER.le_15m = 98528
+  detection_lag.DEBITED_NO_ORDER.le_1m = 3
+  detection_lag.DEBITED_NO_ORDER.le_30m = 21415
+  detection_lag.DEBITED_NO_ORDER.le_360m = 1
+  detection_lag.DEBITED_NO_ORDER.le_5m = 37
+  detection_lag.DEBITED_NO_ORDER.le_60m = 1267
+  detection_lag.DUPLICATE_CAPTURE.gt_1d = 15
+  detection_lag.DUPLICATE_CAPTURE.le_10m = 49184
+  detection_lag.DUPLICATE_CAPTURE.le_1440m = 13
+  detection_lag.DUPLICATE_CAPTURE.le_15m = 91
+  detection_lag.DUPLICATE_CAPTURE.le_1m = 38
+  detection_lag.DUPLICATE_CAPTURE.le_30m = 1
+  detection_lag.DUPLICATE_CAPTURE.le_5m = 2004
+  detection_lag.DUPLICATE_CAPTURE.le_60m = 1382
+  detection_lag.LATE_SUCCESS.le_10m = 183
+  detection_lag.LATE_SUCCESS.le_1440m = 1
+  detection_lag.LATE_SUCCESS.le_15m = 216
+  detection_lag.LATE_SUCCESS.le_1m = 61088
+  detection_lag.LATE_SUCCESS.le_30m = 418
+  detection_lag.LATE_SUCCESS.le_360m = 5
+  detection_lag.LATE_SUCCESS.le_5m = 407
+  detection_lag.LATE_SUCCESS.le_60m = 158
   dispatcher.results = 1955282
   dispatcher.sent = 2019133
   fault.clock.jumps = 24516
@@ -125,5 +148,5 @@ totals over 10000 campaign seeds:
   store.commits = 58441812
   transitions.order = 3731455
   transitions.payment = 2137950
-wall=250.8s  per-seed=198.41ms (on 8 threads)  runs=10113
+wall=321.9s  per-seed=254.64ms (on 8 threads)  runs=10113
 PASS: 13 corpus seeds, 10000 campaign seeds, 100 double-runs

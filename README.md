@@ -206,8 +206,43 @@ The first step and the re-run at 50% of the highest sustained rate offered the s
 same p50, but the re-run, which came right after the overloaded 100 events/s step, had a far higher p99. On this
 laptop the tail varies that much between runs of one rate, so both are reported rather than the better one. The step
 records also carry the GC pauses and the machine's busiest second, which separate a tail the machine caused from one
-Driftline caused (D82). Event-to-match runs from ingest's receipt of an event to the matcher commit that changes the
-payment's reconciliation status.
+Driftline caused (D82). Event-to-match runs from ingest's receipt of an event to the matcher commit that applied it
+(every applied event, D78).
+
+### How soon a break is found
+
+Reconciliation as a stream means a break in the payment stream is raised minutes after it happens, not the next
+morning. Each type waits only as long as its rule must (§5.5, D39). A late success is raised when the success event is
+applied. A duplicate capture waits 2 minutes (`bound_G`) after the last capture, in case more arrive, and money taken
+with no order waits 10 minutes (`orderGrace`) for the order to catch up; both waits are timers on the event-time
+watermark, which trails the newest event by 2 minutes, or by up to 4 when the stream goes quiet. Under faults some
+breaks come later, for example when the success webhook is lost and only a status probe or the bank's file reveals the
+payment. A forward jump of a matcher's clock can do the opposite: the quiet-stream rule advances the watermark by that
+clock, so a timer can fire before its wait is over. The break is then raised early; if the order turns up before any
+action is decided, the break heals itself, and after that it is escalated (§5.6, late evidence). The simulator counts,
+for every raised break, the simulated time from the world's capture to the commit that raised it:
+
+<!-- results:detection-lag -->
+How long after the simulated world captured the payment each stream break was first committed, in simulated time, over the same 10,000 seeds of each profile (`calm`: no faults; `pr`: faults on).
+
+| Profile | Type | Breaks | Within 1 min | Within 5 min | Within 15 min | Within 1 h | Within 1 day | Later |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| calm | DEBITED_NO_ORDER | 64,412 | 0% | 0% | 100% | 100% | 100% | 0% |
+| calm | LATE_SUCCESS | 47,913 | 100% | 100% | 100% | 100% | 100% | 0% |
+| calm | DUPLICATE_CAPTURE | 39,891 | 0% | 3.6% | 100% | 100% | 100% | 0% |
+| pr | DEBITED_NO_ORDER | 121,281 | <0.1% | <0.1% | 81.3% | >99.9% | 100% | 0% |
+| pr | LATE_SUCCESS | 62,476 | 97.8% | 98.4% | 99.1% | >99.9% | 100% | 0% |
+| pr | DUPLICATE_CAPTURE | 52,728 | 0.1% | 3.9% | 97.3% | 99.9% | >99.9% | <0.1% |
+
+calm: command: ./gradlew -q :sim:campaign --args="--profile calm --from 1000000000001 --count 10000 --threads 8 --double-run 100"; base commit: 52086f6 plus the detection-lag statistic (D89); the same seeds as the pr run, with no faults; date: 2026-11-24T14:01Z.
+pr: command: ./gradlew -q :sim:campaign --args="--profile pr --from 1000000000001 --count 10000 --threads 8 --double-run 100 --summary docs/results/sim-summaries/local-pr-10k-shift10.json"; base commit: 52086f6 plus the detection-lag statistic (D89; it adds the detection_lag totals and changes no other line); same seeds as the a8ed8d3 and ab9d084 runs it replaces; date: 2026-11-24T14:01Z.
+
+*Raw output: [`sim-campaign-calm-10k-shift10.txt`](docs/results/sim-campaign-calm-10k-shift10.txt), [`sim-campaign-pr-10k-shift10.txt`](docs/results/sim-campaign-pr-10k-shift10.txt). Written by `./gradlew :sim:campaign`; rendered by `scripts/render-results`.*
+<!-- /results:detection-lag -->
+
+Settlement breaks are not in this table: a short or orphan settlement can only be found when the bank's file arrives,
+and a missing settlement only once its due date has passed (§5.6), so their timing is the bank's, not Driftline's. On
+real hardware the processing time of the throughput test above comes on top.
 
 ### Hot accounts
 
@@ -258,7 +293,7 @@ Every break of 10,000 fresh `pr` seeds, in its state when its seed's run ended (
 | IDEMPOTENCY_CONFLICT (anomaly) | 175,838 | **0.0%** | 0.0% | 0.0% | 0.0% | 100.0% | 0.0% |
 | STATUS_CONFLICT (anomaly) | 134 | **0.0%** | 0.0% | 0.0% | 0.0% | 100.0% | 0.0% |
 
-command: ./gradlew -q :sim:campaign --args="--profile pr --from 1000000000001 --count 10000 --threads 8 --double-run 100 --summary docs/results/sim-summaries/local-pr-10k-shift10.json"; base commit: ab9d084, the final simulator and core (BUG-012 fixed, D87; uncommitted: scripts/render-results only); same seeds as the a8ed8d3 run it replaces; date: 2026-11-24T11:54Z.
+command: ./gradlew -q :sim:campaign --args="--profile pr --from 1000000000001 --count 10000 --threads 8 --double-run 100 --summary docs/results/sim-summaries/local-pr-10k-shift10.json"; base commit: 52086f6 plus the detection-lag statistic (D89; it adds the detection_lag totals and changes no other line); same seeds as the a8ed8d3 and ab9d084 runs it replaces; date: 2026-11-24T14:01Z.
 
 *Raw output: [`sim-campaign-pr-10k-shift10.txt`](docs/results/sim-campaign-pr-10k-shift10.txt), [`auto-resolution-shift10.md`](docs/results/auto-resolution-shift10.md). Written by `./gradlew :sim:campaign`, `scripts/resolution-share.py`; rendered by `scripts/render-results`.*
 <!-- /results:resolution-sim -->
@@ -294,10 +329,10 @@ simulator, whose worlds run in their own time, most are refunded (RESOLVED_AUTO 
 The simulator runs the real core inside a single-threaded scheduler with one seeded random generator, which decides
 what happens next: deliver, drop, duplicate or delay a message; crash, pause or fence a component; take the database
 away; skew or jump a clock; send a settlement file late, twice, conflicting or incomplete; answer from a stale status
-API; let an idempotency key expire. Faults are drawn per seed from a swarm of profiles (§11.5). After every step it
-checks 18 invariants, among them money conserved in the world, no payment with two final states, no refund issued
-twice, every break resolved or escalated by its deadline, and Driftline's books equal to the world's ground truth
-(§11.7). A violation prints the seed and a REPRO line; running that seed again reproduces the run exactly, and CI
+API; let an idempotency key expire. Faults are drawn per seed from a swarm of profiles (§11.5). It checks 18
+invariants, most after every step and the rest when the run ends, among them money conserved in the world, no payment
+with two final states, no refund issued twice, every break resolved or escalated by its deadline, and, at the end,
+Driftline's books equal to the world's ground truth (§11.7). A violation prints the seed and a REPRO line; running that seed again reproduces the run exactly, and CI
 runs a sample of seeds twice to check that they do (§11.11).
 
 Profiles (§11.15): `calm` (no faults), `pr` (10,000 fresh seeds on every pull request), and `nightly` (5

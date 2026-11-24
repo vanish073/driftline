@@ -98,6 +98,15 @@ public final class Invariants {
     static final List<LineStatus> UNRESOLVED_BATCH = List.of(LineStatus.AMBIGUOUS, LineStatus.NO_SOLUTION,
             LineStatus.BUDGET_EXCEEDED, LineStatus.OUT_OF_RANGE);
     static final int LOOKBACK_DAYS = MatcherConfig.DEFAULT.batchLookbackDays();
+    /**
+     * The breaks found in the stream (R2), each about a payment the world captured: how long after that capture the
+     * break was first committed is counted in {@link #LAG_BUCKETS}. Settlement breaks wait for the bank's file or the
+     * due date by design (§5.5), so they are not measured.
+     */
+    static final List<BreakType> STREAM_BREAKS = List.of(BreakType.LATE_SUCCESS, BreakType.DUPLICATE_CAPTURE,
+            BreakType.DEBITED_NO_ORDER);
+    /** Upper bounds of the detection-lag buckets, in minutes; a lag above the last is counted as {@code gt_1d}. */
+    static final List<Long> LAG_BUCKETS = List.of(1L, 5L, 10L, 15L, 30L, 60L, 360L, 1440L);
 
     /**
      * Anomalies the simulated world never causes, so Driftline raising one is a bug. FILE_CONFLICT is expected only
@@ -138,6 +147,7 @@ public final class Invariants {
     private int refundSeen;
     private long lastDeadlineCheck = Long.MIN_VALUE;
     private long coveredByUnresolvedBatch;
+    private final TreeMap<String, Long> detectionLag = new TreeMap<>();
 
     /** @param reusedKeys the keys the world's buggy clients reused (MERCHANT_KEY_REUSE), per merchant and key */
     public Invariants(InMemoryStore store, FakeBank bank, Supplier<Set<String>> reusedKeys) {
@@ -226,6 +236,7 @@ public final class Invariants {
         }
         List<Break> raises = store.committedBreakRaises();
         for (; breakSeen < raises.size(); breakSeen++) {
+            countLag(raises.get(breakSeen), now);
             Optional<Violation> v = checkRaised(raises.get(breakSeen), now);
             if (v.isPresent()) {
                 return v;
@@ -272,6 +283,52 @@ public final class Invariants {
         return merchants.get(p.merchant()).order(p.order())
                 .filter(o -> o.status() == EventType.ORDER_FULFILLED && o.paidWith().filter(p.id()::equals).isPresent())
                 .isPresent();
+    }
+
+    /**
+     * Counts a newly raised stream break in its detection-lag bucket, in true time: from the world's capture of the
+     * payment it names to its first commit; for a duplicate capture, from the order's second capture if that is later
+     * (the payment named may be the first one, when the order was paid with the second).
+     */
+    private void countLag(Break b, long now) {
+        if (gateway == null || !STREAM_BREAKS.contains(b.type())) {
+            return;
+        }
+        Optional<FakeGateway.Payment> p = gateway.payment(PaymentId.of(b.subjectKey()))
+                .filter(FakeGateway.Payment::captured);
+        String bucket = p.map(x -> lagBucket(now - happenedAt(b.type(), x))).orElse("uncaptured");
+        detectionLag.merge("detection_lag." + b.type().name() + "." + bucket, 1L, Long::sum);
+    }
+
+    /** When the break happened in the world: the payment's capture, or a duplicate's second capture of the order. */
+    private long happenedAt(BreakType type, FakeGateway.Payment p) {
+        if (type != BreakType.DUPLICATE_CAPTURE) {
+            return p.capturedAtMillis();
+        }
+        TreeSet<Long> captures = new TreeSet<>();
+        for (FakeGateway.Payment q : gateway.payments().values()) {
+            if (q.captured() && q.merchant().equals(p.merchant()) && q.order().equals(p.order())) {
+                captures.add(q.capturedAtMillis());
+            }
+        }
+        // Two captures at the same millisecond are one entry here, so the second capture is then the first one
+        long second = captures.size() >= 2 ? captures.higher(captures.first()) : captures.first();
+        return Math.max(p.capturedAtMillis(), second);
+    }
+
+    /** {@code le_<n>m} for the first bound in {@link #LAG_BUCKETS} the lag is within, or {@code gt_1d}. */
+    static String lagBucket(long lagMillis) {
+        for (long minutes : LAG_BUCKETS) {
+            if (lagMillis <= minutes * 60_000L) {
+                return "le_" + minutes + "m";
+            }
+        }
+        return "gt_1d";
+    }
+
+    /** Raised stream breaks by type and detection-lag bucket ({@code detection_lag.TYPE.le_15m} → count). */
+    public TreeMap<String, Long> detectionLag() {
+        return new TreeMap<>(detectionLag);
     }
 
     /** INV-DEADLINE: every break still open is within max(escalate_by, detected_at) + the reaction bound. */

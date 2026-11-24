@@ -315,6 +315,7 @@ public final class Simulation {
             stats.merge("resolution." + b.type().name() + "." + b.state().name(), 1L, Long::sum);
         }
         stats.put("oracle.detected", (long) invariants.detected().size());
+        stats.putAll(invariants.detectionLag());
         stats.put("oracle.covered.idempotency_conflict", invariants.coveredByIdempotencyConflict());
         stats.put("oracle.covered.unresolved_batch", invariants.coveredByUnresolvedBatch());
         long cacheHits = 0;

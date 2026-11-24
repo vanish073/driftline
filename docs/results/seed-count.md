@@ -170,4 +170,4 @@ as a real bug (a `docs/BUGS.md` row and a regression seed) or as a modelling or 
 | run 45341082943 (sim-summary-nightly-pr-7) | nightly | 2026-11-24T06:31:25Z | shift-10 | b624a8b | pr | 20000 | 0 | 109068216588740001..109068216588760000 |
 | run 45341082943 (sim-summary-nightly-pr-8) | nightly | 2026-11-24T06:31:25Z | shift-10 | b624a8b | pr | 20000 | 0 | 109068216588760001..109068216588780000 |
 | run 45341082943 (sim-summary-nightly-pr-9) | nightly | 2026-11-24T06:31:25Z | shift-10 | b624a8b | pr | 20000 | 0 | 109068216588780001..109068216588800000 |
-| local (local-pr-10k-shift10.json) |  | 2026-11-24T11:58:48.670689490Z |  |  | pr | 10000 | 0 | 1000000000001..1000000010000 |
+| local (local-pr-10k-shift10.json) |  | 2026-11-24T13:53:08.243339364Z |  |  | pr | 10000 | 0 | 1000000000001..1000000010000 |

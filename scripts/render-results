@@ -172,6 +172,58 @@ def block_resolution_sim():
     return out
 
 
+LAG_CAMPAIGNS = [("calm", "sim-campaign-calm-10k-shift10.txt"), ("pr", "sim-campaign-pr-10k-shift10.txt")]
+LAG_SHOWN = [(1, "1 min"), (5, "5 min"), (15, "15 min"), (60, "1 h"), (1440, "1 day")]
+
+
+def share(n, total):
+    """A percentage that never rounds a few breaks away: 0% and 100% only when exact, else <0.1% or >99.9%."""
+    if n == 0 or n == total:
+        return "%d%%" % (100 * n // total)
+    v = 100.0 * n / total
+    return "<0.1%" if v < 0.05 else ">99.9%" if v >= 99.95 else "%.1f%%" % v
+
+
+def lag_counts(name):
+    """`detection_lag.TYPE.BUCKET = N` from a campaign's totals: TYPE -> {minutes bound (None past a day): count}."""
+    line = re.compile(r"^\s*detection_lag\.([A-Z_]+)\.(le_(\d+)m|gt_1d|[a-z_]+) = (\d+)\s*$")
+    counts = {}
+    with open(path(name), encoding="utf-8") as f:
+        for raw in f:
+            m = line.match(raw)
+            if m:
+                if m.group(3) is None and m.group(2) != "gt_1d":
+                    sys.exit("render-results: %s counts %s breaks %s, which the world never captured" % (
+                        name, m.group(1), m.group(2)))
+                bound = int(m.group(3)) if m.group(3) else None
+                counts.setdefault(m.group(1), {})[bound] = int(m.group(4))
+    if not counts:
+        sys.exit("render-results: no detection_lag totals in " + name)
+    return counts
+
+
+def block_detection_lag():
+    rows = []
+    for profile, name in LAG_CAMPAIGNS:
+        counts = lag_counts(name)
+        for t in [t for t in ONE_TO_ONE if t in counts]:
+            c = counts[t]
+            total = sum(c.values())
+            row = [profile, t, thousands(total)]
+            row += [share(sum(n for b, n in c.items() if b is not None and b <= limit), total)
+                    for limit, _ in LAG_SHOWN]
+            row.append(share(c.get(None, 0), total))
+            rows.append(row)
+    head = ["Profile", "Type", "Breaks"] + ["Within " + label for _, label in LAG_SHOWN] + ["Later"]
+    out = ["How long after the simulated world captured the payment each stream break was first committed, in "
+           "simulated time, over the same 10,000 seeds of each profile (`calm`: no faults; `pr`: faults on)."]
+    out += [""] + table(head, "ll" + "r" * (len(head) - 2), rows)
+    out += [""] + ["%s: %s." % (profile, "; ".join(header_lines(name, ("command", "base commit"))))
+                   for profile, name in LAG_CAMPAIGNS]
+    out += ["", source([name for _, name in LAG_CAMPAIGNS], ["`./gradlew :sim:campaign`"])]
+    return out
+
+
 def block_resolution_compose():
     d = load_json("auto-resolution-compose.json")
     injected = {t: e["injected"] for t, e in d["expected"].items()}
@@ -277,6 +329,7 @@ BLOCKS = {
     "load": block_load,
     "hot-accounts": block_hot_accounts,
     "resolution-sim": block_resolution_sim,
+    "detection-lag": block_detection_lag,
     "resolution-compose": block_resolution_compose,
     "seeds": block_seeds,
     "canaries": block_canaries,
