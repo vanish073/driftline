@@ -17,7 +17,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 7 | Batch settlement matching and test corpus | M4 (part 1) | **DONE** (2026-11-16) |
 | 8 | Resolver, outbox, dispatcher, crash tests | **M4 done** | **DONE** (2026-11-16); **M4 DONE** |
 | 9 | Observability, security, Kubernetes | M5 (part 1) | **DONE** (2026-11-17) |
-| 10 | Load test, hot-account benchmark, results, README | **M5 done** | TODO |
+| 10 | Load test, hot-account benchmark, results, README | **M5 done** | **DONE** (2026-11-24); **M5 DONE** |
 
 ## Human tasks (only you can do these)
 
@@ -315,6 +315,7 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 
 **Prove:** every README number can be traced to a file in `docs/results/` and the script that produced it.
 **Exit (M5):** "README carries throughput, latency and simulation results." Status → M5 DONE.
+**Carry-over:** Build list done except the stretch item, seed shrinking, which was not started (left out rather than rushed into the simulator at the end). The design details are D81–D89: the hot-account benchmark D81 (`APPEND_SNAPSHOT` stays the default); the load test D82, with the backlog probe D83 and the committed heap D84 that it led to (50 events/s sustained on the laptop of §15.1, the limit below the next step of 100); the `nightly` profile, `nightly.yml`'s 200,000-seed campaigns, the canary matrix and the cumulative seed count D85; commons-lang3 lifted in the build tooling D86 (Dependabot alert 1 closes once this reaches `main`); the drain oracle's two modelling errors D87; `scripts/render-results` and its CI check D88; the traceability pass and the detection-lag statistic D89. Prove: every README number is rendered from a file in `docs/results/` by `scripts/render-results`, each table naming its raw files and the scripts that wrote them, and CI's `claims-lint` job fails if the README differs. The seed count is 1,355,600 campaign seeds (565,600 `nightly`, 790,000 `pr`) with six violations, all accounted for: two were BUG-012, the shift's one simulator-found bug (a late lookup answer from an earlier attempt sent a refund; fixed, seed in the regression corpus), and four were the oracle's error (D87); the last nightly run, on the final code, ran 400,000 seeds with none failing and caught every canary on both profiles. Open, and stated in the README: the snapshotter is not scheduled in production (D81), the finance-ops interview was never held (R25, D54), and the known weaknesses of D73 as amended by D74 and D76, D77 and `docs/THREAT_MODEL.md`.
 
 ---
 
