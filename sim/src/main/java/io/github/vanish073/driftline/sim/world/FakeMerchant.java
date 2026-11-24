@@ -178,9 +178,9 @@ public final class FakeMerchant {
         return Optional.ofNullable(orders.get(id));
     }
 
-    /** Deliveries Driftline never accepted (D87), including those given up on. */
-    public long undelivered() {
-        return deliveries.stream().filter(d -> !d.accepted()).count();
+    /** Deliveries Driftline never accepted though first sent before {@code judgedBefore} (D87), given up on or not. */
+    public long undelivered(long judgedBefore) {
+        return deliveries.stream().filter(d -> d.undrained(judgedBefore)).count();
     }
 
     /** Keys this merchant's buggy client sent with a second, different body. */

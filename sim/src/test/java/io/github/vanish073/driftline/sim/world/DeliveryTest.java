@@ -84,5 +84,20 @@ class DeliveryTest {
         assertThat(d.acked()).isFalse();
         assertThat(d.accepted()).isTrue();
         assertThat(d.attempts()).isEqualTo(attemptsAt.size()).isGreaterThan(6);
+        assertThat(d.undrained(Long.MAX_VALUE)).isFalse();
+    }
+
+    @Test
+    void aMessageNeverAcceptedIsUndrainedOnlyIfFirstSentBeforeTheGraceBeforeTheEnd() {
+        // D87 (seed 209053576945360396, nightly): a settlement file held back by FILE_LATE was released 88 ms before
+        // the end of the run, too late for any delivery
+        Delivery d = new Delivery(scheduler, "bank", (attemptNo, answered, reply) -> attemptsAt.add(scheduler.now()),
+                at -> null);
+        scheduler.after(5_000L, "bank", d::start);
+        scheduler.step(Long.MAX_VALUE);
+        assertThat(attemptsAt).containsExactly(5_000L);
+        assertThat(d.undrained(5_000L)).as("sent at the cut-off: not judged").isFalse();
+        assertThat(d.undrained(5_001L)).as("sent before it, never accepted").isTrue();
+        assertThat(Delivery.DRAIN_GRACE_MILLIS).isEqualTo(600_000L);
     }
 }

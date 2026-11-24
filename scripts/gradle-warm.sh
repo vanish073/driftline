@@ -3,7 +3,7 @@
 # start together, Maven Central may answer a download nobody has cached yet with 429 Too Many Requests. Only this
 # cheap step is retried, never a campaign; a real compile error fails all five tries and the job.
 #
-#   scripts/gradle-warm.sh :sim:classes
+#   scripts/gradle-warm.sh --configure-on-demand :sim:classes
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

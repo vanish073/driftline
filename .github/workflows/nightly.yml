@@ -42,8 +42,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
       - name: Resolve and compile (retried on a failed download)
-        run: scripts/gradle-warm.sh :sim:classes
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
 
       - name: Campaign
         env:
@@ -53,7 +55,7 @@ jobs:
           FROM=$(( 100000000000000000 + RUN_ID * 200000 + 1 ))
           CORPUS=$([ "$SHARD" = "0" ] && echo "regression-seeds.txt" || echo "none")
           echo "base seed $FROM, shard $SHARD/10, corpus $CORPUS"
-          ./gradlew :sim:campaign --args="--profile pr --from $FROM --count 200000 --shard $SHARD/10 --threads 4 --regression $CORPUS --summary build/sim-results/summary.json"
+          ./gradlew --configure-on-demand :sim:campaign --args="--profile pr --from $FROM --count 200000 --shard $SHARD/10 --threads 4 --regression $CORPUS --summary build/sim-results/summary.json"
 
       - name: Upload the shard's summary
         if: always()
@@ -94,8 +96,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
       - name: Resolve and compile (retried on a failed download)
-        run: scripts/gradle-warm.sh :sim:classes
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
 
       - name: Campaign
         env:
@@ -104,7 +108,7 @@ jobs:
         run: |
           FROM=$(( 200000000000000000 + RUN_ID * 200000 + 1 ))
           echo "base seed $FROM, shard $SHARD/40"
-          ./gradlew :sim:campaign --args="--profile nightly --from $FROM --count 200000 --shard $SHARD/40 --threads 4 --regression none --summary build/sim-results/summary.json"
+          ./gradlew --configure-on-demand :sim:campaign --args="--profile nightly --from $FROM --count 200000 --shard $SHARD/40 --threads 4 --regression none --summary build/sim-results/summary.json"
 
       - name: Upload the shard's summary
         if: always()
@@ -150,8 +154,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
       - name: Resolve and compile (retried on a failed download)
-        run: scripts/gradle-warm.sh :sim:classes
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
 
       - name: Canaries
         env:
@@ -160,7 +166,7 @@ jobs:
         run: |
           FROM=$(( RANGE * 100000000000000000 + RUN_ID * 10000 + 1 ))
           echo "base seed $FROM"
-          ./gradlew :sim:canaries --args="--profile ${{ matrix.profile }} --from $FROM --budget ${{ matrix.budget }} --threads 4 --out build/sim-results/canaries-${{ matrix.profile }}.md"
+          ./gradlew --configure-on-demand :sim:canaries --args="--profile ${{ matrix.profile }} --from $FROM --budget ${{ matrix.budget }} --threads 4 --out build/sim-results/canaries-${{ matrix.profile }}.md"
 
       - name: Upload the canary table
         if: always()

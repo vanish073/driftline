@@ -14,7 +14,9 @@ import java.util.function.LongFunction;
  * answered one of its attempts with a 2xx, whether or not that answer got back to the sender (D87): Driftline has then
  * taken it. With more traffic days than the horizon ({@code nightly}: 5), a sender can give up inside the faulty phase
  * on a message Driftline took days earlier, every answer lost on the way back. A message Driftline never accepted is
- * a failure to drain, given up on or not.
+ * a failure to drain, given up on or not, unless the world first sent it within {@link #DRAIN_GRACE_MILLIS} of the
+ * end of the run: the bank's feed misbehaves after HEAL too, and a settlement file held back by FILE_LATE can be
+ * released moments before the end (seed 209053576945360396, 88 ms before it).
  */
 public final class Delivery {
 
@@ -22,6 +24,13 @@ public final class Delivery {
     static final List<Long> BACKOFF = List.of(30_000L, 120_000L, 600_000L, 3_600_000L, 21_600_000L);
     /** How long a sender keeps retrying, measured from the first attempt. */
     public static final long HORIZON_MILLIS = 3 * 86_400_000L;
+    /**
+     * How long before the end of a run a message must first have been sent to be judged by INV-DRAINED (D87). After
+     * HEAL the network neither drops nor holds messages (one way: at most {@code SimNetwork.MAX_DELAY_MILLIS}, 200 ms),
+     * so a message Driftline takes is taken within a round trip of its first attempt, or at its first or second retry
+     * (30 s and 2.5 min later) if it was answered 503 first. Ten minutes covers that with room to spare.
+     */
+    public static final long DRAIN_GRACE_MILLIS = 10 * 60_000L;
 
     /**
      * Sends one attempt. Driftline's HTTP status goes to {@code answered} where Driftline gives it, and to
@@ -98,6 +107,11 @@ public final class Delivery {
     /** Whether Driftline answered an attempt with a 2xx, whether or not the answer reached the sender (D87). */
     public boolean accepted() {
         return accepted;
+    }
+
+    /** A failure to drain at the end of a run (D87): never accepted, though first sent before {@code judgedBefore}. */
+    public boolean undrained(long judgedBefore) {
+        return !accepted && firstAttemptAt >= 0 && firstAttemptAt < judgedBefore;
     }
 
     public boolean gaveUp() {

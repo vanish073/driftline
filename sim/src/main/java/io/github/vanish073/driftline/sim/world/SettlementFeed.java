@@ -85,8 +85,8 @@ public final class SettlementFeed {
         return files;
     }
 
-    /** Uploads the settlement worker never accepted (D87), including those given up on. */
-    public long undelivered() {
-        return deliveries.stream().filter(d -> !d.accepted()).count();
+    /** Uploads the worker never accepted though first sent before {@code judgedBefore} (D87), given up on or not. */
+    public long undelivered(long judgedBefore) {
+        return deliveries.stream().filter(d -> d.undrained(judgedBefore)).count();
     }
 }
