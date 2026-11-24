@@ -4,6 +4,7 @@ Seeds to first detection per planted bug, `pr` profile, seeds from 1, budget 500
 
 - Command: `./gradlew -q :sim:canaries --args="--threads 8 --out ../docs/results/canaries.md"` (then this header was added).
 - Base commit: becfc9d plus the uncommitted BUG-010 fix (D72, the payment sweep); date: 2026-11-17 (UTC). Every count is the same as before that fix.
+- Re-run at b624a8b (Shift 10: BUG-012's dispatcher fix, the `nightly` profile, D87's drain oracle) on 2026-11-24 (UTC): the table below came out byte for byte the same.
 - All eleven canaries are active from Shift 8. C02, C03, C04, C10 and C11 arrived with the resolver and dispatcher.
 - C04 (`SKIP_TTL_LOOKUP`) now means "resend a refund without the lookup": since BUG-008 every refund retry looks the refund up first (D70), so the canary removes that lookup; it is caught when a retry outlives the simulated gateway's 5-minute key TTL.
 - C11 plants both halves of D11 off (a break-scoped refund key, and every break acting for itself): either half alone already keeps a payment to one refund, so the canary needs both.
@@ -22,3 +23,13 @@ Seeds to first detection per planted bug, `pr` profile, seeds from 1, budget 500
 | C09 `NO_FENCING` | commit without the epoch check | 3 | 3 | INV-FENCED | INV-FENCED, INV-LEDGER-ONCE |
 | C10 `IGNORE_ESCALATE_BY` | never escalate on time | 1 | 1 | INV-DEADLINE | INV-DEADLINE |
 | C11 `BREAK_SCOPED_REFUND_KEY` | refund key per break, and each break acts for itself (both halves of D11 off) | 154 | 154 | INV-REFUND-ONCE | INV-REFUND-ONCE |
+
+## The canary matrix in CI (D85)
+
+The nightly workflow's `canary-matrix` job runs every canary on both profiles from fresh seeds each run (the table
+above, and ci.yml's `canaries-quick`, always start at seed 1): `pr` from `3 x 10^17 + run id x 10^4 + 1` with a
+budget of 500 seeds, `nightly` from `4 x 10^17 + run id x 10^4 + 1` with a budget of 100. Nightly run 45341082943
+(commit b624a8b, 2026-11-24) caught all eleven canaries on both profiles, each by an expected invariant: on `pr`
+within 1 to 166 seeds, on `nightly` within 1 to 26. Its raw tables, as the job wrote them:
+[`pr`](canaries-matrix-run-45341082943-pr.md), [`nightly`](canaries-matrix-run-45341082943-nightly.md).
+Seeds to detection vary with the seed range: C04 took 89 seeds from seed 1 and 166 in run 45341082943's `pr` range.
