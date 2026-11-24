@@ -299,3 +299,8 @@ jobs:
 
       - name: Claims lint
         run: scripts/claims-lint.sh
+
+      # Every README number comes from a committed raw output (DESIGN §17): the README's generated tables must be
+      # exactly what scripts/render-results makes of docs/results/ today.
+      - name: README tables match docs/results
+        run: scripts/render-results --check
