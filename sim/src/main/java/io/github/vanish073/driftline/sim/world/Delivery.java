@@ -11,8 +11,8 @@ import java.util.function.LongFunction;
  *
  * <p>The schedule is 30 s, 2 min, 10 min, 1 h and 6 h, then every 6 h until {@link #HORIZON_MILLIS} (3 days, as
  * public gateways do) has passed, and then the sender gives up. A message counts as drained once Driftline has
- * answered one of its attempts with a 2xx, whether or not that answer got back to the sender (D87): Driftline has then
- * taken it. With more traffic days than the horizon ({@code nightly}: 5), a sender can give up inside the faulty phase
+ * taken it, whether or not its answer got back to the sender (D87): Driftline answered an attempt with a 2xx, or with
+ * {@link #TAKEN_ACK_LOST}, its answer when the append succeeded but the log's ack was lost (D90). With more traffic days than the horizon ({@code nightly}: 5), a sender can give up inside the faulty phase
  * on a message Driftline took days earlier, every answer lost on the way back. A message Driftline never accepted is
  * a failure to drain, given up on or not, unless the world first sent it within {@link #DRAIN_GRACE_MILLIS} of the
  * end of the run: the bank's feed misbehaves after HEAL too, and a settlement file held back by FILE_LATE can be
@@ -22,6 +22,11 @@ public final class Delivery {
 
     /** Retry delays after each attempt, in milliseconds: 30 s, 2 min, 10 min, 1 h, 6 h. */
     static final List<Long> BACKOFF = List.of(30_000L, 120_000L, 600_000L, 3_600_000L, 21_600_000L);
+    /**
+     * What the simulated ingest and settlement worker answer when they took a message but the log's ack was lost
+     * (PRODUCE_AMBIGUOUS): the append or emit succeeded, and the sender retries. They give it in no other case (D90).
+     */
+    public static final int TAKEN_ACK_LOST = 503;
     /** How long a sender keeps retrying, measured from the first attempt. */
     public static final long HORIZON_MILLIS = 3 * 86_400_000L;
     /**
@@ -77,7 +82,7 @@ public final class Delivery {
             firstAttemptAt = scheduler.now();
         }
         attempt.send(attemptNo, status -> {
-            if (status >= 200 && status < 300) {
+            if (status >= 200 && status < 300 || status == TAKEN_ACK_LOST) {
                 accepted = true;
             }
         }, status -> {
@@ -104,7 +109,10 @@ public final class Delivery {
         return acked;
     }
 
-    /** Whether Driftline answered an attempt with a 2xx, whether or not the answer reached the sender (D87). */
+    /**
+     * Whether Driftline took the message: it answered an attempt with a 2xx or {@link #TAKEN_ACK_LOST}, whether or not
+     * the answer reached the sender (D87, D90).
+     */
     public boolean accepted() {
         return accepted;
     }

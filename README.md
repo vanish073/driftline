@@ -343,22 +343,28 @@ merchants, about 2,000 orders over 5 days of faults and 7 of draining; 200,000 f
 <!-- results:seeds -->
 | Profile | Campaign seeds | With zero violations | With a violation |
 |---|---:|---:|---:|
-| nightly | 565,600 | 565,594 | 6 |
-| pr | 790,000 | 790,000 | 0 |
-| **total** | **1,355,600** | **1,355,594** | **6** |
+| nightly | 765,600 | 765,593 | 7 |
+| pr | 1,000,000 | 1,000,000 | 0 |
+| **total** | **1,765,600** | **1,765,593** | **7** |
 
-Fresh seeds with no planted bug, from 4 GitHub Actions runs' campaign shards and 10,000 seeds run locally. Real bugs the simulator found: **12** (`docs/BUGS.md`; canaries are not bugs).
+Fresh seeds with no planted bug, from 6 GitHub Actions runs' campaign shards and 10,000 seeds run locally. Real bugs the simulator found: **12** (`docs/BUGS.md`; canaries are not bugs).
 
 *Raw output: [`seed-count.json`](docs/results/seed-count.json), [`seed-count.md`](docs/results/seed-count.md). Written by `scripts/seed-count.sh`, `scripts/seed-count.py`; rendered by `scripts/render-results`.*
 <!-- /results:seeds -->
 
-The six seeds with a violation were all found by the first 200,000-seed `nightly` campaign and the one after it. Two
-were [BUG-012](docs/BUGS.md), a real bug in the dispatcher, fixed with a unit test and a regression seed. Four were
-errors in the simulator's own drain check (D87): it called a message undelivered although Driftline had accepted it
-and only the replies were lost, or although it was released by the faulty bank feed moments before the run ended.
-Seeds are counted on whatever commit their run used; the campaign that ran on the final simulator and core, nightly
-run 45341082943, ran its 400,000 seeds with none failing ([`seed-count.md`](docs/results/seed-count.md) lists every
-shard and its commit). CI's per-pull-request runs before Shift 10 saved no summaries and are not counted.
+Of the seven seeds with a violation, two were [BUG-012](docs/BUGS.md), a real bug in the dispatcher, fixed with a
+unit test and a regression seed. Five were errors in the simulator's own drain check (D87, D90). It called a message
+undelivered in three situations, each time wrongly:
+
+- Driftline had taken the message, and only its replies were lost.
+- Driftline had taken the message, and every answer it gave was the 503 of a lost log acknowledgement.
+- The faulty bank feed released the message moments before the run ended.
+
+Seeds are counted on whatever commit their run used ([`seed-count.md`](docs/results/seed-count.md) lists every shard
+and its commit). The last two 200,000-seed `nightly` campaigns ran Driftline's final code. Run 45341082943 had no
+failing seed. Run 45420779430 had one, the D90 drain-check error. The fix changes only the drain check's verdict at the
+end of a run and draws no randomness, so every seed runs as before, and that seed now passes. CI's per-pull-request
+runs before Shift 10 saved no summaries and are not counted.
 
 ### Canaries: measuring the simulator
 

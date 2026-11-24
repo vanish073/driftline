@@ -6,6 +6,7 @@ import io.github.vanish073.driftline.sim.kernel.Scheduler;
 import io.github.vanish073.driftline.sim.kernel.SimClock;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.kernel.Trace;
+import io.github.vanish073.driftline.sim.world.Delivery;
 import io.github.vanish073.driftline.sim.world.Ingress;
 import io.github.vanish073.driftline.sim.world.Request;
 import io.github.vanish073.driftline.wire.ingest.IngestNormaliser;
@@ -102,7 +103,7 @@ public final class IngestNode implements Ingress {
                 trace.line(scheduler.now(), NAME, (ackLost ? "503 (append acked late) " : "202 ")
                         + a.envelope().eventType().wireName() + " " + a.envelope().eventKey() + " -> p"
                         + record.partition() + "@" + record.offset());
-                reply.accept(ackLost ? 503 : 202);
+                reply.accept(ackLost ? Delivery.TAKEN_ACK_LOST : 202);
             }
             case IngestResult.Rejected r -> {
                 rejected++;
