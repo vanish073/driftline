@@ -343,11 +343,11 @@ merchants, about 2,000 orders over 5 days of faults and 7 of draining; 200,000 f
 <!-- results:seeds -->
 | Profile | Campaign seeds | With zero violations | With a violation |
 |---|---:|---:|---:|
-| nightly | 765,600 | 765,593 | 7 |
-| pr | 1,000,000 | 1,000,000 | 0 |
-| **total** | **1,765,600** | **1,765,593** | **7** |
+| nightly | 965,600 | 965,593 | 7 |
+| pr | 1,210,000 | 1,210,000 | 0 |
+| **total** | **2,175,600** | **2,175,593** | **7** |
 
-Fresh seeds with no planted bug, from 6 GitHub Actions runs' campaign shards and 10,000 seeds run locally. Real bugs the simulator found: **12** (`docs/BUGS.md`; canaries are not bugs).
+Fresh seeds with no planted bug, from 8 GitHub Actions runs' campaign shards and 10,000 seeds run locally. Real bugs the simulator found: **12** (`docs/BUGS.md`; canaries are not bugs).
 
 *Raw output: [`seed-count.json`](docs/results/seed-count.json), [`seed-count.md`](docs/results/seed-count.md). Written by `scripts/seed-count.sh`, `scripts/seed-count.py`; rendered by `scripts/render-results`.*
 <!-- /results:seeds -->
@@ -361,10 +361,11 @@ undelivered in three situations, each time wrongly:
 - The faulty bank feed released the message moments before the run ended.
 
 Seeds are counted on whatever commit their run used ([`seed-count.md`](docs/results/seed-count.md) lists every shard
-and its commit). The last two 200,000-seed `nightly` campaigns ran Driftline's final code. Run 45341082943 had no
+and its commit). The last three 200,000-seed `nightly` campaigns ran Driftline's final code. Run 45341082943 had no
 failing seed. Run 45420779430 had one, the D90 drain-check error. The fix changes only the drain check's verdict at the
-end of a run and draws no randomness, so every seed runs as before, and that seed now passes. CI's per-pull-request
-runs before Shift 10 saved no summaries and are not counted.
+end of a run and draws no randomness, so every seed runs as before, and that seed now passes. Run 45478126889, on the
+final commit with the fix, had no failing seed, and its canary matrix caught every canary on both profiles. CI's
+per-pull-request runs before Shift 10 saved no summaries and are not counted.
 
 ### Canaries: measuring the simulator
 

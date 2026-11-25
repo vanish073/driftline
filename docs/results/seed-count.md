@@ -8,9 +8,9 @@ as a real bug (a `docs/BUGS.md` row and a regression seed) or as a modelling or 
 
 | Profile | Seeds | Seeds with a violation |
 |---|---:|---:|
-| nightly | 765600 | 7 |
-| pr | 1000000 | 0 |
-| **total** | **1765600** | **7** |
+| nightly | 965600 | 7 |
+| pr | 1210000 | 0 |
+| **total** | **2175600** | **7** |
 
 | Where | Workflow | Date | Branch | Commit | Profile | Seeds | Failed | Seed range |
 |---|---|---|---|---|---|---:|---:|---|
@@ -225,3 +225,57 @@ as a real bug (a `docs/BUGS.md` row and a regression seed) or as a modelling or 
 | run 45420779430 (sim-summary-nightly-pr-7) | nightly | 2026-11-24T15:02:05Z | shift-10 | 9ef801b | pr | 20000 | 0 | 109084155886140001..109084155886160000 |
 | run 45420779430 (sim-summary-nightly-pr-8) | nightly | 2026-11-24T15:02:05Z | shift-10 | 9ef801b | pr | 20000 | 0 | 109084155886160001..109084155886180000 |
 | run 45420779430 (sim-summary-nightly-pr-9) | nightly | 2026-11-24T15:02:05Z | shift-10 | 9ef801b | pr | 20000 | 0 | 109084155886180001..109084155886200000 |
+| run 45476314821 (sim-summary-ci-pr-0) | ci | 2026-11-24T20:01:12Z | shift-10 | 9af2a97 | pr | 2500 | 0 | 454763148210001..454763148212500 |
+| run 45476314821 (sim-summary-ci-pr-1) | ci | 2026-11-24T20:01:12Z | shift-10 | 9af2a97 | pr | 2500 | 0 | 454763148212501..454763148215000 |
+| run 45476314821 (sim-summary-ci-pr-2) | ci | 2026-11-24T20:01:12Z | shift-10 | 9af2a97 | pr | 2500 | 0 | 454763148215001..454763148217500 |
+| run 45476314821 (sim-summary-ci-pr-3) | ci | 2026-11-24T20:01:12Z | shift-10 | 9af2a97 | pr | 2500 | 0 | 454763148217501..454763148220000 |
+| run 45478126889 (sim-summary-nightly-nightly-0) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377800001..209095625377805000 |
+| run 45478126889 (sim-summary-nightly-nightly-1) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377805001..209095625377810000 |
+| run 45478126889 (sim-summary-nightly-nightly-10) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377850001..209095625377855000 |
+| run 45478126889 (sim-summary-nightly-nightly-11) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377855001..209095625377860000 |
+| run 45478126889 (sim-summary-nightly-nightly-12) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377860001..209095625377865000 |
+| run 45478126889 (sim-summary-nightly-nightly-13) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377865001..209095625377870000 |
+| run 45478126889 (sim-summary-nightly-nightly-14) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377870001..209095625377875000 |
+| run 45478126889 (sim-summary-nightly-nightly-15) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377875001..209095625377880000 |
+| run 45478126889 (sim-summary-nightly-nightly-16) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377880001..209095625377885000 |
+| run 45478126889 (sim-summary-nightly-nightly-17) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377885001..209095625377890000 |
+| run 45478126889 (sim-summary-nightly-nightly-18) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377890001..209095625377895000 |
+| run 45478126889 (sim-summary-nightly-nightly-19) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377895001..209095625377900000 |
+| run 45478126889 (sim-summary-nightly-nightly-2) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377810001..209095625377815000 |
+| run 45478126889 (sim-summary-nightly-nightly-20) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377900001..209095625377905000 |
+| run 45478126889 (sim-summary-nightly-nightly-21) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377905001..209095625377910000 |
+| run 45478126889 (sim-summary-nightly-nightly-22) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377910001..209095625377915000 |
+| run 45478126889 (sim-summary-nightly-nightly-23) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377915001..209095625377920000 |
+| run 45478126889 (sim-summary-nightly-nightly-24) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377920001..209095625377925000 |
+| run 45478126889 (sim-summary-nightly-nightly-25) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377925001..209095625377930000 |
+| run 45478126889 (sim-summary-nightly-nightly-26) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377930001..209095625377935000 |
+| run 45478126889 (sim-summary-nightly-nightly-27) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377935001..209095625377940000 |
+| run 45478126889 (sim-summary-nightly-nightly-28) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377940001..209095625377945000 |
+| run 45478126889 (sim-summary-nightly-nightly-29) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377945001..209095625377950000 |
+| run 45478126889 (sim-summary-nightly-nightly-3) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377815001..209095625377820000 |
+| run 45478126889 (sim-summary-nightly-nightly-30) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377950001..209095625377955000 |
+| run 45478126889 (sim-summary-nightly-nightly-31) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377955001..209095625377960000 |
+| run 45478126889 (sim-summary-nightly-nightly-32) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377960001..209095625377965000 |
+| run 45478126889 (sim-summary-nightly-nightly-33) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377965001..209095625377970000 |
+| run 45478126889 (sim-summary-nightly-nightly-34) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377970001..209095625377975000 |
+| run 45478126889 (sim-summary-nightly-nightly-35) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377975001..209095625377980000 |
+| run 45478126889 (sim-summary-nightly-nightly-36) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377980001..209095625377985000 |
+| run 45478126889 (sim-summary-nightly-nightly-37) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377985001..209095625377990000 |
+| run 45478126889 (sim-summary-nightly-nightly-38) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377990001..209095625377995000 |
+| run 45478126889 (sim-summary-nightly-nightly-39) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377995001..209095625378000000 |
+| run 45478126889 (sim-summary-nightly-nightly-4) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377820001..209095625377825000 |
+| run 45478126889 (sim-summary-nightly-nightly-5) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377825001..209095625377830000 |
+| run 45478126889 (sim-summary-nightly-nightly-6) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377830001..209095625377835000 |
+| run 45478126889 (sim-summary-nightly-nightly-7) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377835001..209095625377840000 |
+| run 45478126889 (sim-summary-nightly-nightly-8) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377840001..209095625377845000 |
+| run 45478126889 (sim-summary-nightly-nightly-9) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | nightly | 5000 | 0 | 209095625377845001..209095625377850000 |
+| run 45478126889 (sim-summary-nightly-pr-0) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377800001..109095625377820000 |
+| run 45478126889 (sim-summary-nightly-pr-1) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377820001..109095625377840000 |
+| run 45478126889 (sim-summary-nightly-pr-2) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377840001..109095625377860000 |
+| run 45478126889 (sim-summary-nightly-pr-3) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377860001..109095625377880000 |
+| run 45478126889 (sim-summary-nightly-pr-4) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377880001..109095625377900000 |
+| run 45478126889 (sim-summary-nightly-pr-5) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377900001..109095625377920000 |
+| run 45478126889 (sim-summary-nightly-pr-6) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377920001..109095625377940000 |
+| run 45478126889 (sim-summary-nightly-pr-7) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377940001..109095625377960000 |
+| run 45478126889 (sim-summary-nightly-pr-8) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377960001..109095625377980000 |
+| run 45478126889 (sim-summary-nightly-pr-9) | nightly | 2026-11-24T20:11:18Z | shift-10 | 720e7d5 | pr | 20000 | 0 | 109095625377980001..109095625378000000 |
