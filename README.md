@@ -164,9 +164,9 @@ What Driftline does not do, or cannot show (D73, as later decisions changed it):
 - **The numbers come from one 4 GB laptop** (§15.1) running every service at once; tail latencies there vary between
   runs of the same rate (see [the load test](#throughput-and-latency)).
 - **Security residual risks** ([`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)): encryption keys are mounted files,
-  not a KMS; services authenticate each other with tokens and passwords inside TLS, not client certificates, and Kafka
-  has logins but no ACLs; rate limits are per process; the dev-only monitoring tools talk to each other in plaintext
-  on the Compose network.
+  not a KMS; services authenticate each other with tokens and passwords inside TLS, not client certificates (Kafka's
+  permissions limit Driftline's login to its own topic, D101); rate limits are per process; the dev-only monitoring
+  tools talk to each other in plaintext on the Compose network.
 - **The brief's finance-ops interview was not held**; public desk research stands in for it (D54, and
   [below](#who-would-pay-and-why)).
 

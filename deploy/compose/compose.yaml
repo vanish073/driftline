@@ -136,6 +136,12 @@ services:
       KAFKA_SSL_TRUSTSTORE_TYPE: PEM
       KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/ca.crt
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf"
+      # D101: deny anything not granted; the broker and the admin are super users, and so is the broker's own
+      # unauthenticated principal on the loopback-only controller listener (the broker talks to its controller there).
+      # deploy/kafka/init.sh grants the driftline login its one topic and group.
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_SUPER_USERS: "User:broker;User:admin;User:ANONYMOUS"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -160,12 +166,13 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    # Retries until the broker answers; --if-not-exists makes a re-run harmless.
-    entrypoint: ["bash", "-c", "for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --command-config /etc/kafka/secrets/client.properties --create --if-not-exists --topic driftline.events.v1 --partitions 12 --replication-factor 1 && exit 0; sleep 2; done; exit 1"]
+    # The topic, then the driftline login's permissions (D101); re-running is harmless.
+    entrypoint: ["/opt/kafka-init/init.sh"]
     environment:
       KAFKA_HEAP_OPTS: "-Xmx64m"
     volumes:
       - ./.dev/secrets/kafka:/etc/kafka/secrets:ro
+      - ../kafka/init.sh:/opt/kafka-init/init.sh:ro
     restart: "no"
     mem_limit: 192m
 
