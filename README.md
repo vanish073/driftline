@@ -502,6 +502,7 @@ Needs Java 21 (the Gradle wrapper fetches Gradle) and, for the integration tests
 ./gradlew -q :sim:canaries --args="--threads 8"
 
 scripts/e2e.sh                  # the Compose stack end to end (generates throwaway secrets under deploy/compose/.dev/)
+scripts/demo.sh up              # a live demo: the stack with Grafana and Jaeger, left running (tour, breaks, down)
 scripts/load-test.sh            # the load test of "The numbers"
 scripts/hot-accounts.sh         # the hot-account benchmark
 scripts/seed-count.sh           # the cumulative seed count from CI artifacts (needs gh)

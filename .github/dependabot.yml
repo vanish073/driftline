@@ -25,13 +25,17 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The app and sandbox base image (pinned by digest).
+  # The app and sandbox base image (pinned by digest). Java stays on 21, the LTS release (DESIGN §18): a major-version
+  # jump of the JRE (PR #8 proposed 24, a short-term release) is not proposed; patch and minor updates of 21 are.
   - package-ecosystem: docker
     directory: /deploy/docker
     schedule:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      - dependency-name: eclipse-temurin
+        update-types: ["version-update:semver-major"]
     groups:
       images:
         patterns: ["*"]
