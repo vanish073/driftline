@@ -82,7 +82,7 @@ class AuditTrailIT {
             amounts.put(AccountCode.SETTLEMENT_DIFFERENCES, Money.parseSigned("12.34"));
             amounts.put(AccountCode.BANK, Money.parseSigned("-12.34"));
             ManualAdjustment.Result r = store.transact("adjust", tx -> ManualAdjustment.post(tx, m, "ops/abc",
-                    "bank fee we had not booked", Optional.empty(), amounts, T0));
+                    "bank fee we had not booked", Optional.empty(), amounts, "adj-it-1", T0));
             assertThat(r).isInstanceOf(ManualAdjustment.Posted.class);
             long seq = ((ManualAdjustment.Posted) r).auditSeq();
             Optional<LedgerTxn> booked = store.transact("find", tx -> tx.ledger().find(m,

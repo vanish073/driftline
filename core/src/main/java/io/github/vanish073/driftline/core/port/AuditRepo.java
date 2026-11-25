@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
@@ -79,8 +80,22 @@ public interface AuditRepo {
         text.append(value.length()).append(':').append(value).append(';');
     }
 
-    /** Appends a row after the last one, chained to its hash ({@link #GENESIS} for the first). */
+    /** The detail key under which a manual request's {@code Idempotency-Key} is recorded (Shift 11, D94). */
+    String REQUEST_KEY = "request_key";
+
+    /** The detail key under which the SHA-256 of a manual request's canonical content is recorded (D94). */
+    String REQUEST_SHA256 = "request_sha256";
+
+    /**
+     * Appends a row after the last one, chained to its hash ({@link #GENESIS} for the first).
+     *
+     * @throws StoreConflict if the entry carries a {@link #REQUEST_KEY} that a row with the same action and subject
+     *                       already carries (D94): two concurrent repeats of one request cannot both commit
+     */
     Row append(Entry entry);
+
+    /** The row of {@code action} on {@code subject} that carries {@code requestKey} as its {@link #REQUEST_KEY}. */
+    Optional<Row> byRequestKey(String action, String subject, String requestKey);
 
     /** Every row, by sequence number. */
     List<Row> rows();

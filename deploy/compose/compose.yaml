@@ -3,8 +3,9 @@
 # dispatcher), and the sandbox, which also serves the gateway, merchant and ops APIs the dispatcher calls. Profile `obs`
 # (D78): the OpenTelemetry collector, Jaeger, Prometheus and Grafana; set DRIFTLINE_TRACING=true in the env file to turn
 # on the Java agent in the Driftline containers. Every image is pinned by digest;
-# every service has a memory cap sized for the 4 GB WSL machine. scripts/e2e.sh generates the env file and the
-# bootstrap file (random secrets, never committed) under deploy/compose/.dev/ and runs the e2e suite against it.
+# every service has a memory cap sized for the 4 GB WSL machine. scripts/e2e.sh generates the bootstrap file and the
+# secrets (random, never committed) under deploy/compose/.dev/ and runs the e2e suite against it. Secrets are files that
+# each service mounts read-only from .dev/secrets/<service>, never environment variables (Shift 11, D97).
 # Ports published to the host: 8080 (ingest and ops API) and 8085 (sandbox control API). Actuator (9091) stays inside
 # the Compose network (D21).
 name: driftline
@@ -19,28 +20,39 @@ x-app-image: &app-image
   tmpfs:
     - /tmp:size=64m
 
-# What every Driftline service role needs: the database as the DML role, Kafka, the secrets key, the personal-data keys
-# (D77: the vault's AES keyring and the VPA blind-index key) and the dev bootstrap.
+# What every Driftline service role needs: the database as the DML role, Kafka, the key ids of the secrets key and the
+# personal-data keys (D77) and the dev bootstrap. The password, the keys and the service token are files in
+# .dev/secrets/app, mounted at /run/secrets/driftline (*app-secrets), never environment variables (D97).
 x-app-env: &app-env
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+  # D100: TLS everywhere inside the stack. PostgreSQL's certificate is verified against the run's CA (verify-full);
+  # Kafka is TLS with a password login; the API and the management port serve HTTPS; the JVM trusts the run's CA for
+  # its own HTTPS calls (the dispatcher's, the verifier's).
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline?sslmode=verify-full&sslrootcert=/run/tls/ca.crt
   SPRING_DATASOURCE_USERNAME: driftline
-  SPRING_DATASOURCE_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
   DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  DRIFTLINE_KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  DRIFTLINE_KAFKA_USERNAME: driftline
+  DRIFTLINE_KAFKA_TRUSTSTORE_FILE: /run/tls/ca.crt
+  SERVER_SSL_BUNDLE: server
+  MANAGEMENT_SERVER_SSL_BUNDLE: server
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_CERTIFICATE: file:/run/tls/server.crt
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_PRIVATE_KEY: file:/run/tls/server.key
   DRIFTLINE_SECRETS_ACTIVE_KID: dev
-  DRIFTLINE_SECRETS_KEYS_DEV: ${DRIFTLINE_SECRETS_KEY:?missing}
   DRIFTLINE_PII_ACTIVE_KID: dev
-  DRIFTLINE_PII_KEYS_DEV: ${DRIFTLINE_PII_KEY:?missing}
-  DRIFTLINE_PII_INDEX_KEY: ${DRIFTLINE_PII_INDEX_KEY:?missing}
   DRIFTLINE_BOOTSTRAP_FILE: /bootstrap/bootstrap.json
+  # A dev stack (D97): only dev and test may apply the bootstrap file. Production is the default when this is unset.
+  DRIFTLINE_ENVIRONMENT: dev
   # -Xms equal to -Xmx (D84): a heap that starts small grows only through full collections, and the load test saw one
   # triggered that way stall the process for 21.8 s; the cap, and so the most the heap can use, is unchanged.
-  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k"
+  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k -Djavax.net.ssl.trustStore=/run/tls/truststore.p12
+    -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
   # The OpenTelemetry Java agent (D78): off unless DRIFTLINE_TRACING=true. Spans only, over OTLP to the collector of the
   # `obs` profile; metrics go through Prometheus instead. Its Kafka instrumentation is off, since Driftline carries
   # `traceparent` on records itself (D46), and so is JDBC, so the drivers' polling does not flood the traces.
   OTEL_JAVAAGENT_ENABLED: ${DRIFTLINE_TRACING:-false}
   OTEL_SERVICE_NAME: driftline
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector:4318
+  OTEL_EXPORTER_OTLP_CERTIFICATE: /run/tls/ca.crt
   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
   OTEL_METRICS_EXPORTER: none
   OTEL_LOGS_EXPORTER: none
@@ -50,14 +62,19 @@ x-app-env: &app-env
 # The dispatcher (D65): the sandbox serves the gateway, the merchant callback and the ops sink. Its gateway forgets an
 # idempotency key after 5 minutes; every refund retry looks the refund up first, so no setting depends on that (BUG-008).
 x-dispatcher-env: &dispatcher-env
-  DRIFTLINE_DISPATCHER_GATEWAY_URL: http://sandbox:8085/gateway
-  DRIFTLINE_DISPATCHER_MERCHANT_URL: http://sandbox:8085/merchant
-  DRIFTLINE_DISPATCHER_OPS_URL: http://sandbox:8085/ops
-  DRIFTLINE_DISPATCHER_SERVICE_TOKEN: ${DRIFTLINE_SERVICE_TOKEN:?missing}
+  DRIFTLINE_DISPATCHER_GATEWAY_URL: https://sandbox:8085/gateway
+  DRIFTLINE_DISPATCHER_MERCHANT_URL: https://sandbox:8085/merchant
+  DRIFTLINE_DISPATCHER_OPS_URL: https://sandbox:8085/ops
 
-# Ready means the readiness group is UP on the management port (D21).
+# The app's secrets and the dev bootstrap file, read-only.
+x-app-volumes: &app-volumes
+  - ./.dev/secrets/app:/run/secrets/driftline:ro
+  - ./.dev/secrets/tls-app:/run/tls:ro
+  - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+
+# Ready means the readiness group is UP on the management port (D21), over HTTPS (D100).
 x-ready: &ready
-  test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9091 && printf \"GET /actuator/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'"]
+  test: ["CMD-SHELL", "curl -fsS --cacert /run/tls/ca.crt https://localhost:9091/actuator/health/readiness | grep -q UP"]
   interval: 3s
   timeout: 3s
   retries: 60
@@ -70,11 +87,23 @@ services:
     environment:
       POSTGRES_DB: driftline
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/e2e.sh, which generates deploy/compose/.dev/env}
-      DRIFTLINE_DB_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
-    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=40"]
+      # The superuser's password and the app's (read by postgres-init.sh) are files: run scripts/e2e.sh, or anything
+      # that calls stack_secrets, to generate them (D97).
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/postgres-password
+    # D100: TLS only over the network (pg_hba.conf has hostssl lines and no host lines). PostgreSQL wants its key owned by
+    # its own user with mode 0600, so the entrypoint copies the mounted key before starting the server.
+    entrypoint: ["bash", "-c", "install -d -o postgres -g postgres -m 700 /var/lib/postgresql/tls
+      && install -o postgres -g postgres -m 600 /run/secrets/postgres/server.key /var/lib/postgresql/tls/server.key
+      && install -o postgres -g postgres -m 644 /run/secrets/postgres/server.crt /var/lib/postgresql/tls/server.crt
+      && exec docker-entrypoint.sh \"$$@\"", "--"]
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=40", "-c", "ssl=on",
+              "-c", "ssl_cert_file=/var/lib/postgresql/tls/server.crt",
+              "-c", "ssl_key_file=/var/lib/postgresql/tls/server.key",
+              "-c", "ssl_min_protocol_version=TLSv1.2", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     volumes:
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./.dev/secrets/postgres:/run/secrets/postgres:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d driftline"]
       interval: 2s
@@ -85,14 +114,28 @@ services:
   kafka:
     profiles: [core]
     image: apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69
+    # D100: clients connect over TLS and log in (SASL PLAIN, only ever over TLS); the controller listener is bound to the
+    # container's loopback, so nothing outside the broker's own process can reach it. Credentials and the keystore are
+    # files in /etc/kafka/secrets, where the image expects them.
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: SASL_SSL://:9092,CONTROLLER://127.0.0.1:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_SSL://kafka:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,SASL_SSL:SASL_SSL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_SSL
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.p12
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore-password
+      KAFKA_SSL_KEY_CREDENTIALS: key-password
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: https
+      KAFKA_SSL_TRUSTSTORE_TYPE: PEM
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/ca.crt
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -101,11 +144,13 @@ services:
       KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
     healthcheck:
       # The CLI must not inherit the broker's -Xms384m, or two JVMs would not fit the container's cap.
-      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:9092 --command-config /etc/kafka/secrets/client.properties > /dev/null 2>&1"]
       interval: 5s
       timeout: 10s
       retries: 30
       start_period: 10s
+    volumes:
+      - ./.dev/secrets/kafka:/etc/kafka/secrets:ro
     mem_limit: 640m
 
   # One topic, 12 partitions (DESIGN §3.3).
@@ -116,9 +161,11 @@ services:
       kafka:
         condition: service_healthy
     # Retries until the broker answers; --if-not-exists makes a re-run harmless.
-    entrypoint: ["bash", "-c", "for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic driftline.events.v1 --partitions 12 --replication-factor 1 && exit 0; sleep 2; done; exit 1"]
+    entrypoint: ["bash", "-c", "for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --command-config /etc/kafka/secrets/client.properties --create --if-not-exists --topic driftline.events.v1 --partitions 12 --replication-factor 1 && exit 0; sleep 2; done; exit 1"]
     environment:
       KAFKA_HEAP_OPTS: "-Xmx64m"
+    volumes:
+      - ./.dev/secrets/kafka:/etc/kafka/secrets:ro
     restart: "no"
     mem_limit: 192m
 
@@ -131,10 +178,12 @@ services:
         condition: service_healthy
     environment:
       DRIFTLINE_ROLE: migrate
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline?sslmode=verify-full&sslrootcert=/run/tls/ca.crt
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?missing}
       JAVA_TOOL_OPTIONS: "-Xmx128m -XX:+UseSerialGC -Xss512k"
+    volumes:
+      - ./.dev/secrets/migrate:/run/secrets/driftline:ro
+      - ./.dev/secrets/tls-client:/run/tls:ro
     restart: "no"
     mem_limit: 256m
 
@@ -152,9 +201,8 @@ services:
       # dispatcher in containers of their own (profile `chaos`), so it can kill them.
       DRIFTLINE_ROLE: ${DRIFTLINE_CORE_ROLE:-all}
       DRIFTLINE_INSTANCE_ID: driftline-compose
-      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://127.0.0.1:8080
-    volumes:
-      - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: https://localhost:8080
+    volumes: *app-volumes
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck: *ready
@@ -173,8 +221,7 @@ services:
       DRIFTLINE_ROLE: matcher
       DRIFTLINE_INSTANCE_ID: matcher-compose
       OTEL_SERVICE_NAME: driftline-matcher
-    volumes:
-      - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+    volumes: *app-volumes
     healthcheck: *ready
     stop_grace_period: 30s
     mem_limit: 448m
@@ -190,9 +237,8 @@ services:
       DRIFTLINE_ROLE: dispatcher
       DRIFTLINE_INSTANCE_ID: dispatcher-compose
       OTEL_SERVICE_NAME: driftline-dispatcher
-      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://driftline:8080
-    volumes:
-      - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+      DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: https://driftline:8080
+    volumes: *app-volumes
     healthcheck: *ready
     stop_grace_period: 30s
     mem_limit: 448m
@@ -204,12 +250,15 @@ services:
     <<: *app-image
     environment:
       DRIFTLINE_ROLE: verify
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline?sslmode=verify-full&sslrootcert=/run/tls/ca.crt
       SPRING_DATASOURCE_USERNAME: driftline
-      SPRING_DATASOURCE_PASSWORD: ${DRIFTLINE_DB_PASSWORD:?missing}
-      DRIFTLINE_VERIFY_SANDBOX_URL: http://sandbox:8085
+      DRIFTLINE_VERIFY_SANDBOX_URL: https://sandbox:8085
       DRIFTLINE_VERIFY_WAIT_FOR: ${VERIFY_WAIT_FOR:-5m}
-      JAVA_TOOL_OPTIONS: "-Xmx128m -XX:+UseSerialGC -Xss512k"
+      JAVA_TOOL_OPTIONS: "-Xmx128m -XX:+UseSerialGC -Xss512k -Djavax.net.ssl.trustStore=/run/tls/truststore.p12
+        -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
+    volumes:
+      - ./.dev/secrets/verify:/run/secrets/driftline:ro
+      - ./.dev/secrets/tls-client:/run/tls:ro
     restart: "no"
     mem_limit: 256m
 
@@ -225,14 +274,20 @@ services:
     depends_on:
       driftline:
         condition: service_healthy
-    command: ["serve", "--bootstrap", "/bootstrap/bootstrap.json", "--driftline", "http://driftline:8080",
-              "--port", "8085"]
+    # D100: the sandbox serves HTTPS (it plays the gateway, the merchant and the ops sink, which Driftline calls) and
+    # calls Driftline over HTTPS; its JVM's keystore is its certificate, its truststore the run's CA.
+    command: ["serve", "--bootstrap", "/bootstrap/bootstrap.json", "--driftline", "https://driftline:8080",
+              "--port", "8085", "--tls", "true"]
+    entrypoint: ["bash", "-c", "export JAVA_OPTS=\"-Djavax.net.ssl.keyStore=/run/tls/server.p12 -Djavax.net.ssl.keyStoreType=PKCS12
+      -Djavax.net.ssl.keyStorePassword=$$(cat /run/tls/keystore-password) -Djavax.net.ssl.trustStore=/run/tls/truststore.p12
+      -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12\" && exec /app/bin/sandbox \"$$@\"", "--"]
     volumes:
       - ./.dev/bootstrap.json:/bootstrap/bootstrap.json:ro
+      - ./.dev/secrets/tls-sandbox:/run/tls:ro
     ports:
       - "127.0.0.1:8085:8085"
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8085 && printf \"GET /health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q ok <&3'"]
+      test: ["CMD-SHELL", "curl -fsS --cacert /run/tls/ca.crt https://localhost:8085/health | grep -q ok"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -246,41 +301,42 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ../otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./.dev/secrets/collector:/run/tls:ro
     depends_on:
       - jaeger
     mem_limit: 96m
 
-  # Jaeger v2 all-in-one, traces in memory only; UI on 16686.
+  # Jaeger v2 all-in-one, traces in memory only. Its UI has no login, so it is not published (D98): Grafana reads the
+  # traces through its Jaeger datasource, behind Grafana's login.
   jaeger:
     profiles: [obs]
     image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
-    ports:
-      - "127.0.0.1:16686:16686"
     mem_limit: 160m
 
   prometheus:
     profiles: [obs]
     image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    # D98: the UI and the API need a password (web.yml holds its bcrypt hash), and the scrapes send the metrics token.
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d",
-              "--storage.tsdb.path=/prometheus"]
+              "--storage.tsdb.path=/prometheus", "--web.config.file=/run/secrets/prometheus/web.yml"]
     volumes:
       - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./.dev/secrets/prometheus:/run/secrets/prometheus:ro
     ports:
       - "127.0.0.1:9090:9090"
     mem_limit: 160m
 
-  # Anonymous users may view; the admin password is generated per run. No phoning home. Grafana 13 needs about 340 MB
-  # to render the board; at 160 MB it thrashed and queries took minutes (D78).
+  # Every user logs in (D98: no anonymous viewing); the admin password is generated per run, as a file. No phoning
+  # home. Grafana 13 needs about 340 MB to render the board; at 160 MB it thrashed and queries took minutes (D78).
   grafana:
     profiles: [obs]
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     depends_on:
       - prometheus
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?missing}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana/admin-password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
@@ -289,6 +345,7 @@ services:
     volumes:
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./.dev/secrets/grafana:/run/secrets/grafana:ro
     ports:
       - "127.0.0.1:3000:3000"
     mem_limit: 384m

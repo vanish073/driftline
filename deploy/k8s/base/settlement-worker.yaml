@@ -40,20 +40,19 @@ spec:
                 fieldRef: {fieldPath: metadata.name}
           envFrom:
             - configMapRef: {name: driftline-config}
-            - secretRef: {name: driftline-secrets}
           ports:
             - name: management
               containerPort: 9091
           startupProbe:
-            httpGet: {path: /actuator/health/liveness, port: management}
+            httpGet: {path: /actuator/health/liveness, port: management, scheme: HTTPS}
             periodSeconds: 5
             failureThreshold: 36
           livenessProbe:
-            httpGet: {path: /actuator/health/liveness, port: management}
+            httpGet: {path: /actuator/health/liveness, port: management, scheme: HTTPS}
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
-            httpGet: {path: /actuator/health/readiness, port: management}
+            httpGet: {path: /actuator/health/readiness, port: management, scheme: HTTPS}
             periodSeconds: 5
             failureThreshold: 3
           resources:
@@ -66,6 +65,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # D97: the password, the keys and the service token are files, one per setting, never environment
+            # variables; the app reads /run/secrets/driftline (spring.config.import configtree).
+            - name: secrets
+              mountPath: /run/secrets/driftline
+              readOnly: true
+            # D100: the certificate, its key and the CA (and the CA as a truststore for the JVM's HTTPS calls)
+            - name: tls
+              mountPath: /run/tls
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 64Mi}
+        - name: secrets
+          secret: {secretName: driftline-secrets, defaultMode: 0440}
+        - name: tls
+          secret: {secretName: driftline-tls, defaultMode: 0440}

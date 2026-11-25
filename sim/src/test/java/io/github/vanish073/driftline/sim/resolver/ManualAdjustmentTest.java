@@ -41,9 +41,16 @@ class ManualAdjustmentTest {
         return out;
     }
 
+    int keys;
+
     ManualAdjustment.Result post(MerchantId m, Optional<String> breakId, SortedMap<AccountCode, Money> amounts) {
+        return post(m, breakId, amounts, "adj-" + ++keys);
+    }
+
+    ManualAdjustment.Result post(MerchantId m, Optional<String> breakId, SortedMap<AccountCode, Money> amounts,
+                                 String key) {
         return store.transact("adjust", tx -> ManualAdjustment.post(tx, m, "ops/abc", "bank charged a fee we had not "
-                + "booked", breakId, amounts, T0));
+                + "booked", breakId, amounts, key, T0));
     }
 
     Money balance(AccountCode account) {
@@ -74,7 +81,7 @@ class ManualAdjustmentTest {
         assertThatThrownBy(() -> post(M, Optional.empty(), amounts(AccountCode.BANK, "-12.34")))
                 .isInstanceOf(LedgerRejected.class);
         assertThatThrownBy(() -> store.transact("adjust", tx -> ManualAdjustment.post(tx, M, "ops/abc", " ",
-                Optional.empty(), amounts(AccountCode.BANK, "-1.00", AccountCode.SUSPENSE, "1.00"), T0)))
+                Optional.empty(), amounts(AccountCode.BANK, "-1.00", AccountCode.SUSPENSE, "1.00"), "adj-x", T0)))
                 .as("a note is required").isInstanceOf(IllegalArgumentException.class);
         assertThat(store.committedAuditRows()).isEmpty();
         assertThat(store.committedLedger()).isEmpty();
@@ -86,7 +93,7 @@ class ManualAdjustmentTest {
         store.transact("raise", tx -> tx.breaks().raise(b, "detected"));
         store.transact("resolve", tx -> new Resolver().step(tx, T0.plusSeconds(1), 10));   // escalated at once
         store.transact("manual", tx -> ManualResolution.resolve(tx, b.breakId(), Optional.empty(), "ops/abc",
-                "written off with the bank's agreement", T0.plusSeconds(2)));
+                "written off with the bank's agreement", "res-1", T0.plusSeconds(2)));
 
         assertThat(post(OTHER, Optional.of(b.breakId()),
                 amounts(AccountCode.SETTLEMENT_DIFFERENCES, "4.99", AccountCode.GATEWAY_RECEIVABLE, "-4.99")))
@@ -97,5 +104,36 @@ class ManualAdjustmentTest {
         assertThat(store.committedAuditRows()).hasSize(2);
         assertThat(store.committedAuditRows().get(1).entry().details()).containsEntry("break_id", b.breakId());
         assertThat(AuditChain.verify(store.committedAuditRows()).intact()).isTrue();
+    }
+
+    // ---- D94: "redeem it 100 times" ---------------------------------------------------------------------------------
+
+    @Test
+    void aRepeatedRequestPostsOnceAndEveryRepeatGetsTheFirstPostingBack() {
+        SortedMap<AccountCode, Money> fee = amounts(AccountCode.SETTLEMENT_DIFFERENCES, "12.34", AccountCode.BANK, "-12.34");
+        ManualAdjustment.Posted first = (ManualAdjustment.Posted) post(M, Optional.empty(), fee, "retry-me");
+        assertThat(first.replayed()).isFalse();
+        for (int i = 0; i < 100; i++) {
+            assertThat(post(M, Optional.empty(), fee, "retry-me")).isEqualTo(
+                    new ManualAdjustment.Posted(first.auditSeq(), first.txn(), true));
+        }
+        assertThat(balance(AccountCode.BANK)).isEqualTo(Money.parseSigned("-12.34"));
+        assertThat(store.committedLedger()).hasSize(1);
+        assertThat(store.committedAuditRows()).hasSize(1);
+        assertThat(store.committedAuditRows().getFirst().entry().details())
+                .containsEntry(AuditRepo.REQUEST_KEY, "retry-me").containsKey(AuditRepo.REQUEST_SHA256);
+    }
+
+    @Test
+    void theSameKeyForADifferentAdjustmentIsRefusedButAnotherMerchantMayUseIt() {
+        post(M, Optional.empty(), amounts(AccountCode.SETTLEMENT_DIFFERENCES, "12.34", AccountCode.BANK, "-12.34"), "k1");
+        assertThat(post(M, Optional.empty(), amounts(AccountCode.SETTLEMENT_DIFFERENCES, "99.00", AccountCode.BANK,
+                "-99.00"), "k1")).isEqualTo(new ManualAdjustment.KeyReused());
+        assertThat(post(OTHER, Optional.empty(), amounts(AccountCode.SETTLEMENT_DIFFERENCES, "99.00", AccountCode.BANK,
+                "-99.00"), "k1")).isInstanceOf(ManualAdjustment.Posted.class);
+        assertThat(balance(AccountCode.BANK)).isEqualTo(Money.parseSigned("-12.34"));
+        assertThat(store.committedAuditRows()).hasSize(2);
+        assertThatThrownBy(() -> post(M, Optional.empty(), amounts(AccountCode.SETTLEMENT_DIFFERENCES, "1.00",
+                AccountCode.BANK, "-1.00"), "<script>")).isInstanceOf(IllegalArgumentException.class);
     }
 }

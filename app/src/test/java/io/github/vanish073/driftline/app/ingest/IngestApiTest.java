@@ -125,7 +125,7 @@ class IngestApiTest {
     void token(String token, Optional<MerchantId> merchant, List<String> scopes) {
         Sha256 hash = DevBootstrap.tokenHash(token);
         when(directory.token(hash)).thenReturn(Optional.of(new PostgresDirectory.ApiToken(hash, merchant, scopes,
-                NOW.minusSeconds(60), Optional.empty())));
+                NOW.minusSeconds(60), NOW.plusSeconds(86_400), Optional.empty())));
     }
 
     static byte[] webhook(String eventId) {
@@ -281,7 +281,8 @@ class IngestApiTest {
     void aRevokedTokenAuthenticatesNothing() throws Exception {
         Sha256 hash = DevBootstrap.tokenHash("test-token-revoked");
         when(directory.token(hash)).thenReturn(Optional.of(new PostgresDirectory.ApiToken(hash, Optional.of(A),
-                List.of("events:write"), NOW.minusSeconds(600), Optional.of(NOW.minusSeconds(1)))));
+                List.of("events:write"), NOW.minusSeconds(600), NOW.plusSeconds(86_400),
+                Optional.of(NOW.minusSeconds(1)))));
         mvc.perform(post("/v1/merchants/m_a/order-events").content(orderEvent()).header("Idempotency-Key", "k")
                         .header("Authorization", "Bearer test-token-revoked"))
                 .andExpect(status().isUnauthorized());

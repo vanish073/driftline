@@ -2,6 +2,8 @@ package io.github.vanish073.driftline.sandbox;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.port.CallRequest;
@@ -29,6 +31,7 @@ import java.util.TreeMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLContext;
 
 /**
  * The sandbox over the JDK HttpServer, no Spring (D20, D51, D65). Requests are handled one at a time, and every world
@@ -72,10 +75,28 @@ public final class SandboxServer {
     private long calls;
 
     public SandboxServer(int port, URI driftline, BootstrapFile.Pool pool) throws IOException {
+        this(port, driftline, pool, false);
+    }
+
+    /**
+     * @param tls serve HTTPS (Shift 11, D100), with the JVM's default SSL context: its key store
+     *            ({@code javax.net.ssl.keyStore}) holds the sandbox's certificate, as the Compose stack and kind set
+     */
+    public SandboxServer(int port, URI driftline, BootstrapFile.Pool pool, boolean tls) throws IOException {
         this.driftline = driftline;
         this.pool = pool;
         this.unused = new ArrayDeque<>(pool.merchants());
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        if (tls) {
+            HttpsServer https = HttpsServer.create(new InetSocketAddress(port), 0);
+            try {
+                https.setHttpsConfigurator(new HttpsConfigurator(SSLContext.getDefault()));
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IOException("no TLS context", e);
+            }
+            this.server = https;
+        } else {
+            this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        }
         server.createContext("/health", exchange -> respond(exchange, 200, "ok\n"));
         server.createContext("/v1/inject", this::inject);
         server.createContext("/v1/stats", this::stats);

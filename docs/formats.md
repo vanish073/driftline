@@ -45,7 +45,7 @@ T,<line_count>,<total_amount>
 | H | `generated_at` | A UTC instant ending in `Z`, as in the JSON formats; at most microsecond precision | — |
 | D | `line_no` | 1, 2, 3 … with no gaps | — |
 | D | `value_date` | `YYYY-MM-DD`: the date the bank credited the funds | S4 `automatic_payout_effective_at` |
-| D | `amount` | Rupees credited for this line, **net** of fee and tax: digits, a point and **exactly two** decimals (`4784.36`, `0.05`). No sign, no grouping, no exponent | S2 `Event Settlement Amount`; S3 settled amount; S4 `net` |
+| D | `amount` | Rupees credited for this line, **net** of fee and tax: digits, a point and **exactly two** decimals (`4784.36`, `0.05`). No sign, no grouping, no exponent; at most `1000000000000.00` (₹1 lakh crore, D93), like `fee` and `tax` | S2 `Event Settlement Amount`; S3 settled amount; S4 `net` |
 | D | `fee` | Empty, or the itemised fee in the same rupee form | S1 `fee`; S2 `Transaction Service Charge`; S3 `Fee` |
 | D | `tax` | Empty, or the itemised GST on the fee in the same rupee form. S3's IGST, CGST and SGST are summed into one column | S1 `tax`; S2 `Txn ST/GST`; S3 GST columns |
 | D | `reference` | Empty, or the gateway payment id the line settles: the same token rules as `file_id` | S1 `entity_id`/`payment_id`; S3 `PhonePeReferenceId` |
@@ -71,6 +71,7 @@ The parser is strict and all-or-nothing: if any rule fails, the whole file is re
 - a missing, repeated or misplaced `H` or `T`, an unknown record type, or a wrong field count;
 - a format name or version other than `DLSF,1`;
 - an amount with a sign, an exponent, grouping, a leading zero (`01.00`), or anything other than two decimals (`1.5`, `1.234`);
+- an amount, fee or tax above `1000000000000.00` (D93: larger values could overflow the matcher's arithmetic);
 - a gap or repeat in `line_no`;
 - a `line_count` that differs from the number of `D` records, or a `total_amount` that differs from their exact sum;
 - an amount too large for 64-bit paise;

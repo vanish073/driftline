@@ -1,6 +1,7 @@
 package io.github.vanish073.driftline.core.event;
 
 import io.github.vanish073.driftline.core.id.IdRules;
+import io.github.vanish073.driftline.core.money.AmountLimits;
 import io.github.vanish073.driftline.core.money.Money;
 import java.time.LocalDate;
 import java.util.Objects;
@@ -36,6 +37,9 @@ public record SettlementLinePayload(
         if (lineNo < 1) {
             throw new IllegalArgumentException("line numbers start at 1, got " + lineNo);
         }
+        AmountLimits.requireSettlementField("amount", amount);
+        fee.ifPresent(f -> AmountLimits.requireSettlementField("fee", f));
+        tax.ifPresent(t -> AmountLimits.requireSettlementField("tax", t));
         fee.ifPresent(f -> requireNotNegative("fee", f));
         tax.ifPresent(t -> requireNotNegative("tax", t));
         reference.ifPresent(r -> IdRules.requireToken("reference", r));

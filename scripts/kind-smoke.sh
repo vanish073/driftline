@@ -16,6 +16,8 @@
 # 8. Always saves every pod's log to build/kind/, checks them for raw customer contacts, and deletes the cluster.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=lib/gen-tls.sh
+. scripts/lib/gen-tls.sh
 
 RESULTS=${1:-}
 CLUSTER=driftline-smoke
@@ -64,26 +66,29 @@ smoke() {
     mkdir -p "$DEV"
     sandbox/build/install/sandbox/bin/sandbox bootstrap --out "$DEV/bootstrap.json" --merchants 12 \
         --partitions 12 --days-back 3
-    local service_token db_password
+    local service_token db_password postgres_password
     service_token=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["service_token"])' \
         "$DEV/bootstrap.json")
     db_password=$(openssl rand -hex 16)
+    postgres_password=$(openssl rand -hex 16)
+    # One file per setting (D97): the Secrets the overlay generates from them are mounted as files, never variables.
     (
         umask 077
-        {
-            echo "SPRING_DATASOURCE_PASSWORD=$db_password"
-            echo "DRIFTLINE_SECRETS_KEYS_K1=$(openssl rand -base64 32)"
-            echo "DRIFTLINE_PII_KEYS_P1=$(openssl rand -base64 32)"
-            echo "DRIFTLINE_PII_INDEX_KEY=$(openssl rand -base64 32)"
-            echo "DRIFTLINE_DISPATCHER_SERVICE_TOKEN=$service_token"
-        } > "$DEV/driftline-secrets.env"
-        local postgres_password
-        postgres_password=$(openssl rand -hex 16)
-        printf 'SPRING_DATASOURCE_USERNAME=postgres\nSPRING_DATASOURCE_PASSWORD=%s\n' "$postgres_password" \
-            > "$DEV/driftline-migrator.env"
-        printf 'POSTGRES_PASSWORD=%s\nDRIFTLINE_DB_PASSWORD=%s\n' "$postgres_password" "$db_password" \
-            > "$DEV/driftline-infra.env"
+        mkdir -p "$DEV/secrets/app" "$DEV/secrets/migrate" "$DEV/secrets/postgres"
+        printf '%s' "$db_password" > "$DEV/secrets/app/spring.datasource.password"
+        printf '%s' "$(openssl rand -base64 32)" > "$DEV/secrets/app/driftline.secrets.keys.k1"
+        printf '%s' "$(openssl rand -base64 32)" > "$DEV/secrets/app/driftline.pii.keys.p1"
+        printf '%s' "$(openssl rand -base64 32)" > "$DEV/secrets/app/driftline.pii.index-key"
+        printf '%s' "$service_token" > "$DEV/secrets/app/driftline.dispatcher.service-token"
+        printf 'postgres' > "$DEV/secrets/migrate/spring.datasource.username"
+        printf '%s' "$postgres_password" > "$DEV/secrets/migrate/spring.datasource.password"
+        printf '%s' "$postgres_password" > "$DEV/secrets/postgres/postgres-password"
+        printf '%s' "$db_password" > "$DEV/secrets/postgres/app-password"
     )
+    # D100: TLS inside the cluster, as in Compose: PostgreSQL and Kafka refuse plaintext, everything else is HTTPS.
+    # The API's certificate also names 127.0.0.1, where cluster.yaml publishes the NodePort for the e2e suite.
+    tls_stack "$DEV/secrets" ingest,matcher,settlement-worker,resolver,dispatcher,localhost,127.0.0.1 \
+        sandbox,localhost,127.0.0.1
 
     echo "kind-smoke: creating cluster $CLUSTER"
     kind delete cluster --name "$CLUSTER" > /dev/null 2>&1 || true
@@ -108,12 +113,12 @@ smoke() {
         "${K[@]}" rollout status "deployment/$d" --timeout=8m
     done
     for _ in $(seq 1 60); do
-        if curl -fsS http://127.0.0.1:18085/health > /dev/null 2>&1; then
+        if curl -fsS --cacert "$DEV/secrets/ca.crt" https://127.0.0.1:18085/health > /dev/null 2>&1; then
             break
         fi
         sleep 2
     done
-    curl -fsS http://127.0.0.1:18085/health > /dev/null
+    curl -fsS --cacert "$DEV/secrets/ca.crt" https://127.0.0.1:18085/health > /dev/null
 
     echo "kind-smoke: NetworkPolicy check from an unlabelled pod"
     local probe
@@ -131,8 +136,9 @@ smoke() {
     echo "kind-smoke: e2e suite"
     local e2e=sandbox/build/e2e cp
     cp="$e2e/classes:$(find "$e2e/lib" -name '*.jar' | sort | tr '\n' ':')"
-    BOOTSTRAP_FILE="$DEV/bootstrap.json" DRIFTLINE_URL=http://127.0.0.1:18080 SANDBOX_URL=http://127.0.0.1:18085 \
-        java -Xmx192m -jar "$e2e"/launcher/junit-platform-console-standalone-*.jar execute \
+    BOOTSTRAP_FILE="$DEV/bootstrap.json" DRIFTLINE_URL=https://127.0.0.1:18080 SANDBOX_URL=https://127.0.0.1:18085 \
+        java -Xmx192m -Djavax.net.ssl.trustStore="$DEV/secrets/truststore.p12" -Djavax.net.ssl.trustStorePassword=changeit \
+        -Djavax.net.ssl.trustStoreType=PKCS12 -jar "$e2e"/launcher/junit-platform-console-standalone-*.jar execute \
         --class-path "$cp" --select-package io.github.vanish073.driftline.e2e --details=tree --disable-banner \
         --disable-ansi-colors
 

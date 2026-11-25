@@ -9,6 +9,8 @@ import io.github.vanish073.driftline.core.audit.AuditChain;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.port.AuditRepo;
+import io.github.vanish073.driftline.core.resolver.ManualRequests;
+import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -50,27 +52,39 @@ class WebhookSecretRotationIT {
                     Optional.empty()));
 
             Instant retire = NOW.plus(Duration.ofHours(24));
-            assertThat(directory.rotateWebhookSecret(M, "k2", NEW, NOW, retire, "ops/abc"))
-                    .isEqualTo(PostgresDirectory.Rotation.ROTATED);
+            Sha256 asked = ManualRequests.hash("rotate", "k2", "86400", "secret-hash-1");
+            assertThat(directory.rotateWebhookSecret(M, "k2", NEW, NOW, retire, "ops/abc", "rot-1", asked))
+                    .isEqualTo(new PostgresDirectory.RotationResult(PostgresDirectory.Rotation.ROTATED,
+                            Optional.of(NOW), Optional.of(retire)));
             assertThat(directory.activeSecrets(NOW.plusSeconds(1))).extracting(PostgresDirectory.WebhookSecret::kid)
                     .as("both, during the overlap").containsExactly("k1", "k2");
             assertThat(directory.activeSecrets(retire)).extracting(PostgresDirectory.WebhookSecret::kid)
                     .as("the new one only, once the overlap ends").containsExactly("k2");
 
-            assertThat(directory.rotateWebhookSecret(M, "k3", NEW, NOW.plusSeconds(60), retire, "ops/abc"))
-                    .as("a rotation is in progress").isEqualTo(PostgresDirectory.Rotation.IN_PROGRESS);
+            // D94: the same request again changes nothing and answers with the first times; other content is refused
+            assertThat(directory.rotateWebhookSecret(M, "k2", NEW, NOW.plusSeconds(5), retire.plusSeconds(5),
+                    "ops/abc", "rot-1", asked)).isEqualTo(new PostgresDirectory.RotationResult(
+                            PostgresDirectory.Rotation.REPLAYED, Optional.of(NOW), Optional.of(retire)));
+            assertThat(directory.rotateWebhookSecret(M, "k2", NEW, NOW.plusSeconds(5), retire, "ops/abc", "rot-1",
+                    ManualRequests.hash("rotate", "k2", "86400", "secret-hash-2")).status())
+                    .isEqualTo(PostgresDirectory.Rotation.KEY_REUSED);
+
+            assertThat(directory.rotateWebhookSecret(M, "k3", NEW, NOW.plusSeconds(60), retire, "ops/abc", "rot-2",
+                    asked).status()).as("a rotation is in progress").isEqualTo(PostgresDirectory.Rotation.IN_PROGRESS);
             assertThat(directory.rotateWebhookSecret(M, "k1", NEW, retire.plusSeconds(1), retire.plusSeconds(60),
-                    "ops/abc")).as("a key id is never reused").isEqualTo(PostgresDirectory.Rotation.KID_TAKEN);
-            assertThat(directory.rotateWebhookSecret(MerchantId.of("m_nobody"), "k9", NEW, NOW, retire, "ops/abc"))
-                    .isEqualTo(PostgresDirectory.Rotation.UNKNOWN_MERCHANT);
-            assertThatThrownBy(() -> directory.rotateWebhookSecret(M, "k4", NEW, NOW, NOW, "ops/abc"))
+                    "ops/abc", "rot-3", asked).status()).as("a key id is never reused")
+                    .isEqualTo(PostgresDirectory.Rotation.KID_TAKEN);
+            assertThat(directory.rotateWebhookSecret(MerchantId.of("m_nobody"), "k9", NEW, NOW, retire, "ops/abc",
+                    "rot-4", asked).status()).isEqualTo(PostgresDirectory.Rotation.UNKNOWN_MERCHANT);
+            assertThatThrownBy(() -> directory.rotateWebhookSecret(M, "k4", NEW, NOW, NOW, "ops/abc", "rot-5", asked))
                     .isInstanceOf(IllegalArgumentException.class);
 
             List<AuditRepo.Row> rows = store.transact("rows", tx -> tx.audit().rows());
             assertThat(rows).singleElement().satisfies(r -> {
                 assertThat(r.entry().action()).isEqualTo("WEBHOOK_SECRET_ROTATE");
                 assertThat(r.entry().details()).containsEntry("new_kid", "k2").containsEntry("retired_kids", "k1")
-                        .containsEntry("retire_at", retire.toString()).doesNotContainKeys("secret", "secret_enc");
+                        .containsEntry("retire_at", retire.toString()).doesNotContainKeys("secret", "secret_enc")
+                        .containsEntry(AuditRepo.REQUEST_KEY, "rot-1");
             });
             assertThat(AuditChain.verify(rows).intact()).isTrue();
 

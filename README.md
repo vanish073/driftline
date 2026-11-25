@@ -156,16 +156,17 @@ What Driftline does not do, or cannot show (D73, as later decisions changed it):
   simulator and the resolver's unit tests prove both paths on every pull request.
 - **The payment sweep takes a day's captures in one answer** (D72); a gateway that pages its list would need a cursor.
 - **New merchants need a restart** (D49). Webhook secrets, which once did too, now rotate while running (D76).
-- **Stored customer contacts are kept forever**: no retention period or erasure on request, and the first contact
-  seen for a payment wins (D77).
+- **The first contact seen for a payment wins** (D77), and erasing a customer's contacts reaches the database, not its
+  backups (D99).
 - **Nothing in production schedules the balance snapshotter** (D81). Nothing in production reads a balance either, so
   this costs nothing today, but under the default `APPEND_SNAPSHOT` strategy a balance read grows with the entries
   since the last snapshot.
 - **The numbers come from one 4 GB laptop** (§15.1) running every service at once; tail latencies there vary between
   runs of the same rate (see [the load test](#throughput-and-latency)).
-- **Security residual risks** ([`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)): no TLS or Kafka authentication inside
-  the deployment, no rate limiting, API tokens that never expire (they can be revoked), encryption keys from the
-  environment rather than a KMS, and an unauthenticated management port reachable only inside the deployment network.
+- **Security residual risks** ([`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)): encryption keys are mounted files,
+  not a KMS; services authenticate each other with tokens and passwords inside TLS, not client certificates, and Kafka
+  has logins but no ACLs; rate limits are per process; the dev-only monitoring tools talk to each other in plaintext
+  on the Compose network.
 - **The brief's finance-ops interview was not held**; public desk research stands in for it (D54, and
   [below](#who-would-pay-and-why)).
 
@@ -438,7 +439,8 @@ Three that show what this kind of testing finds:
 ## Security
 
 Each item has a test or a CI job (§14); [`docs/results/security-shift9.md`](docs/results/security-shift9.md) maps
-each to its evidence, and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) holds the STRIDE table.
+each to its evidence, [`docs/results/security-shift11.md`](docs/results/security-shift11.md) walks through the usual
+attacks on a payment API one by one, and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) holds the STRIDE table.
 
 | Item | How |
 |---|---|
@@ -449,6 +451,13 @@ each to its evidence, and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) holds t
 | Append-only audit trail | A hash chain enforced by triggers and privileges; `driftline verify` checks it; UPDATE and DELETE are refused by the database |
 | Dependency scanning in CI | dependency-review, OSV-Scanner, Trivy on the image, Dependabot, gitleaks; every action pinned by commit SHA |
 | Containers | Non-root, read-only root filesystem, NetworkPolicies in Kubernetes, request size limits, a CSV export that neutralises spreadsheet formulas |
+| TLS on every link | PostgreSQL only over TLS with its certificate checked, Kafka over TLS with logins, HTTPS for the API, the management port and every call; a production start refuses a plaintext link (D100) |
+| Tokens that expire | Every token has a lifetime; a token API creates, lists and revokes them, and no token can grant a scope it lacks (D95) |
+| Limits and lockout | 20 failed authentications lock an address out for 5 minutes before any lookup; each credential has a request budget (D96) |
+| Repeat-safe manual actions | Every manual POST needs an `Idempotency-Key`; a repeat changes nothing and gets the first answer (D94) |
+| Bounded amounts | Amounts too large for the matcher's arithmetic are refused wherever they enter (D93) |
+| Secrets as files | Keys and passwords are mounted files, never environment variables in production; logins for metrics, Grafana and Prometheus (D97, D98) |
+| Retention and erasure | Customers' contacts are deleted after 180 days, and on request, with an audit row that holds none of them (D99) |
 
 ## Who would pay, and why
 
@@ -501,8 +510,9 @@ Needs Java 21 (the Gradle wrapper fetches Gradle) and, for the integration tests
 ./gradlew :sim:campaign --args="--profile pr --from 1 --count 1000 --threads 8"
 ./gradlew -q :sim:canaries --args="--threads 8"
 
-scripts/e2e.sh                  # the Compose stack end to end (generates throwaway secrets under deploy/compose/.dev/)
-scripts/demo.sh up              # a live demo: the stack with Grafana and Jaeger, left running (tour, breaks, down)
+scripts/e2e.sh                  # the Compose stack end to end (generates throwaway secrets and certificates under
+                                # deploy/compose/.dev/secrets: the API is https://127.0.0.1:8080, signed by its ca.crt)
+scripts/demo.sh up              # a live demo: the stack with Grafana and its traces, left running (tour, breaks, down)
 scripts/load-test.sh            # the load test of "The numbers"
 scripts/hot-accounts.sh         # the hot-account benchmark
 scripts/seed-count.sh           # the cumulative seed count from CI artifacts (needs gh)

@@ -17,20 +17,19 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: driftline
           image: driftline-app
           env:
             - {name: DRIFTLINE_ROLE, value: verify}
-            - {name: DRIFTLINE_VERIFY_SANDBOX_URL, value: "http://sandbox:8085"}
+            - {name: DRIFTLINE_VERIFY_SANDBOX_URL, value: "https://sandbox:8085"}
             - {name: DRIFTLINE_VERIFY_WAIT_FOR, value: 5m}
-            - {name: JAVA_TOOL_OPTIONS, value: "-Xmx128m -XX:+UseSerialGC -Xss512k"}
-            - {name: SPRING_DATASOURCE_URL, value: "jdbc:postgresql://postgres:5432/driftline"}
+            # D100: the database over TLS with its certificate checked, the sandbox over HTTPS
+            - {name: JAVA_TOOL_OPTIONS, value: "-Xmx128m -XX:+UseSerialGC -Xss512k -Djavax.net.ssl.trustStore=/run/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"}
+            - {name: SPRING_DATASOURCE_URL, value: "jdbc:postgresql://postgres:5432/driftline?sslmode=verify-full&sslrootcert=/run/tls/ca.crt"}
             - {name: SPRING_DATASOURCE_USERNAME, value: driftline}
-            - name: SPRING_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef: {name: driftline-secrets, key: SPRING_DATASOURCE_PASSWORD}
           resources:
             limits: {memory: 256Mi}
           securityContext:
@@ -39,6 +38,17 @@ spec:
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            - {name: secrets, mountPath: /run/secrets/driftline, readOnly: true}
+            - {name: tls, mountPath: /run/tls, readOnly: true}
       volumes:
+        - name: tls
+          secret: {secretName: driftline-tls-client, defaultMode: 0440}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 64Mi}
+        # D97: only the database password of driftline-secrets, as a file
+        - name: secrets
+          secret:
+            secretName: driftline-secrets
+            defaultMode: 0440
+            items:
+              - {key: spring.datasource.password, path: spring.datasource.password}

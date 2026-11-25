@@ -31,12 +31,16 @@ spec:
           env:
             - name: DRIFTLINE_ROLE
               value: migrate
+            # The schema owner, not the config map's DML login: an explicit variable outranks envFrom, and variables
+            # outrank the secret files, so the name is set here (it is not a secret; the password stays a file, D97).
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef: {name: driftline-migrator, key: spring.datasource.username}
             - name: DRIFTLINE_INSTANCE_ID
               valueFrom:
                 fieldRef: {fieldPath: metadata.name}
           envFrom:
             - configMapRef: {name: driftline-config}
-            - secretRef: {name: driftline-migrator}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 384Mi}
@@ -47,6 +51,21 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # D97: the schema owner's login as files (spring.datasource.username, spring.datasource.password)
+            - name: secrets
+              mountPath: /run/secrets/driftline
+              readOnly: true
+            - name: tls   # D100: the CA, to verify the database's certificate
+              mountPath: /run/tls
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 64Mi}
+        - name: secrets
+          secret: {secretName: driftline-migrator, defaultMode: 0440}
+        - name: tls
+          secret:
+            secretName: driftline-tls
+            defaultMode: 0440
+            items:
+              - {key: ca.crt, path: ca.crt}

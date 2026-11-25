@@ -11,6 +11,7 @@ spec:
         - name: driftline
           env:
             - {name: DRIFTLINE_BOOTSTRAP_FILE, value: /bootstrap/bootstrap.json}
+            - {name: DRIFTLINE_ENVIRONMENT, value: dev}   # D97: only dev and test may apply a bootstrap file
           volumeMounts:
             - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
       volumes:

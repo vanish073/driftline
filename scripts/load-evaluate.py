@@ -19,6 +19,7 @@ busiest second) and the generator's own CPU, so a busy machine can be attributed
 or something outside both.
 Prints the verdict; exits 0 if sustained, 1 if not, 2 if INVALID.
 """
+import base64
 import json
 import os
 import sys
@@ -158,15 +159,22 @@ def main(argv):
     stats_path = argv[7] if len(argv) > 7 else None
     gen = json.load(open(gen_path, encoding="utf-8"))
 
+    # D98: Prometheus asks for a password; PROMETHEUS_AUTH is user:password (scripts/load-test.sh reads the stack's file)
+    auth = os.environ.get("PROMETHEUS_AUTH")
+    headers = {"Authorization": "Basic " + base64.b64encode(auth.encode()).decode()} if auth else {}
+
+    def get(url):
+        return json.load(urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30))
+
     def query(expr, at):
         url = f"{prom}/api/v1/query?" + urllib.parse.urlencode({"query": expr, "time": at})
-        data = json.load(urllib.request.urlopen(url, timeout=30))["data"]["result"]
+        data = get(url)["data"]["result"]
         return float(data[0]["value"][1]) if data else None
 
     def query_range(expr, frm, to, step=15):
         url = f"{prom}/api/v1/query_range?" + urllib.parse.urlencode(
             {"query": expr, "start": frm, "end": to, "step": step})
-        data = json.load(urllib.request.urlopen(url, timeout=30))["data"]["result"]
+        data = get(url)["data"]["result"]
         return [(int(t), float(v)) for t, v in data[0]["values"]] if data else []
 
     lag = query_range("sum(driftline_consumer_lag_records)", end - WINDOW, end)

@@ -212,7 +212,7 @@ jobs:
   # the committed Gradle lockfiles match the build files, and no locked dependency has a high, critical or unscored
   # advisory (OSV-Scanner).
   security:
-    name: security (gitleaks, lockfiles, OSV-Scanner)
+    name: security (gitleaks, secret files, lockfiles, OSV-Scanner)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -225,6 +225,9 @@ jobs:
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo"
           ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           git --redact --no-banner --exit-code 1 /repo
+
+      - name: No tracked file is a secret by its name (env files, keys, key stores)
+        run: scripts/check-secret-files.sh
 
       - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:

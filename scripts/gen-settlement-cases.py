@@ -310,7 +310,7 @@ write_case(11, "noref_unique_subset_small", """Six candidates; exactly one subse
 # (an earlier version of this case found 38,560). Super-increasing amounts (each above the sum of all smaller ones)
 # make every subset sum distinct, so the expected answer is certain.
 rng = random.Random(1212)
-gross12 = [(2 ** k) * 1000 + k + 1 for k in range(40)]
+gross12 = [2 ** k for k in range(40)]   # the largest, 2^39 paise, is under AmountLimits.MAX_PAYMENT (D93)
 order12 = list(range(40))
 rng.shuffle(order12)
 pays12 = [{"id": f"pay_{k:02d}", "gross_paise": gross12[k], "captured": f"2026-11-13T{8 + i // 4:02d}:{(i % 4) * 15:02d}:00"}
@@ -333,8 +333,9 @@ def mitm_count(vals, target):
 cnt12 = mitm_count([p["gross_paise"] for p in pays12], target12)
 assert cnt12 == 1, ("case 12 must be unique", cnt12)
 write_case(12, "noref_unique_n40_mitm_boundary", """Forty candidates: the largest set meet-in-the-middle takes (2 x 2^20 partial sums, within the
-    20,000,000-operation budget); the dynamic programme would need ~10^16 cells. A fee-free merchant with
-    super-increasing amounts (each above the sum of all smaller ones), so exactly one subset of 20 fits; this was also
+    20,000,000-operation budget); the dynamic programme would need ~10^13 cells. A fee-free merchant with
+    super-increasing amounts (powers of two, 1 paisa to 2^39 paise, each above the sum of all smaller ones; until D93
+    they were 1,000 × 2^k + k + 1, above today's largest accepted amount), so exactly one subset of 20 fits; this was also
     checked by an exact meet-in-the-middle count when the case was generated. With realistic amounts, 40 candidates
     give tens of thousands of fitting subsets, and the answer would rightly be AMBIGUOUS.""",
     {"fees": {"fee_bps": 0, "gst_bps": 0}, "payments": pays12,
@@ -498,14 +499,15 @@ write_case(32, "duplicate_bank_lines_same_amount_same_day", """Two unreferenced 
      "breaks": [{"type": "ORPHAN_SETTLEMENT", "subject": f"{F}:1", "reason": "AMBIGUOUS"},
                 {"type": "ORPHAN_SETTLEMENT", "subject": f"{F}:2", "reason": "AMBIGUOUS"}]})
 
-pays33 = [{"id": "pay_2e18", "gross_paise": 2 * 10**18, "captured": "2026-11-13T09:00:00"},
-          {"id": "pay_3e18", "gross_paise": 3 * 10**18, "captured": "2026-11-13T10:00:00"},
-          {"id": "pay_4e18", "gross_paise": 4 * 10**18, "captured": "2026-11-13T11:00:00"}]
-write_case(33, "near_overflow_amounts", """Fee-free amounts of 2, 3 and 4 × 10^18 paise: their sum (9 × 10^18) is just inside a long (9.22 × 10^18).
-    The line is 7 × 10^18 paise, uniquely 3 + 4. Every sum is exact (Math.addExact); nothing wraps.""",
-    {"fees": {"fee_bps": 0, "gst_bps": 0}, "payments": pays33, "files": [{"date": D, "lines": [{"amount": rupees(7 * 10**18)}]}]},
-    {"lines": {f"{F}:1": {"status": "INFERRED", "pays": ["pay_3e18", "pay_4e18"]}},
-     "balances": {"SUSPENSE": "0.00", "GATEWAY_RECEIVABLE": rupees(2 * 10**18)}})
+pays33 = [{"id": "pay_3e11", "gross_paise": 3 * 10**11, "captured": "2026-11-13T09:00:00"},
+          {"id": "pay_4e11", "gross_paise": 4 * 10**11, "captured": "2026-11-13T10:00:00"},
+          {"id": "pay_1e12", "gross_paise": 10**12, "captured": "2026-11-13T11:00:00"}]
+write_case(33, "largest_accepted_amounts", """Fee-free payments of 3 and 4 × 10^11 paise and one at the largest accepted amount, 10^12 paise
+    (D93: larger amounts are refused at the edge, so the matcher's arithmetic cannot overflow). The line is 1.4 × 10^12
+    paise, uniquely 4 × 10^11 + 10^12. Every sum is exact (Math.addExact).""",
+    {"fees": {"fee_bps": 0, "gst_bps": 0}, "payments": pays33, "files": [{"date": D, "lines": [{"amount": rupees(14 * 10**11)}]}]},
+    {"lines": {f"{F}:1": {"status": "INFERRED", "pays": ["pay_4e11", "pay_1e12"]}},
+     "balances": {"SUSPENSE": "0.00", "GATEWAY_RECEIVABLE": rupees(3 * 10**11)}})
 
 write_case(34, "watermark_gate_not_passed", """The gateway watermark has not passed the window's end plus bound_G (no tick after the first batch),
     so a payment from the window may still be on its way: the line waits (AWAITING_BATCH), held in suspense (a credit,

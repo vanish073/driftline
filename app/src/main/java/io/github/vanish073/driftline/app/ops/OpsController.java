@@ -13,6 +13,7 @@ import io.github.vanish073.driftline.core.breaks.Break;
 import io.github.vanish073.driftline.core.breaks.BreakState;
 import io.github.vanish073.driftline.core.breaks.BreakTransition;
 import io.github.vanish073.driftline.core.breaks.BreakType;
+import io.github.vanish073.driftline.core.event.Sha256;
 import io.github.vanish073.driftline.core.id.IdRules;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.PaymentId;
@@ -30,8 +31,10 @@ import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.StoreUnavailable;
 import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.resolver.ManualAdjustment;
+import io.github.vanish073.driftline.core.resolver.ManualRequests;
 import io.github.vanish073.driftline.core.resolver.ManualResolution;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
+import io.github.vanish073.driftline.store.postgres.CustomerVault;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.wire.json.JsonObject;
 import io.github.vanish073.driftline.wire.json.StrictJson;
@@ -55,6 +58,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -108,9 +112,15 @@ public class OpsController {
     @PostMapping("/v1/merchants/{merchantId}/webhook-secrets/rotate")
     @PreAuthorize("hasAuthority('SCOPE_secrets:write')")
     public ResponseEntity<?> rotateSecret(Authentication auth, @PathVariable String merchantId,
-                                          HttpServletRequest request) throws IOException {
+                                          HttpServletRequest request,
+                                          @RequestHeader(name = IDEMPOTENCY_KEY, required = false) Optional<String> key)
+            throws IOException {
         if (MerchantAccess.boundMerchant(auth).isPresent()) {
             return error(403, "only an ops token may rotate a webhook secret");
+        }
+        Optional<ResponseEntity<?>> badKey = requireKey(key);
+        if (badKey.isPresent()) {
+            return badKey.get();
         }
         MerchantId m;
         try {
@@ -141,26 +151,35 @@ public class OpsController {
             return error(400, "overlap_seconds must be between 60 and 604800");
         }
         Instant now = clock.now();
-        PostgresDirectory.Rotation result;
+        PostgresDirectory.RotationResult result;
         try {
+            // the secret's own hash is part of the request's, so a repeat with another secret is refused, not replayed
+            Sha256 asked = ManualRequests.hash(PostgresDirectory.ROTATE_ACTION, m.value(), kid,
+                    Long.toString(overlap.toSeconds()), Sha256.of(secret).hex());
             result = directory.rotateWebhookSecret(m, kid, cipher.encrypt(secret, MerchantRegistry.context(m, kid)),
-                    now, now.plus(overlap), String.valueOf(auth.getPrincipal()));
+                    now, now.plus(overlap), String.valueOf(auth.getPrincipal()), key.get(), asked);
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");
+        } catch (StoreConflict e) {
+            return error(409, KEY_IN_FLIGHT);
         } finally {
             Arrays.fill(secret, (byte) 0);
         }
-        return switch (result) {
+        return switch (result.status()) {
             case UNKNOWN_MERCHANT -> error(404, "unknown merchant");
             case IN_PROGRESS -> error(409, "a rotation is in progress: two secrets are active until its overlap ends");
             case KID_TAKEN -> error(409, "this key id was used before; choose a new one");
-            case ROTATED -> {
-                refresher.refresh();
+            case KEY_REUSED -> error(409, KEY_REUSED);
+            case ROTATED, REPLAYED -> {
+                if (result.status() == PostgresDirectory.Rotation.ROTATED) {
+                    refresher.refresh();
+                }
                 Map<String, Object> v = new LinkedHashMap<>();
                 v.put("kid", kid);
-                v.put("active_from", now.toString());
-                v.put("previous_secrets_retire_at", now.plus(overlap).toString());
-                yield ResponseEntity.status(201).body(v);
+                v.put("active_from", result.activeFrom().orElseThrow().toString());
+                v.put("previous_secrets_retire_at", result.retireAt().orElseThrow().toString());
+                yield replayed(ResponseEntity.status(201), result.status() == PostgresDirectory.Rotation.REPLAYED)
+                        .body(v);
             }
         };
     }
@@ -172,8 +191,13 @@ public class OpsController {
      */
     @PostMapping("/v1/breaks/{breakId}/resolve")
     @PreAuthorize("hasAuthority('SCOPE_breaks:resolve')")
-    public ResponseEntity<?> resolve(Authentication auth, @PathVariable String breakId, HttpServletRequest request)
+    public ResponseEntity<?> resolve(Authentication auth, @PathVariable String breakId, HttpServletRequest request,
+                                     @RequestHeader(name = IDEMPOTENCY_KEY, required = false) Optional<String> key)
             throws IOException {
+        Optional<ResponseEntity<?>> badKey = requireKey(key);
+        if (badKey.isPresent()) {
+            return badKey.get();
+        }
         Optional<byte[]> body = BoundedBody.read(request, MAX_RESOLVE_BODY);
         if (body.isEmpty()) {
             return error(413, "body larger than " + MAX_RESOLVE_BODY + " bytes");
@@ -189,16 +213,18 @@ public class OpsController {
         ManualResolution.Result result;
         try {
             Instant now = clock.now();
-            result = store.transact("ops-resolve", tx -> ManualResolution.resolve(tx, breakId, bound, actor, note, now));
+            result = store.transact("ops-resolve", tx -> ManualResolution.resolve(tx, breakId, bound, actor, note,
+                    key.get(), now));
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");
-        } catch (StoreConflict | IllegalArgumentException e) {
+        } catch (StoreConflict | IllegalArgumentException e) {   // a concurrent resolution, or a concurrent repeat
             return error(409, "the break changed while it was being resolved; read it again");
         }
         return switch (result) {
             case ManualResolution.NotFound n -> error(404, "no such break");
             case ManualResolution.NotEscalated n -> error(409, "the break is " + n.state()
                     + "; only an ESCALATED break can be resolved by hand");
+            case ManualResolution.KeyReused k -> error(409, KEY_REUSED);
             case ManualResolution.Resolved r -> {
                 Map<String, Object> v = new LinkedHashMap<>();
                 v.put("break_id", r.breakId());
@@ -206,7 +232,7 @@ public class OpsController {
                 v.put("resolved_at", r.at().toString());
                 v.put("compensation", r.compensation().toString());
                 v.put("audit_seq", r.auditSeq());
-                yield ResponseEntity.ok(v);
+                yield replayed(ResponseEntity.ok(), r.replayed()).body(v);
             }
         };
     }
@@ -221,10 +247,15 @@ public class OpsController {
      */
     @PostMapping("/v1/merchants/{merchantId}/ledger/adjustments")
     @PreAuthorize("hasAuthority('SCOPE_ledger:adjust')")
-    public ResponseEntity<?> adjust(Authentication auth, @PathVariable String merchantId, HttpServletRequest request)
+    public ResponseEntity<?> adjust(Authentication auth, @PathVariable String merchantId, HttpServletRequest request,
+                                    @RequestHeader(name = IDEMPOTENCY_KEY, required = false) Optional<String> key)
             throws IOException {
         if (MerchantAccess.boundMerchant(auth).isPresent()) {
             return error(403, "only an ops token may adjust a merchant's books");
+        }
+        Optional<ResponseEntity<?>> badKey = requireKey(key);
+        if (badKey.isPresent()) {
+            return badKey.get();
         }
         MerchantId m;
         try {
@@ -259,14 +290,18 @@ public class OpsController {
         ManualAdjustment.Result result;
         try {
             Instant now = clock.now();
-            result = store.transact("ops-adjust", tx -> ManualAdjustment.post(tx, m, actor, note, breakId, amounts, now));
+            result = store.transact("ops-adjust", tx -> ManualAdjustment.post(tx, m, actor, note, breakId, amounts,
+                    key.get(), now));
         } catch (StoreUnavailable e) {
             return error(503, "the store is unavailable; retry");
-        } catch (IllegalArgumentException e) {   // LedgerRejected: the entries break a double-entry rule
+        } catch (StoreConflict e) {   // a concurrent repeat of this request committed first
+            return error(409, KEY_IN_FLIGHT);
+        } catch (IllegalArgumentException e) {   // LedgerRejected, or an amount above AmountLimits (D93)
             return error(400, e.getMessage());
         }
         return switch (result) {
             case ManualAdjustment.BreakNotFound n -> error(404, "no such break for this merchant");
+            case ManualAdjustment.KeyReused k -> error(409, KEY_REUSED);
             case ManualAdjustment.Posted posted -> {
                 Map<String, Object> v = new LinkedHashMap<>();
                 v.put("audit_seq", posted.auditSeq());
@@ -274,7 +309,7 @@ public class OpsController {
                 Map<String, String> entries = new LinkedHashMap<>();
                 posted.txn().entries().forEach(en -> entries.put(en.account().name(), en.amount().toString()));
                 v.put("entries", entries);
-                yield ResponseEntity.status(201).body(v);
+                yield replayed(ResponseEntity.status(201), posted.replayed()).body(v);
             }
         };
     }
@@ -366,6 +401,96 @@ public class OpsController {
         v.put("phone", c.phone().map(PiiMasking::maskPhone).orElse(null));
         v.put("email", c.email().map(PiiMasking::maskAddress).orElse(null));
         return v;
+    }
+
+    /**
+     * {@code POST /v1/merchants/{m}/customers/erase} with {@code {"payment_id":"pay_1","note":"…"}} or
+     * {@code {"vpa":"name@bank","note":"…"}} (Shift 11, D99): erases the stored contact of one payment, or of every
+     * payment of the merchant whose customer used that VPA (found through the blind index, at most 1000), leaving
+     * tombstones so the contacts are never stored again. Scope {@code pii:erase}, ops tokens only, with an
+     * {@code Idempotency-Key}; the audit row lists payment ids and a count, never a contact. 200 with what was erased;
+     * 404 for an unknown merchant; 503 for a VPA while personal data storage is off.
+     */
+    @PostMapping("/v1/merchants/{merchantId}/customers/erase")
+    @PreAuthorize("hasAuthority('SCOPE_pii:erase')")
+    public ResponseEntity<?> eraseCustomer(Authentication auth, @PathVariable String merchantId,
+                                           HttpServletRequest request,
+                                           @RequestHeader(name = IDEMPOTENCY_KEY, required = false)
+                                           Optional<String> key) throws IOException {
+        if (MerchantAccess.boundMerchant(auth).isPresent()) {
+            return error(403, "only an ops token may erase customers' contacts");
+        }
+        Optional<ResponseEntity<?>> badKey = requireKey(key);
+        if (badKey.isPresent()) {
+            return badKey.get();
+        }
+        MerchantId m;
+        try {
+            m = MerchantId.of(merchantId);
+        } catch (IllegalArgumentException e) {
+            return error(404, "unknown merchant");
+        }
+        if (merchants.context(m).isEmpty()) {
+            return error(404, "unknown merchant");
+        }
+        Optional<byte[]> body = BoundedBody.read(request, MAX_RESOLVE_BODY);
+        if (body.isEmpty()) {
+            return error(413, "body larger than " + MAX_RESOLVE_BODY + " bytes");
+        }
+        String note;
+        Optional<String> payment;
+        Optional<String> vpa;
+        try {
+            JsonObject root = StrictJson.parse(body.get());
+            note = ManualResolution.requireNote(root.string("note"));
+            payment = Optional.ofNullable(root.optionalString("payment_id"));
+            vpa = Optional.ofNullable(root.optionalString("vpa"));
+            payment.ifPresent(PaymentId::of);
+        } catch (IllegalArgumentException e) {
+            return error(400, e.getMessage() == null ? "malformed erasure" : e.getMessage());
+        }
+        if (payment.isPresent() == vpa.isPresent()) {
+            return error(400, "name exactly one of payment_id and vpa");
+        }
+        List<PaymentId> targets;
+        Sha256 asked;
+        try {
+            if (payment.isPresent()) {
+                targets = List.of(PaymentId.of(payment.get()));
+                asked = ManualRequests.hash(CustomerVault.ERASE_ACTION, m.value(), "payment", payment.get(), note);
+            } else {
+                if (!contacts.enabled()) {
+                    return error(503, "personal data storage is not configured");
+                }
+                Optional<String> index = contacts.vpaIndex(m, vpa.get());
+                if (index.isEmpty()) {
+                    return error(400, "vpa is not a UPI address");
+                }
+                targets = contacts.vault().paymentsByVpa(m, index.get());
+                asked = ManualRequests.hash(CustomerVault.ERASE_ACTION, m.value(), "vpa", index.get(), note);
+            }
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        }
+        CustomerVault.Erasure result;
+        try {
+            result = contacts.vault().erase(m, targets, clock.now(), String.valueOf(auth.getPrincipal()), note,
+                    key.get(), asked);
+        } catch (StoreUnavailable e) {
+            return error(503, "the store is unavailable; retry");
+        } catch (StoreConflict e) {
+            return error(409, KEY_IN_FLIGHT);
+        }
+        return switch (result) {
+            case CustomerVault.ErasureKeyReused r -> error(409, KEY_REUSED);
+            case CustomerVault.ErasureReplayed r -> replayed(ResponseEntity.ok(), true).body(Map.of("erased", r.count()));
+            case CustomerVault.Erased e -> {
+                Map<String, Object> v = new LinkedHashMap<>();
+                v.put("erased", e.paymentIds().size());
+                v.put("payment_ids", e.paymentIds().stream().map(PaymentId::value).toList());
+                yield ResponseEntity.ok(v);
+            }
+        };
     }
 
     /**
@@ -670,7 +795,30 @@ public class OpsController {
         return v;
     }
 
-    private static ResponseEntity<Map<String, Object>> error(int status, String reason) {
+    /** The header every manual POST requires (D94); the same name as ingest's (§10.3). */
+    static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+    static final String KEY_REUSED = "this Idempotency-Key was used before for a different request";
+    static final String KEY_IN_FLIGHT = "a request with this Idempotency-Key committed a moment ago; retry it";
+
+    /** 400 unless a well-formed {@code Idempotency-Key} was sent ({@code IdRules.requireExternalKey}, D92, D94). */
+    static Optional<ResponseEntity<?>> requireKey(Optional<String> key) {
+        if (key.isEmpty()) {
+            return Optional.of(error(400, "the " + IDEMPOTENCY_KEY + " header is required"));
+        }
+        try {
+            IdRules.requireExternalKey(IDEMPOTENCY_KEY, key.get());
+            return Optional.empty();
+        } catch (IllegalArgumentException e) {
+            return Optional.of(error(400, e.getMessage()));
+        }
+    }
+
+    /** A repeat's answer is the first one's, marked so the caller can tell (D94). */
+    static ResponseEntity.BodyBuilder replayed(ResponseEntity.BodyBuilder b, boolean replayed) {
+        return replayed ? b.header("Idempotent-Replayed", "true") : b;
+    }
+
+    static ResponseEntity<Map<String, Object>> error(int status, String reason) {
         return ResponseEntity.status(status).body(Map.of("error", reason));
     }
 }

@@ -53,4 +53,22 @@ public final class IdRules {
         }
         return value;
     }
+
+    /**
+     * A key that arrives from outside (the {@code Idempotency-Key} header, a webhook's event id): 1 to 255 characters
+     * from {@code [A-Za-z0-9._:-]}. Stricter than {@link #requireKey}, so markup, quotes, spaces and control characters
+     * never become an event key that the ops API and the logs later show (Shift 11, D92). UUIDs and prefixed ids fit.
+     */
+    public static String requireExternalKey(String field, String value) {
+        requireKey(field, value);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '.' || c == '_' || c == ':' || c == '-';
+            if (!allowed) {
+                throw new IllegalArgumentException(field + " has a character outside [A-Za-z0-9._:-] at index " + i);
+            }
+        }
+        return value;
+    }
 }

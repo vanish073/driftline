@@ -22,24 +22,63 @@ images:
 generatorOptions:
   labels:
     driftline.io/stage: infra
+# Each key is a file name, which the app reads as the setting of that name (D97: secrets are files, not variables).
 secretGenerator:
   - name: driftline-secrets
-    envs: [.dev/driftline-secrets.env]
+    files:
+      - .dev/secrets/app/spring.datasource.password
+      - .dev/secrets/app/driftline.secrets.keys.k1
+      - .dev/secrets/app/driftline.pii.keys.p1
+      - .dev/secrets/app/driftline.pii.index-key
+      - .dev/secrets/app/driftline.dispatcher.service-token
+      - .dev/secrets/app/driftline.kafka.password
   - name: driftline-migrator
-    envs: [.dev/driftline-migrator.env]
+    files:
+      - .dev/secrets/migrate/spring.datasource.username
+      - .dev/secrets/migrate/spring.datasource.password
   - name: driftline-infra
-    envs: [.dev/driftline-infra.env]
+    files:
+      - .dev/secrets/postgres/postgres-password
+      - .dev/secrets/postgres/app-password
+      - .dev/secrets/postgres/server.crt
+      - .dev/secrets/postgres/server.key
+  # D100: TLS material, generated per cluster by scripts/kind-smoke.sh (scripts/lib/gen-tls.sh)
+  - name: driftline-tls
+    files:
+      - .dev/secrets/tls-app/ca.crt
+      - .dev/secrets/tls-app/server.crt
+      - .dev/secrets/tls-app/server.key
+      - .dev/secrets/tls-app/truststore.p12
+  - name: driftline-tls-client
+    files:
+      - .dev/secrets/tls-client/ca.crt
+      - .dev/secrets/tls-client/truststore.p12
+  - name: driftline-sandbox-tls
+    files:
+      - .dev/secrets/tls-sandbox/server.p12
+      - .dev/secrets/tls-sandbox/keystore-password
+      - .dev/secrets/tls-sandbox/truststore.p12
+  - name: driftline-kafka
+    files:
+      - .dev/secrets/kafka/ca.crt
+      - .dev/secrets/kafka/kafka.p12
+      - .dev/secrets/kafka/keystore-password
+      - .dev/secrets/kafka/key-password
+      - .dev/secrets/kafka/jaas.conf
+      - .dev/secrets/kafka/client.properties
   - name: driftline-bootstrap
     files: [.dev/bootstrap.json]
 configMapGenerator:
   - name: postgres-init
     files: [01-roles.sh=../../../compose/postgres-init.sh]
+  - name: postgres-hba
+    files: [pg_hba.conf=../../../compose/pg_hba.conf]
   - name: driftline-config
     behavior: merge
     literals:
-      - DRIFTLINE_DISPATCHER_GATEWAY_URL=http://sandbox:8085/gateway
-      - DRIFTLINE_DISPATCHER_MERCHANT_URL=http://sandbox:8085/merchant
-      - DRIFTLINE_DISPATCHER_OPS_URL=http://sandbox:8085/ops
+      - DRIFTLINE_DISPATCHER_GATEWAY_URL=https://sandbox:8085/gateway
+      - DRIFTLINE_DISPATCHER_MERCHANT_URL=https://sandbox:8085/merchant
+      - DRIFTLINE_DISPATCHER_OPS_URL=https://sandbox:8085/ops
 patches:
   - path: bootstrap-patch.yaml
     target:

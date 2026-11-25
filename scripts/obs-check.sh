@@ -5,28 +5,51 @@
 #   2. Grafana has provisioned the Driftline dashboard and its Prometheus datasource is healthy;
 #   3. Jaeger holds a trace in which dispatcher.call descends, parent by parent, from resolver.decide, matcher.detect and
 #      ingest.webhook (printed with the agent's spans around them, such as its HTTP client span under the call).
-# Used by `OBS=1 scripts/e2e.sh`. Reads the Grafana admin password from deploy/compose/.dev/env.
+#   4. nothing is open (D98): Grafana and Prometheus refuse requests without their passwords, and Jaeger's UI is not
+#      published on the host at all (its traces are read through Grafana's Jaeger datasource, behind Grafana's login).
+# Used by `OBS=1 scripts/e2e.sh`. Reads the passwords from the stack's secrets in deploy/compose/.dev/secrets.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROM=http://127.0.0.1:9090
 GRAFANA=http://127.0.0.1:3000
-JAEGER=http://127.0.0.1:16686
+SECRETS=deploy/compose/.dev/secrets
+PROM_AUTH="prometheus:$(cat "$SECRETS/grafana/prometheus-password")"
+GRAFANA_AUTH="admin:$(cat "$SECRETS/grafana/admin-password")"
+prom() {
+    curl -fsS -u "$PROM_AUTH" "$@"
+}
+grafana() {
+    curl -fsS -u "$GRAFANA_AUTH" "$@"
+}
 failed=0
 fail() {
     echo "obs-check: FAIL: $*" >&2
     failed=1
 }
+status_of() {
+    curl -s -o /dev/null -w '%{http_code}' "$@" || true
+}
+if [ "$(status_of "$PROM/api/v1/targets")" = 401 ] && [ "$(status_of "$GRAFANA/api/dashboards/uid/driftline")" = 401 ]; then
+    echo "obs-check: Prometheus and Grafana refuse requests without their passwords (401)"
+else
+    fail "Prometheus or Grafana answered without a password"
+fi
+if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:16686/ 2> /dev/null; then
+    fail "Jaeger's UI, which has no login, is reachable on the host"
+else
+    echo "obs-check: Jaeger's UI is not published on the host"
+fi
 
 # Prometheus scrapes every 15 s: wait until the metrics are there.
 for _ in $(seq 1 30); do
-    if curl -fsS "$PROM/api/v1/query?query=driftline_events_consumed_total" | grep -q '"value"'; then
+    if prom "$PROM/api/v1/query?query=driftline_events_consumed_total" | grep -q '"value"'; then
         break
     fi
     sleep 2
 done
-python3 -I - "$(curl -fsS "$PROM/api/v1/targets")" "$(curl -fsS "$PROM/api/v1/rules")" \
-        "$(curl -fsS "$PROM/api/v1/query?query=driftline_events_consumed_total")" <<'PY' || failed=1
+python3 -I - "$(prom "$PROM/api/v1/targets")" "$(prom "$PROM/api/v1/rules")" \
+        "$(prom "$PROM/api/v1/query?query=driftline_events_consumed_total")" <<'PY' || failed=1
 import json, sys
 targets = [t for t in json.loads(sys.argv[1])["data"]["activeTargets"] if t["labels"].get("job") == "driftline"]
 rules = [r["name"] for g in json.loads(sys.argv[2])["data"]["groups"] for r in g["rules"]]
@@ -53,14 +76,13 @@ else:
 sys.exit(0 if ok else 1)
 PY
 
-password=$(grep '^GRAFANA_ADMIN_PASSWORD=' deploy/compose/.dev/env | cut -d= -f2-)
-if dashboard=$(curl -fsS "$GRAFANA/api/dashboards/uid/driftline"); then
+if dashboard=$(grafana "$GRAFANA/api/dashboards/uid/driftline"); then
     panels=$(printf '%s' "$dashboard" | python3 -I -c 'import json, sys; print(len(json.load(sys.stdin)["dashboard"]["panels"]))')
     echo "obs-check: Grafana serves the Driftline dashboard ($panels panels)"
 else
     fail "Grafana has no dashboard with uid driftline"
 fi
-if curl -fsS -u "admin:$password" "$GRAFANA/api/datasources/uid/prometheus/health" | grep -q '"status":"OK"'; then
+if grafana "$GRAFANA/api/datasources/uid/prometheus/health" | grep -q '"status":"OK"'; then
     echo "obs-check: Grafana's Prometheus datasource is healthy"
 else
     fail "Grafana's Prometheus datasource is not healthy"
@@ -97,14 +119,15 @@ PY
 }
 
 # The collector batches spans: wait up to a minute for a complete chain. Jaeger 2 serves its query API under /api/v3,
-# with OTLP JSON results; parentage is checked span by span, not only that the four names share a trace.
+# with OTLP JSON results, read here through Grafana's datasource proxy (D98); parentage is checked span by span, not
+# only that the four names share a trace.
 chain=""
 traces=$(mktemp)
 trap 'rm -f "$traces"' EXIT
 for _ in $(seq 1 30); do
     since=$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)
     upto=$(date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%SZ)
-    curl -fsS -o "$traces" "$JAEGER/api/v3/traces?query.service_name=driftline&query.operation_name=dispatcher.call&query.start_time_min=$since&query.start_time_max=$upto&query.search_depth=100" || true
+    grafana -o "$traces" "$GRAFANA/api/datasources/proxy/uid/jaeger/api/v3/traces?query.service_name=driftline&query.operation_name=dispatcher.call&query.start_time_min=$since&query.start_time_max=$upto&query.search_depth=100" || true
     chain=$(chain_of "$traces")
     if [ -n "$chain" ]; then
         break

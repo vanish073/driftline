@@ -41,6 +41,9 @@ public final class DevBootstrap {
 
     public static final String FORMAT = "driftline-bootstrap-v1";
     public static final String SECRET_KID = "bootstrap";
+    /** Bootstrap tokens are for short-lived dev and test stacks; like every token, they expire (D95). */
+    static final java.time.Duration TOKEN_LIFETIME = java.time.Duration.ofDays(30);
+    static final String CREATED_BY = "bootstrap";
     private static final Logger LOG = LoggerFactory.getLogger(DevBootstrap.class);
 
     private DevBootstrap() {
@@ -70,12 +73,15 @@ public final class DevBootstrap {
             directory.addWebhookSecret(new PostgresDirectory.WebhookSecret(id, SECRET_KID,
                     cipher.encrypt(secret, MerchantRegistry.context(id, SECRET_KID)), now, Optional.empty()));
             directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(m, "token")), Optional.of(id),
-                    List.of("events:write", "settlement:write", "breaks:read"), now, Optional.empty()));
+                    List.of("events:write", "settlement:write", "breaks:read"), now, now.plus(TOKEN_LIFETIME),
+                    Optional.empty()), CREATED_BY);
         }
         directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "ops_token")), Optional.empty(),
-                List.of("breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write"), now, Optional.empty()));
+                List.of("breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write", "tokens:write", "pii:erase"),
+                now,
+                now.plus(TOKEN_LIFETIME), Optional.empty()), CREATED_BY);
         directory.addToken(new PostgresDirectory.ApiToken(tokenHash(text(root, "service_token")), Optional.empty(),
-                List.of("observations:write"), now, Optional.empty()));
+                List.of("observations:write"), now, now.plus(TOKEN_LIFETIME), Optional.empty()), CREATED_BY);
         LOG.info("bootstrap file applied: {} merchants onboarded now, {} listed", onboarded, root.path("merchants").size());
     }
 

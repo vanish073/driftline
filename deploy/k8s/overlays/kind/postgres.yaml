@@ -28,13 +28,22 @@ spec:
       containers:
         - name: postgres
           image: postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07
-          args: ["-c", "shared_buffers=32MB", "-c", "max_connections=60"]
+          # D100: TLS only (pg_hba.conf has hostssl lines, no host lines); the key is copied to be owned by postgres
+          # with mode 0600, as PostgreSQL requires, before the image's entrypoint starts the server.
+          command: ["bash", "-c", "install -d -o postgres -g postgres -m 700 /var/lib/postgresql/tls
+            && install -o postgres -g postgres -m 600 /run/secrets/postgres/server.key /var/lib/postgresql/tls/server.key
+            && install -o postgres -g postgres -m 644 /run/secrets/postgres/server.crt /var/lib/postgresql/tls/server.crt
+            && exec docker-entrypoint.sh \"$@\"", "--"]
+          args: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=60", "-c", "ssl=on",
+                 "-c", "ssl_cert_file=/var/lib/postgresql/tls/server.crt",
+                 "-c", "ssl_key_file=/var/lib/postgresql/tls/server.key",
+                 "-c", "ssl_min_protocol_version=TLSv1.2", "-c", "hba_file=/etc/postgresql/hba/pg_hba.conf"]
           env:
             - {name: POSTGRES_DB, value: driftline}
             - {name: POSTGRES_USER, value: postgres}
             - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
-          envFrom:
-            - secretRef: {name: driftline-infra}
+            # D97: passwords as files (postgres-init.sh reads app-password)
+            - {name: POSTGRES_PASSWORD_FILE, value: /run/secrets/postgres/postgres-password}
           ports:
             - {name: postgres, containerPort: 5432}
           readinessProbe:
@@ -47,7 +56,13 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
             - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: secrets, mountPath: /run/secrets/postgres, readOnly: true}
+            - {name: hba, mountPath: /etc/postgresql/hba, readOnly: true}
       volumes:
+        - name: hba
+          configMap: {name: postgres-hba}
+        - name: secrets
+          secret: {secretName: driftline-infra, defaultMode: 0444}
         - {name: data, emptyDir: {}}
         - name: init
           configMap: {name: postgres-init}

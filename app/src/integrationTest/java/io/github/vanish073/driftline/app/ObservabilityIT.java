@@ -111,7 +111,8 @@ class ObservabilityIT {
                 "--driftline.kafka.session-timeout=6s",
                 "--driftline.secrets.active-kid=it",
                 "--driftline.secrets.keys.it=" + Base64.getEncoder().encodeToString(new byte[32]),
-                "--driftline.bootstrap-file=" + bootstrap,
+                "--driftline.bootstrap-file=" + bootstrap, "--driftline.environment=test",
+                "--driftline.metrics.token=test-only-metrics-token",
                 "--driftline.instance-id=obs",
                 "--driftline.resolver.metrics-interval=1s",
                 // port 9 refuses at once: the call fails fast and is retried after its lease
@@ -166,13 +167,15 @@ class ObservabilityIT {
             URI prometheus = URI.create(management + "/actuator/prometheus");
             try {
                 await("every §13 metric is exported", Duration.ofSeconds(30), () -> {
-                    String body = send(HttpRequest.newBuilder(prometheus).GET()).body();
+                    String body = send(HttpRequest.newBuilder(prometheus)
+                            .header("Authorization", "Bearer test-only-metrics-token").GET()).body();
                     return required.stream().allMatch(body::contains);
                 });
             } catch (AssertionError timedOut) {
                 // the assertion below names each metric still missing
             }
-            String scrape = send(HttpRequest.newBuilder(prometheus).GET()).body();
+            String scrape = send(HttpRequest.newBuilder(prometheus)
+                    .header("Authorization", "Bearer test-only-metrics-token").GET()).body();
             assertThat(required).allSatisfy(m -> assertThat(scrape).as(m).contains(m));
         }
     }

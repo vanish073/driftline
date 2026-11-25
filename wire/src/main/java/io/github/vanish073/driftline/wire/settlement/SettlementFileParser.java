@@ -118,8 +118,12 @@ public final class SettlementFileParser {
         Optional<String> reference = f.get(6).isEmpty() ? Optional.empty() : Optional.of(token(record, "reference", f.get(6)));
         Optional<String> batchId = f.get(7).isEmpty() ? Optional.empty() : Optional.of(token(record, "batch_id", f.get(7)));
         String narration = narration(record, f.get(8));
-        return new SettlementLinePayload(fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference, batchId,
-                narration);
+        try {
+            return new SettlementLinePayload(fileId, lineNo, settlementDate, valueDate, amount, fee, tax, reference,
+                    batchId, narration);
+        } catch (IllegalArgumentException e) {   // e.g. an amount above AmountLimits (D93); messages name the field
+            throw new MalformedSettlementFile(record, e.getMessage());
+        }
     }
 
     // ---- lexical layer --------------------------------------------------------------------------------------

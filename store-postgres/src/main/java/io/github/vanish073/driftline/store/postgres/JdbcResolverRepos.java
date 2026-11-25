@@ -297,5 +297,25 @@ final class JdbcResolverRepos {
                 throw SqlErrors.translate("the audit log", e);
             }
         }
+
+        @Override
+        public Optional<Row> byRequestKey(String action, String subject, String requestKey) {
+            try (PreparedStatement ps = tx.connection().prepareStatement(SELECT
+                    + " WHERE action = ? AND subject = ? AND details->>'" + REQUEST_KEY + "' = ?")) {
+                ps.setString(1, action);
+                ps.setString(2, subject);
+                ps.setString(3, requestKey);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.empty();
+                    }
+                    Entry e = new Entry(instant(rs, "at"), rs.getString("actor"), rs.getString("action"),
+                            rs.getString("subject"), map(rs, "details"));
+                    return Optional.of(new Row(rs.getLong("seq"), e, rs.getString("prev_hash"), rs.getString("hash")));
+                }
+            } catch (SQLException e) {
+                throw SqlErrors.translate("the audit log by request key", e);
+            }
+        }
     }
 }

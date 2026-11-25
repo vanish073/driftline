@@ -58,7 +58,7 @@ traffic() {
     local gap=$((DURATION / (ROUNDS * ${#TYPES[@]})))
     for round in $(seq 1 "$ROUNDS"); do
         for type in "${TYPES[@]}"; do
-            if ! curl -fsS -X POST "http://127.0.0.1:8085/v1/inject?type=$type&count=3" > /dev/null; then
+            if ! curl -fsS --cacert "$DEV/secrets/ca.crt" -X POST "https://127.0.0.1:8085/v1/inject?type=$type&count=3" > /dev/null; then
                 echo "chaos: inject $type (round $round) failed" >&2
                 return 1
             fi
@@ -95,7 +95,7 @@ echo "chaos: traffic done; killed the matcher ${kills[matcher]} times and the di
 
 status=0
 docker compose -f deploy/compose/compose.yaml --env-file "$DEV/env" --profile verify run --rm verify || status=$?
-stats=$(curl -fsS http://127.0.0.1:8085/v1/stats)
+stats=$(curl -fsS --cacert "$DEV/secrets/ca.crt" https://127.0.0.1:8085/v1/stats)
 echo "chaos: sandbox $stats"
 refunds=$(python3 -I -c 'import json, sys; print(json.loads(sys.argv[1])["refunds"])' "$stats")
 if [ "$status" -eq 0 ] && { [ "$refunds" -eq 0 ] || [ "${kills[matcher]}" -eq 0 ] || [ "${kills[dispatcher]}" -eq 0 ]; }; then

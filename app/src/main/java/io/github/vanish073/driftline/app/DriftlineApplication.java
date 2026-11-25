@@ -22,6 +22,8 @@ public class DriftlineApplication {
     public static SpringApplication application(String role) {
         SpringApplication app = new SpringApplication(DriftlineApplication.class);
         app.setAdditionalProfiles(Roles.profiles(role).toArray(String[]::new));
+        app.addListeners(new io.github.vanish073.driftline.app.config.SecretSourceGuard(),   // D97
+                new io.github.vanish073.driftline.app.config.TransportGuard(role));             // D100
         return app;
     }
 }

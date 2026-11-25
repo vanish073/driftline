@@ -1195,6 +1195,11 @@ public final class InMemoryStore implements Store {
             @Override
             public Row append(Entry entry) {
                 requireOpen();
+                String requestKey = entry.details().get(REQUEST_KEY);
+                if (requestKey != null && byRequestKey(entry.action(), entry.subject(), requestKey).isPresent()) {
+                    // as PostgreSQL's unique index on (action, subject, request_key) does (D94)
+                    throw new StoreConflict("an audit row of " + entry.action() + " already carries this request key");
+                }
                 List<Row> all = auditView.where(r -> true);
                 String prev = all.isEmpty() ? GENESIS : all.get(all.size() - 1).hash();
                 long seq = all.size() + 1L;
@@ -1207,6 +1212,13 @@ public final class InMemoryStore implements Store {
             public List<Row> rows() {
                 requireOpen();
                 return List.copyOf(auditView.where(r -> true));
+            }
+
+            @Override
+            public Optional<Row> byRequestKey(String action, String subject, String requestKey) {
+                requireOpen();
+                return auditView.where(r -> r.entry().action().equals(action) && r.entry().subject().equals(subject)
+                        && requestKey.equals(r.entry().details().get(REQUEST_KEY))).stream().findFirst();
             }
         }
 

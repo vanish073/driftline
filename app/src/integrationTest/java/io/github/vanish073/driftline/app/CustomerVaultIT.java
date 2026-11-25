@@ -107,7 +107,7 @@ class CustomerVaultIT {
                 "--driftline.pii.active-kid=p1",
                 "--driftline.pii.keys.p1=" + key(5),
                 "--driftline.pii.index-key=" + key(6),
-                "--driftline.bootstrap-file=" + bootstrap,
+                "--driftline.bootstrap-file=" + bootstrap, "--driftline.environment=test",
                 "--driftline.instance-id=vault",
                 "--server.port=0",
                 "--management.server.port=0")) {

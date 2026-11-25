@@ -32,14 +32,17 @@ spec:
       containers:
         - name: sandbox
           image: driftline-sandbox
-          args: ["serve", "--bootstrap", "/bootstrap/bootstrap.json", "--driftline", "http://ingest:8080",
-                 "--port", "8085"]
-          env:
-            - {name: JAVA_OPTS, value: "-Xmx128m -XX:+UseSerialGC"}
+          # D100: HTTPS both ways; the JVM's key store is the sandbox's certificate, its truststore the cluster's CA
+          command: ["bash", "-c", "export JAVA_OPTS=\"-Xmx128m -XX:+UseSerialGC -Djavax.net.ssl.keyStore=/run/tls/server.p12
+            -Djavax.net.ssl.keyStoreType=PKCS12 -Djavax.net.ssl.keyStorePassword=$$(cat /run/tls/keystore-password)
+            -Djavax.net.ssl.trustStore=/run/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit
+            -Djavax.net.ssl.trustStoreType=PKCS12\" && exec /app/bin/sandbox \"$@\"", "--"]
+          args: ["serve", "--bootstrap", "/bootstrap/bootstrap.json", "--driftline", "https://ingest:8080",
+                 "--port", "8085", "--tls", "true"]
           ports:
             - {name: http, containerPort: 8085}
           readinessProbe:
-            httpGet: {path: /health, port: http}
+            httpGet: {path: /health, port: http, scheme: HTTPS}
             periodSeconds: 3
             failureThreshold: 100
           resources:
@@ -52,7 +55,10 @@ spec:
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
             - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+            - {name: tls, mountPath: /run/tls, readOnly: true}
       volumes:
+        - name: tls
+          secret: {secretName: driftline-sandbox-tls, defaultMode: 0444}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 32Mi}
         - name: bootstrap

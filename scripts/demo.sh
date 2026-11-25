@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A live demo of Driftline on Docker Compose: the `core` and `obs` profiles with tracing on, left running so you can
-# drive it and look around (the Grafana board, Jaeger traces, the ops API). Unlike scripts/e2e.sh, nothing is torn
+# drive it and look around (the Grafana board and its traces, the ops API). Unlike scripts/e2e.sh, nothing is torn
 # down until you say so.
 #
 #   scripts/demo.sh up                  build, generate throwaway secrets, start the stack, print where to look
@@ -25,8 +25,8 @@ cd "$(dirname "$0")/.."
 DEV=deploy/compose/.dev
 COMPOSE=(docker compose -f deploy/compose/compose.yaml --env-file "$DEV/env" --profile core --profile obs)
 TOUR_TYPES=(DEBITED_NO_ORDER LATE_SUCCESS DUPLICATE_CAPTURE SHORT_SETTLEMENT MISSING_SETTLEMENT ORPHAN_SETTLEMENT)
-API=http://127.0.0.1:8080
-SANDBOX=http://127.0.0.1:8085
+API=https://127.0.0.1:8080        # D100: HTTPS, signed by the run's CA (in $DEV/secrets/ca.crt)
+SANDBOX=https://127.0.0.1:8085
 # shellcheck source=lib/compose-stack.sh
 . scripts/lib/compose-stack.sh
 
@@ -44,11 +44,12 @@ need_running() {
 urls() {
     cat <<EOF
 
-Driftline is running. Open these in a browser:
+Driftline is running. Open these in a browser (every one asks for a login; nothing is open, D98):
 
-  Grafana board (live metrics)   http://127.0.0.1:3000      (view-only without logging in)
-  Jaeger (traces)                http://127.0.0.1:16686     (service: driftline)
-  Prometheus (raw metrics)       http://127.0.0.1:9090
+  Grafana board and traces       http://127.0.0.1:3000      user admin, password in $DEV/secrets/grafana/admin-password
+                                 (traces: Explore, data source Jaeger, service driftline)
+  Prometheus (raw metrics)       http://127.0.0.1:9090      user prometheus, password in
+                                                            $DEV/secrets/grafana/prometheus-password
   Driftline API                  $API   (needs a token; use the commands below)
 
 Then, in this terminal:
@@ -65,12 +66,12 @@ EOF
 ops_get() {
     local token
     token=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["ops_token"])' "$DEV/bootstrap.json")
-    curl -fsS -H @- "$API$1" <<< "Authorization: Bearer $token"
+    curl -fsS --cacert "$DEV/secrets/ca.crt" -H @- "$API$1" <<< "Authorization: Bearer $token"
 }
 
 inject() {
     local type=$1 count=${2:-3}
-    curl -sS -X POST "$SANDBOX/v1/inject?type=$type&count=$count" | python3 -I -c '
+    curl -sS --cacert "$DEV/secrets/ca.crt" -X POST "$SANDBOX/v1/inject?type=$type&count=$count" | python3 -I -c '
 import json, sys
 r = json.load(sys.stdin)
 if "error" in r:

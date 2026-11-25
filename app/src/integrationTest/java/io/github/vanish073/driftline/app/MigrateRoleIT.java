@@ -14,12 +14,13 @@ class MigrateRoleIT {
         try (ConfigurableApplicationContext ctx = DriftlineApplication.application("migrate").run(
                 "--spring.datasource.url=" + url,
                 "--spring.datasource.username=" + Containers.POSTGRES.getUsername(),
-                "--spring.datasource.password=" + Containers.POSTGRES.getPassword())) {
+                "--spring.datasource.password=" + Containers.POSTGRES.getPassword(),
+                "--driftline.environment=test")) {   // plaintext Testcontainers; production refuses it (D100)
             assertThat(ctx.getEnvironment().getProperty("local.server.port")).as("no web server").isNull();
             assertThat(ctx.getBeanNamesForType(io.github.vanish073.driftline.core.port.Store.class)).isEmpty();
         }
         assertThat(Containers.count(url, "SELECT count(*) FROM flyway_schema_history WHERE success"))
-                .as("V1 to V11").isEqualTo(11);
+                .as("V1 to V14").isEqualTo(14);
         assertThat(Containers.count(url, "SELECT count(*) FROM information_schema.columns WHERE table_name = "
                 + "'settlement_lines' AND column_name IN ('candidate_hash', 'witnesses')")).as("V6").isEqualTo(2);
         assertThat(Containers.count(url, "SELECT count(*) FROM information_schema.tables WHERE table_name = 'outbox'"))

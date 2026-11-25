@@ -5,6 +5,7 @@ import io.github.vanish073.driftline.core.id.IdRules;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.port.AuditRepo;
+import io.github.vanish073.driftline.core.resolver.ManualRequests;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
 import java.sql.Array;
 import java.sql.Connection;
@@ -37,7 +38,7 @@ public final class PostgresDirectory {
 
     /** The scopes a token may carry (§10.1). */
     public static final List<String> SCOPES = List.of("events:write", "settlement:write", "observations:write",
-            "breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write");
+            "breaks:read", "breaks:resolve", "ledger:adjust", "secrets:write", "tokens:write", "pii:erase");
 
     /** One webhook secret as stored: {@code secretEnc} is ciphertext; the caller encrypts and decrypts (D48). */
     public record WebhookSecret(MerchantId merchantId, String kid, byte[] secretEnc, Instant activeFrom,
@@ -73,24 +74,55 @@ public final class PostgresDirectory {
         }
     }
 
-    /** One API token as stored: only its SHA-256. An empty merchant is an ops token. */
+    /**
+     * One API token as stored: only its SHA-256. An empty merchant is an ops token. Every token expires (D95); one
+     * authenticates only before both its expiry and its revocation.
+     */
     public record ApiToken(Sha256 tokenSha256, Optional<MerchantId> merchantId, List<String> scopes, Instant createdAt,
-                           Optional<Instant> revokedAt) {
+                           Instant expiresAt, Optional<Instant> revokedAt) {
         public ApiToken {
             Objects.requireNonNull(tokenSha256, "tokenSha256");
             Objects.requireNonNull(merchantId, "merchantId");
             scopes = List.copyOf(scopes);
-            if (scopes.isEmpty() || !SCOPES.containsAll(scopes)) {
-                throw new IllegalArgumentException("scopes must be a non-empty subset of " + SCOPES);
+            if (scopes.isEmpty() || !SCOPES.containsAll(scopes) || scopes.stream().distinct().count() != scopes.size()) {
+                throw new IllegalArgumentException("scopes must be a non-empty subset of " + SCOPES + ", each once");
             }
             Objects.requireNonNull(createdAt, "createdAt");
+            Objects.requireNonNull(expiresAt, "expiresAt");
+            if (!expiresAt.isAfter(createdAt)) {
+                throw new IllegalArgumentException("a token must expire after it is created");
+            }
             Objects.requireNonNull(revokedAt, "revokedAt");
         }
 
+        /** The token's public name (D95): {@code tok_} and the first 16 hex digits of its SHA-256. */
+        public String tokenId() {
+            return tokenId(tokenSha256);
+        }
+
+        public static String tokenId(Sha256 tokenSha256) {
+            return "tok_" + tokenSha256.hex().substring(0, 16);
+        }
+
         public boolean activeAt(Instant now) {
-            return revokedAt.isEmpty() || now.isBefore(revokedAt.get());
+            return now.isBefore(expiresAt) && (revokedAt.isEmpty() || now.isBefore(revokedAt.get()));
         }
     }
+
+    /** A token as the token API lists it (D95): never the token or its full hash. */
+    public record TokenInfo(String tokenId, Optional<MerchantId> merchantId, List<String> scopes, Instant createdAt,
+                            Instant expiresAt, Optional<Instant> revokedAt, String createdBy) {
+        public TokenInfo {
+            scopes = List.copyOf(scopes);
+        }
+    }
+
+    /** The audit action of creating a token through the API (D95); its subject is {@link #TOKENS_SUBJECT}. */
+    public static final String TOKEN_CREATE_ACTION = "TOKEN_CREATE";
+    /** The audit action of revoking a token through the API (D95); its subject is the token id. */
+    public static final String TOKEN_REVOKE_ACTION = "TOKEN_REVOKE";
+    /** The audit subject of every token creation, so a request key is unique across them (D94). */
+    public static final String TOKENS_SUBJECT = "api_tokens";
 
     private final DataSource dataSource;
 
@@ -223,6 +255,9 @@ public final class PostgresDirectory {
         });
     }
 
+    /** The audit action of a webhook secret rotation (D76). */
+    public static final String ROTATE_ACTION = "WEBHOOK_SECRET_ROTATE";
+
     /** What a rotation did (D76). */
     public enum Rotation {
         /** The new secret is active now; the ones it replaces stay valid until the overlap ends. */
@@ -231,7 +266,24 @@ public final class PostgresDirectory {
         IN_PROGRESS,
         /** The merchant already has (or had) a secret with this key id. */
         KID_TAKEN,
-        UNKNOWN_MERCHANT
+        UNKNOWN_MERCHANT,
+        /** The same request was made before with this {@code Idempotency-Key}; nothing changed now (D94). */
+        REPLAYED,
+        /** The {@code Idempotency-Key} was used before on this merchant for a different rotation (D94). */
+        KEY_REUSED
+    }
+
+    /** A rotation's outcome; for ROTATED and REPLAYED, when the new secret became active and the old ones retire. */
+    public record RotationResult(Rotation status, Optional<Instant> activeFrom, Optional<Instant> retireAt) {
+        public RotationResult {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(activeFrom, "activeFrom");
+            Objects.requireNonNull(retireAt, "retireAt");
+        }
+
+        static RotationResult of(Rotation status) {
+            return new RotationResult(status, Optional.empty(), Optional.empty());
+        }
     }
 
     /**
@@ -242,9 +294,11 @@ public final class PostgresDirectory {
      * is the caller's (D48), already encrypted.
      *
      * @param retireAt after {@code now}: the overlap in which the gateway may still sign with the old secret
+     * @param requestKey the caller's {@code Idempotency-Key}, and {@code request} the hash of what was asked (D94): a
+     *                   repeat changes nothing and gets the first times back; the key with another request is refused
      */
-    public Rotation rotateWebhookSecret(MerchantId merchantId, String kid, byte[] secretEnc, Instant now,
-                                        Instant retireAt, String actor) {
+    public RotationResult rotateWebhookSecret(MerchantId merchantId, String kid, byte[] secretEnc, Instant now,
+                                              Instant retireAt, String actor, String requestKey, Sha256 request) {
         IdRules.requireToken("kid", kid);
         if (!retireAt.isAfter(now)) {
             throw new IllegalArgumentException("the old secret must stay valid for a while after the rotation");
@@ -258,18 +312,31 @@ public final class PostgresDirectory {
                 ps.setString(1, merchantId.value());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
-                        return Rotation.UNKNOWN_MERCHANT;
+                        return RotationResult.of(Rotation.UNKNOWN_MERCHANT);
                     }
+                }
+            }
+            JdbcResolverRepos.Audit audit = new JdbcResolverRepos.Audit(new JdbcTx(c, BalanceStrategy.APPEND_SNAPSHOT));
+            switch (ManualRequests.prior(audit, ROTATE_ACTION, merchantId.value(), requestKey, request)) {
+                case ManualRequests.Different d -> {
+                    return RotationResult.of(Rotation.KEY_REUSED);
+                }
+                case ManualRequests.Same same -> {
+                    return new RotationResult(Rotation.REPLAYED, Optional.of(same.row().entry().at()),
+                            Optional.of(Instant.parse(same.row().entry().details().get("retire_at"))));
+                }
+                case ManualRequests.None none -> {
+                    // rotate below
                 }
             }
             OffsetDateTime at = ts(now);
             List<WebhookSecret> active = secrets(c, "WHERE merchant_id = ? AND active_from <= ? AND (active_to IS NULL "
                     + "OR active_to > ?)", merchantId.value(), at, at);
             if (active.size() >= 2) {
-                return Rotation.IN_PROGRESS;
+                return RotationResult.of(Rotation.IN_PROGRESS);
             }
             if (!secrets(c, "WHERE merchant_id = ? AND kid = ?", merchantId.value(), kid).isEmpty()) {
-                return Rotation.KID_TAKEN;
+                return RotationResult.of(Rotation.KID_TAKEN);
             }
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE merchant_webhook_secrets SET active_to = ?
@@ -296,9 +363,10 @@ public final class PostgresDirectory {
             details.put("new_kid", kid);
             details.put("retired_kids", active.stream().map(WebhookSecret::kid).collect(Collectors.joining(",")));
             details.put("retire_at", retireAt.toString());
-            new JdbcResolverRepos.Audit(new JdbcTx(c, BalanceStrategy.APPEND_SNAPSHOT)).append(AuditRepo.Entry.of(now,
-                    actor, "WEBHOOK_SECRET_ROTATE", merchantId.value(), details));
-            return Rotation.ROTATED;
+            ManualRequests.stamp(details, requestKey, request);
+            AuditRepo.Row row = audit.append(AuditRepo.Entry.of(now, actor, ROTATE_ACTION, merchantId.value(), details));
+            // the stored instant (microseconds), so a replay's answer is the same as this one (D94)
+            return new RotationResult(Rotation.ROTATED, Optional.of(row.entry().at()), Optional.of(retireAt));
         });
     }
 
@@ -333,28 +401,190 @@ public final class PostgresDirectory {
      * @return true if inserted now, false if it already existed for the same merchant with the same scopes
      * @throws IllegalStateException if a token with this hash exists for another merchant or with other scopes
      */
-    public boolean addToken(ApiToken token) {
+    public boolean addToken(ApiToken token, String createdBy) {
         return inTransaction("api token", c -> {
-            try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO api_tokens (token_sha256, merchant_id, scopes, created_at, revoked_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT (token_sha256) DO NOTHING
-                    """)) {
-                ps.setString(1, token.tokenSha256().hex());
-                ps.setString(2, token.merchantId().map(MerchantId::value).orElse(null));
-                Array scopes = c.createArrayOf("text", token.scopes().toArray(new String[0]));
-                ps.setArray(3, scopes);
-                ps.setObject(4, ts(token.createdAt()));
-                ps.setObject(5, token.revokedAt().map(PostgresDirectory::ts).orElse(null));
-                if (ps.executeUpdate() == 1) {
-                    return true;
-                }
+            if (insertToken(c, token, createdBy, true)) {
+                return true;
             }
             ApiToken stored = token(c, token.tokenSha256()).orElseThrow();
             if (!stored.merchantId().equals(token.merchantId()) || !stored.scopes().equals(token.scopes())) {
                 throw new IllegalStateException("a different token with the same hash already exists");
             }
             return false;
+        });
+    }
+
+    private static boolean insertToken(Connection c, ApiToken token, String createdBy, boolean ifAbsent)
+            throws SQLException {
+        IdRules.requireKey("createdBy", createdBy);
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO api_tokens (token_sha256, token_id, merchant_id, scopes, created_at, expires_at, revoked_at,
+                                        created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """ + (ifAbsent ? " ON CONFLICT (token_sha256) DO NOTHING" : ""))) {
+            ps.setString(1, token.tokenSha256().hex());
+            ps.setString(2, token.tokenId());
+            ps.setString(3, token.merchantId().map(MerchantId::value).orElse(null));
+            Array scopes = c.createArrayOf("text", token.scopes().toArray(new String[0]));
+            ps.setArray(4, scopes);
+            ps.setObject(5, ts(token.createdAt()));
+            ps.setObject(6, ts(token.expiresAt()));
+            ps.setObject(7, token.revokedAt().map(PostgresDirectory::ts).orElse(null));
+            ps.setString(8, createdBy);
+            return ps.executeUpdate() == 1;
+        }
+    }
+
+    /** What creating a token through the API did (D95). */
+    public sealed interface TokenCreation {
+    }
+
+    /** Created now. */
+    public record TokenCreated(String tokenId) implements TokenCreation {
+    }
+
+    /** An earlier request with this key created {@code tokenId}; nothing changed now. */
+    public record TokenAlreadyCreated(String tokenId) implements TokenCreation {
+    }
+
+    /** The key was used for a different request. */
+    public record TokenKeyReused() implements TokenCreation {
+    }
+
+    /** The merchant to bind the token to does not exist. */
+    public record TokenUnknownMerchant() implements TokenCreation {
+    }
+
+    /**
+     * Stores a new token and its audit row ({@code TOKEN_CREATE}; never the token) in one transaction (D95). The caller
+     * checked the scopes and the lifetime; this checks the merchant and the request key (D94).
+     */
+    public TokenCreation createToken(ApiToken token, String actor, String note, String requestKey, Sha256 request) {
+        return inTransaction("create api token", c -> {
+            JdbcResolverRepos.Audit audit = new JdbcResolverRepos.Audit(new JdbcTx(c, BalanceStrategy.APPEND_SNAPSHOT));
+            switch (ManualRequests.prior(audit, TOKEN_CREATE_ACTION, TOKENS_SUBJECT, requestKey, request)) {
+                case ManualRequests.Different d -> {
+                    return new TokenKeyReused();
+                }
+                case ManualRequests.Same same -> {
+                    return new TokenAlreadyCreated(same.row().entry().details().get("token_id"));
+                }
+                case ManualRequests.None none -> {
+                    // create below
+                }
+            }
+            if (token.merchantId().isPresent()) {
+                try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM merchants WHERE merchant_id = ?")) {
+                    ps.setString(1, token.merchantId().get().value());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            return new TokenUnknownMerchant();
+                        }
+                    }
+                }
+            }
+            insertToken(c, token, actor, false);
+            TreeMap<String, String> details = new TreeMap<>();
+            details.put("token_id", token.tokenId());
+            details.put("merchant_id", token.merchantId().map(MerchantId::value).orElse(""));
+            details.put("scopes", String.join(",", token.scopes()));
+            details.put("expires_at", token.expiresAt().toString());
+            details.put("note", note);
+            ManualRequests.stamp(details, requestKey, request);
+            audit.append(AuditRepo.Entry.of(token.createdAt(), actor, TOKEN_CREATE_ACTION, TOKENS_SUBJECT, details));
+            return new TokenCreated(token.tokenId());
+        });
+    }
+
+    /** What revoking a token through the API did (D95). */
+    public enum Revocation {
+        REVOKED,
+        /** An earlier request with this key revoked it; nothing changed now. */
+        REPLAYED,
+        KEY_REUSED,
+        /** No token has this id. */
+        NOT_FOUND,
+        /** The token has a scope the caller does not: a token may revoke only tokens no stronger than itself. */
+        FORBIDDEN,
+        ALREADY_REVOKED
+    }
+
+    /** A revocation's outcome; for REVOKED and REPLAYED, when the token stopped working. */
+    public record RevocationResult(Revocation status, Optional<Instant> revokedAt) {
+    }
+
+    /**
+     * Revokes a token from {@code now} on, with its audit row ({@code TOKEN_REVOKE}), in one transaction (D95). The
+     * filter looks tokens up on every request, so the revocation takes effect at once.
+     *
+     * @param callerScopes the scopes of the token asking: it may revoke only a token whose scopes it holds all of
+     */
+    public RevocationResult revokeToken(String tokenId, List<String> callerScopes, Instant now, String actor,
+                                        String note, String requestKey, Sha256 request) {
+        return inTransaction("revoke api token", c -> {
+            JdbcResolverRepos.Audit audit = new JdbcResolverRepos.Audit(new JdbcTx(c, BalanceStrategy.APPEND_SNAPSHOT));
+            switch (ManualRequests.prior(audit, TOKEN_REVOKE_ACTION, tokenId, requestKey, request)) {
+                case ManualRequests.Different d -> {
+                    return new RevocationResult(Revocation.KEY_REUSED, Optional.empty());
+                }
+                case ManualRequests.Same same -> {
+                    return new RevocationResult(Revocation.REPLAYED, Optional.of(same.row().entry().at()));
+                }
+                case ManualRequests.None none -> {
+                    // revoke below
+                }
+            }
+            List<String> scopes;
+            boolean revoked;
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT scopes, revoked_at FROM api_tokens WHERE token_id = ? FOR UPDATE")) {
+                ps.setString(1, tokenId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return new RevocationResult(Revocation.NOT_FOUND, Optional.empty());
+                    }
+                    scopes = List.of((String[]) rs.getArray(1).getArray());
+                    revoked = rs.getObject(2) != null;
+                }
+            }
+            if (!callerScopes.containsAll(scopes)) {
+                return new RevocationResult(Revocation.FORBIDDEN, Optional.empty());
+            }
+            if (revoked) {
+                return new RevocationResult(Revocation.ALREADY_REVOKED, Optional.empty());
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE api_tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL")) {
+                ps.setObject(1, ts(now));
+                ps.setString(2, tokenId);
+                ps.executeUpdate();
+            }
+            TreeMap<String, String> details = new TreeMap<>();
+            details.put("token_id", tokenId);
+            details.put("note", note);
+            ManualRequests.stamp(details, requestKey, request);
+            AuditRepo.Row row = audit.append(AuditRepo.Entry.of(now, actor, TOKEN_REVOKE_ACTION, tokenId, details));
+            return new RevocationResult(Revocation.REVOKED, Optional.of(row.entry().at()));
+        });
+    }
+
+    /** Every token, newest first, for the token API's list (D95). */
+    public List<TokenInfo> tokens() {
+        return inTransaction("list api tokens", c -> {
+            try (PreparedStatement ps = c.prepareStatement("""
+                    SELECT token_id, merchant_id, scopes, created_at, expires_at, revoked_at, created_by FROM api_tokens
+                     ORDER BY created_at DESC, token_id COLLATE "C"
+                    """);
+                 ResultSet rs = ps.executeQuery()) {
+                List<TokenInfo> out = new ArrayList<>();
+                while (rs.next()) {
+                    out.add(new TokenInfo(rs.getString(1), Optional.ofNullable(rs.getString(2)).map(MerchantId::of),
+                            List.of((String[]) rs.getArray(3).getArray()),
+                            rs.getObject(4, OffsetDateTime.class).toInstant(),
+                            rs.getObject(5, OffsetDateTime.class).toInstant(), optionalInstant(rs, 6), rs.getString(7)));
+                }
+                return List.copyOf(out);
+            }
         });
     }
 
@@ -365,7 +595,7 @@ public final class PostgresDirectory {
 
     private static Optional<ApiToken> token(Connection c, Sha256 sha) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
-                SELECT merchant_id, scopes, created_at, revoked_at FROM api_tokens WHERE token_sha256 = ?
+                SELECT merchant_id, scopes, created_at, expires_at, revoked_at FROM api_tokens WHERE token_sha256 = ?
                 """)) {
             ps.setString(1, sha.hex());
             try (ResultSet rs = ps.executeQuery()) {
@@ -375,7 +605,8 @@ public final class PostgresDirectory {
                 String merchant = rs.getString(1);
                 String[] scopes = (String[]) rs.getArray(2).getArray();
                 return Optional.of(new ApiToken(sha, Optional.ofNullable(merchant).map(MerchantId::of),
-                        List.of(scopes), rs.getObject(3, OffsetDateTime.class).toInstant(), optionalInstant(rs, 4)));
+                        List.of(scopes), rs.getObject(3, OffsetDateTime.class).toInstant(),
+                        rs.getObject(4, OffsetDateTime.class).toInstant(), optionalInstant(rs, 5)));
             }
         }
     }

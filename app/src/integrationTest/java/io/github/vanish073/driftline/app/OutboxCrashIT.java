@@ -104,7 +104,7 @@ class OutboxCrashIT {
                 "--driftline.kafka.session-timeout=6s",
                 "--driftline.secrets.active-kid=it",
                 "--driftline.secrets.keys.it=" + Base64.getEncoder().encodeToString(new byte[32]),
-                "--driftline.bootstrap-file=" + file,
+                "--driftline.bootstrap-file=" + file, "--driftline.environment=test",
                 "--driftline.instance-id=outbox-crash",
                 "--server.port=0",
                 "--management.server.port=0");

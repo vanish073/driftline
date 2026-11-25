@@ -22,11 +22,33 @@ bin/
 .DS_Store
 Thumbs.db
 
-# Secrets never belong in the repo
+# Secrets never belong in the repo (CI `security` also fails on any tracked file named like one:
+# scripts/check-secret-files.sh, Shift 11)
 .env
+.env.*
+!.env.example
 *.pem
 *.key
+*.crt
+*.csr
+*.der
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.kdbx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+.netrc
+.pgpass
+credentials*.json
 
 # Compose dev files: generated secrets and logs (scripts/e2e.sh)
 deploy/compose/.dev/
 deploy/k8s/overlays/kind/.dev/
+
+# Python bytecode (python3 -m py_compile)
+__pycache__/

@@ -4,7 +4,11 @@
 
 Waits (at most 90 s) until at least MIN_COUNT elements match SELECTOR and the page's text contains every TEXT, then
 5 s more for late panels; exits non-zero if that never happens, so a blank or half-loaded page is never saved.
+If SHOT_AUTH is set (user:password), every request carries it as basic authentication: Grafana requires a login (D98)
+and answers a page request without one with a redirect, not a challenge, so the header is sent up front.
 """
+import base64
+import os
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -13,7 +17,9 @@ url, out, width, height, selector, minimum = sys.argv[1:7]
 texts = [t for t in (sys.argv[7] if len(sys.argv) > 7 else "").split(",") if t]
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    page = browser.new_page(viewport={"width": int(width), "height": int(height)})
+    auth = os.environ.get("SHOT_AUTH")
+    headers = {"Authorization": "Basic " + base64.b64encode(auth.encode()).decode()} if auth else {}
+    page = browser.new_page(viewport={"width": int(width), "height": int(height)}, extra_http_headers=headers)
     page.goto(url, wait_until="domcontentloaded", timeout=90_000)
     page.wait_for_function(
         "([s, n, texts]) => document.querySelectorAll(s).length >= n"

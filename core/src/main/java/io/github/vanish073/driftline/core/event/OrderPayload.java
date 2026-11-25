@@ -2,6 +2,7 @@ package io.github.vanish073.driftline.core.event;
 
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.money.AmountLimits;
 import io.github.vanish073.driftline.core.money.Money;
 import java.time.Instant;
 import java.util.Objects;
@@ -27,5 +28,6 @@ public record OrderPayload(OrderId orderId, long version, Money amount, Instant 
         if (!amount.isPositive()) {
             throw new IllegalArgumentException("an order amount must be positive");
         }
+        AmountLimits.requirePayment("an order amount", amount);
     }
 }

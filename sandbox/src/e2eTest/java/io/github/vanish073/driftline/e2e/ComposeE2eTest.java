@@ -289,14 +289,20 @@ class ComposeE2eTest {
         String path = "/v1/breaks/" + escalated.get("break_id") + "/resolve";
         HttpRequest.BodyPublisher note = HttpRequest.BodyPublishers
                 .ofString("{\"note\":\"e2e: checked with the bank by hand\"}");
-        HttpResponse<String> merchant = Api.send(Api.driftline(path)
+        String key = "e2e-resolve-" + escalated.get("break_id");   // D94: every manual POST carries one
+        HttpResponse<String> merchant = Api.send(Api.driftline(path).header("Idempotency-Key", key)
                 .header("Authorization", "Bearer " + Api.POOL.merchants().get(0).token()).POST(note));
         assertThat(merchant.statusCode()).as("a merchant token has no breaks:resolve").isEqualTo(403);
-        HttpResponse<String> done = Api.send(Api.driftline(path)
+        HttpResponse<String> done = Api.send(Api.driftline(path).header("Idempotency-Key", key)
                 .header("Authorization", "Bearer " + Api.POOL.opsToken()).POST(note));
         assertThat(done.statusCode()).as(done.body()).isEqualTo(200);
         assertThat(done.body()).contains("\"state\":\"RESOLVED_MANUAL\"").contains("\"audit_seq\":");
-        HttpResponse<String> again = Api.send(Api.driftline(path)
+        HttpResponse<String> repeat = Api.send(Api.driftline(path).header("Idempotency-Key", key)
+                .header("Authorization", "Bearer " + Api.POOL.opsToken()).POST(note));
+        assertThat(repeat.statusCode()).as("the same request again: the first answer, nothing done").isEqualTo(200);
+        assertThat(repeat.headers().firstValue("Idempotent-Replayed")).contains("true");
+        assertThat(repeat.body()).isEqualTo(done.body());
+        HttpResponse<String> again = Api.send(Api.driftline(path).header("Idempotency-Key", key + "-2")
                 .header("Authorization", "Bearer " + Api.POOL.opsToken()).POST(note));
         assertThat(again.statusCode()).as("a closed break cannot be closed again").isEqualTo(409);
         System.out.printf("resolved by hand: %s %s/%s -> %s%n", escalated.get("type"), escalated.get("merchant_id"),
