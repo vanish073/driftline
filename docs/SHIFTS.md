@@ -18,7 +18,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 8 | Resolver, outbox, dispatcher, crash tests | **M4 done** | **DONE** (2026-11-16); **M4 DONE** |
 | 9 | Observability, security, Kubernetes | M5 (part 1) | **DONE** (2026-11-17) |
 | 10 | Load test, hot-account benchmark, results, README | **M5 done** | **DONE** (2026-11-24); **M5 DONE** |
-| 11 | Security hardening: the backend's known weaknesses | after v1.0 | TODO |
+| 11 | Security hardening: the backend's known weaknesses | after v1.0 | **DONE** (2026-11-25) |
 
 ## Human tasks (only you can do these)
 
@@ -366,7 +366,7 @@ surfaces (token creation, the settlement-file upload), or are recorded as not ap
 - CI green on the final commit, including the kind smoke test and a nightly campaign.
 
 **Exit:** no README security weakness remains that this shift could fix; what remains is stated precisely.
-**Carry-over:** (to be filled in at the end of the shift)
+**Carry-over:** Build list done; the design details are D92–D100 (attack-surface tests, headers, outside keys and the secret-file check D92; amount limits D93; repeat-safe manual actions D94; the token lifecycle D95; request limits and lockout D96; environments, the bootstrap guard and secrets as files D97; logins for metrics and monitoring D98; contact retention and erasure D99; TLS on every link D100), with `docs/results/security-shift11.md` walking through the usual attacks one by one. Two real bugs were found and fixed on the way, neither simulator-found (so no BUGS.md row): an amount near the 64-bit limit could overflow the matcher's fee arithmetic and halt a partition on every replay (D93), and a manual ledger adjustment retried after a timeout posted twice (D94). Prove: `./gradlew check` green locally (995 tests); CI on the final code: run 45632070796 (all 14 jobs, including the Compose e2e with the obs profile, TLS and logins, and the chaos run with TLS) and run 45632070638 (the kind smoke test with TLS: NetworkPolicies, e2e 8 of 8, verify CLEAN; its first attempt failed on the known OpenTelemetry-agent download mismatch and passed on a re-run). The first kind run found one deployment bug, fixed before merging: the migrate Job read the HTTPS server's settings and crashed (they are now in a config map only the services read). Local Compose runs lost tests only to the laptop sleeping mid-run (gaps of 18 and 26 minutes in the logs). Open, and stated in the README and the threat model: no KMS (keys are mounted files), services authenticate each other with tokens and passwords inside TLS rather than client certificates and Kafka has no ACLs, rate limits are per process, and the dev-only obs profile's links among the monitoring tools are plaintext on the Compose network.
 
 ---
 
