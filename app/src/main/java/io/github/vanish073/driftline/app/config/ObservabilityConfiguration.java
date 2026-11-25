@@ -74,6 +74,16 @@ public class ObservabilityConfiguration {
         return new DispatcherObserver(registry, tracing, traces);
     }
 
+    /** Customers' contacts are deleted after the retention period by the resolver role, one place per deployment (D99). */
+    @Bean
+    @Profile(Roles.RESOLVER)
+    io.github.vanish073.driftline.app.pii.ContactRetention contactRetention(
+            io.github.vanish073.driftline.store.postgres.CustomerVault vault, Clock clock,
+            DriftlineProperties properties) {
+        return new io.github.vanish073.driftline.app.pii.ContactRetention(vault, clock, properties.pii().retention(),
+                properties.pii().purgeInterval());
+    }
+
     /** The books' metrics are read by the resolver role, so each deployment reports them from one place (D78). */
     @Bean
     @Profile(Roles.RESOLVER)

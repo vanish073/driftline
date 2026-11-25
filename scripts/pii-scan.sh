@@ -44,7 +44,8 @@ fi
 report "the Compose logs" "$LOG"
 
 if "${COMPOSE[@]}" exec -T -e KAFKA_HEAP_OPTS=-Xmx64m kafka /opt/kafka/bin/kafka-console-consumer.sh \
-        --bootstrap-server localhost:9092 --topic driftline.events.v1 --from-beginning --timeout-ms 15000 \
+        --bootstrap-server kafka:9092 --consumer.config /etc/kafka/secrets/client.properties \
+        --topic driftline.events.v1 --from-beginning --timeout-ms 15000 \
         > "$work/kafka.txt" 2> "$work/kafka.err"; then
     :
 fi

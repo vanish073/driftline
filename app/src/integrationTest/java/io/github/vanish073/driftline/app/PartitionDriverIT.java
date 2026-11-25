@@ -111,7 +111,7 @@ class PartitionDriverIT {
     static DriftlineProperties.Kafka kafka() {
         return new DriftlineProperties.Kafka(Containers.KAFKA.getBootstrapServers(), "unused", PARTITIONS, "unused", 50,
                 Duration.ofMillis(100), Duration.ofSeconds(6), Duration.ofSeconds(300), Duration.ofSeconds(10),
-                Duration.ofSeconds(60));
+                Duration.ofSeconds(60), "PLAINTEXT", null, null, null);
     }
 
     /** Merchant ids are shared across tests, so each test's orders get their own ids. */
@@ -155,7 +155,7 @@ class PartitionDriverIT {
                                    Map<String, String> overrides, Duration reacquireAfter) {
         Properties props = KafkaClients.consumer(new DriftlineProperties.Kafka(Containers.KAFKA.getBootstrapServers(),
                 topic, PARTITIONS, group, 50, Duration.ofMillis(100), Duration.ofSeconds(6), Duration.ofSeconds(300),
-                Duration.ofSeconds(10), Duration.ofSeconds(60)), name);
+                Duration.ofSeconds(10), Duration.ofSeconds(60), "PLAINTEXT", null, null, null), name);
         props.putAll(overrides);
         PartitionDriver d = new PartitionDriver(store, new Matcher(DIRECTORY), new SystemClock(),
                 () -> new KafkaConsumer<>(props), topic, name, crash, listener, Duration.ofMillis(100),

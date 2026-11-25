@@ -68,6 +68,16 @@ public class CoreConfiguration {
         return new PostgresStore(dataSource, properties.store().balanceStrategy());
     }
 
+    /** The API's request limits (D96); the security filter chain applies them when this bean exists. */
+    @Bean
+    io.github.vanish073.driftline.app.security.RateLimiter rateLimiter(DriftlineProperties properties) {
+        DriftlineProperties.RateLimit r = properties.rateLimit();
+        return new io.github.vanish073.driftline.app.security.RateLimiter(
+                new io.github.vanish073.driftline.app.security.RateLimiter.Limits(r.enabled(), r.maxFailures(),
+                        r.failureWindow(), r.lockout(), r.requestsPerSecond(), r.burst(), r.maxTracked()),
+                System::nanoTime);
+    }
+
     @Bean
     PostgresDirectory postgresDirectory(DataSource dataSource) {
         return new PostgresDirectory(dataSource);
@@ -111,6 +121,15 @@ public class CoreConfiguration {
     @Bean
     MerchantRegistry merchantRegistry(PostgresDirectory directory, SecretCipher cipher, Clock clock,
                                       DriftlineProperties properties) {
+        if (!DriftlineProperties.ENVIRONMENTS.contains(properties.environment())) {
+            throw new IllegalStateException("driftline.environment must be one of " + DriftlineProperties.ENVIRONMENTS);
+        }
+        if (properties.bootstrap().isPresent() && !properties.devOrTest()) {
+            // D97: the file creates merchants and tokens from plain text; a production deployment must refuse it
+            throw new IllegalStateException("driftline.bootstrap-file is for dev and test stacks only, and this one says "
+                    + "driftline.environment=" + properties.environment() + "; onboard merchants and create tokens "
+                    + "through the API instead");
+        }
         properties.bootstrap().ifPresent(file -> DevBootstrap.apply(file, directory, cipher, clock.now()));
         MerchantRegistry registry = MerchantRegistry.load(directory, cipher, clock.now());
         LOG.info("serving {} merchants", registry.merchants().size());

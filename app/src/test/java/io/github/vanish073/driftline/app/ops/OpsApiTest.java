@@ -33,6 +33,11 @@ import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.id.OrderId;
 import io.github.vanish073.driftline.core.id.PaymentId;
 import io.github.vanish073.driftline.core.ledger.LedgerTxn;
+import io.github.vanish073.driftline.core.ledger.AccountCode;
+import io.github.vanish073.driftline.core.ledger.PostingRules;
+import io.github.vanish073.driftline.core.resolver.ManualResolution;
+import io.github.vanish073.driftline.core.resolver.ManualAdjustment;
+import io.github.vanish073.driftline.core.resolver.ManualRequests;
 import io.github.vanish073.driftline.core.ledger.PostResult;
 import io.github.vanish073.driftline.core.matcher.MerchantTerms;
 import io.github.vanish073.driftline.core.money.Money;
@@ -49,6 +54,7 @@ import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.port.Tx;
 import io.github.vanish073.driftline.core.port.TxBody;
 import io.github.vanish073.driftline.core.settlement.FeeSchedule;
+import io.github.vanish073.driftline.store.postgres.CustomerVault;
 import io.github.vanish073.driftline.store.postgres.PostgresDirectory;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
@@ -78,6 +84,12 @@ import org.springframework.test.web.servlet.MockMvc;
 class OpsApiTest {
 
     static final Instant NOW = Instant.parse("2026-11-15T10:00:00Z");
+    static final String KEY = "test-request-1";
+
+    /** A manual POST with its required Idempotency-Key (D94). */
+    static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder manual(String path) {
+        return post(path).header("Idempotency-Key", KEY);
+    }
     static final MerchantId A = MerchantId.of("m_a");
     static final MerchantId B = MerchantId.of("m_b");
     static final Break BREAK_A = Break.detected(A, BreakType.DUPLICATE_CAPTURE, "pay_2", NOW, Map.of("kept", "pay_1"));
@@ -158,7 +170,7 @@ class OpsApiTest {
     void token(String token, Optional<MerchantId> merchant, List<String> scopes) {
         Sha256 hash = DevBootstrap.tokenHash(token);
         when(directory.token(hash)).thenReturn(Optional.of(new PostgresDirectory.ApiToken(hash, merchant,
-                scopes, NOW.minusSeconds(60), Optional.empty())));
+                scopes, NOW.minusSeconds(60), NOW.plusSeconds(86_400), Optional.empty())));
     }
 
     @Test
@@ -286,7 +298,7 @@ class OpsApiTest {
     @Test
     void anOpsTokenResolvesAnEscalatedBreakByHandWithAnAuditRowNamingTheToken() throws Exception {
         resolvable();
-        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"bank confirmed by phone\"}")
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"bank confirmed by phone\"}")
                         .header("Authorization", "Bearer test-token-ops-resolver"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.break_id").value(ESCALATED_B.breakId()))
@@ -304,10 +316,10 @@ class OpsApiTest {
     @Test
     void resolvingNeedsTheResolveScopeAndAMerchantTokenSeesOnlyItsOwnBreaks() throws Exception {
         resolvable();
-        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"x\"}")
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"x\"}")
                         .header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"x\"}")
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"x\"}")
                         .header("Authorization", "Bearer test-token-a-resolver"))
                 .andExpect(status().isNotFound());
         verify(tx.breaks(), never()).transition(any(), anyString(), any(), any(), anyString());
@@ -316,15 +328,15 @@ class OpsApiTest {
     @Test
     void aBreakThatIsNotEscalatedIs409AndAMissingNote400() throws Exception {
         resolvable();
-        mvc.perform(post("/v1/breaks/" + BREAK_A.breakId() + "/resolve").content("{\"note\":\"x\"}")
+        mvc.perform(manual("/v1/breaks/" + BREAK_A.breakId() + "/resolve").content("{\"note\":\"x\"}")
                         .header("Authorization", "Bearer test-token-ops-resolver"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value(
                         "the break is DETECTED; only an ESCALATED break can be resolved by hand"));
-        mvc.perform(post(ESCALATED_PATH).content("{}")
+        mvc.perform(manual(ESCALATED_PATH).content("{}")
                         .header("Authorization", "Bearer test-token-ops-resolver"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post(ESCALATED_PATH).content("{\"note\":\"   \"}")
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"   \"}")
                         .header("Authorization", "Bearer test-token-ops-resolver"))
                 .andExpect(status().isBadRequest());
         verify(tx.breaks(), never()).transition(eq(B), anyString(), any(), any(), anyString());
@@ -355,7 +367,7 @@ class OpsApiTest {
     @Test
     void anOpsTokenPostsABalancedAdjustmentUnderItsAuditRow() throws Exception {
         LedgerRepo ledger = adjustable();
-        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops-adjuster"))
+        mvc.perform(manual(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops-adjuster"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.audit_seq").value(4))
                 .andExpect(jsonPath("$.cause").value("MANUAL_ADJUSTMENT:4"))
@@ -370,9 +382,9 @@ class OpsApiTest {
     @Test
     void adjustingNeedsTheLedgerScopeAndAnOpsToken() throws Exception {
         LedgerRepo ledger = adjustable();
-        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-a-adjuster"))
+        mvc.perform(manual(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-a-adjuster"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops"))
+        mvc.perform(manual(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops"))
                 .andExpect(status().isForbidden());
         verify(ledger, never()).post(any());
     }
@@ -381,16 +393,16 @@ class OpsApiTest {
     void anUnbalancedOrMalformedAdjustmentIs400AndAnUnknownMerchant404() throws Exception {
         LedgerRepo ledger = adjustable();
         String ops = "Bearer test-token-ops-adjuster";
-        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+        mvc.perform(manual(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
                         + "\"entries\":{\"SETTLEMENT_DIFFERENCES\":\"12.34\",\"BANK\":\"-12.00\"}}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+        mvc.perform(manual(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
                         + "\"entries\":{\"PETTY_CASH\":\"1.00\",\"BANK\":\"-1.00\"}}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
+        mvc.perform(manual(ADJUST_A).header("Authorization", ops).content("{\"note\":\"x\","
                         + "\"entries\":{\"SUSPENSE\":100,\"BANK\":\"-1.00\"}}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post("/v1/merchants/m_nobody/ledger/adjustments").header("Authorization", ops).content(BALANCED))
+        mvc.perform(manual("/v1/merchants/m_nobody/ledger/adjustments").header("Authorization", ops).content(BALANCED))
                 .andExpect(status().isNotFound());
         verify(ledger, never()).post(any());
     }
@@ -398,13 +410,24 @@ class OpsApiTest {
     // ---- webhook secret rotation (§10.2, §14, D76) ----------------------------------------------------------------
 
     static final String ROTATE_A = "/v1/merchants/m_a/webhook-secrets/rotate";
+
+    /** Matches any rotation call (for stubbing). */
+    PostgresDirectory.RotationResult rotateAny() {
+        return directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString(), anyString(), any());
+    }
+
+    static PostgresDirectory.RotationResult rotation(PostgresDirectory.Rotation status) {
+        boolean done = status == PostgresDirectory.Rotation.ROTATED || status == PostgresDirectory.Rotation.REPLAYED;
+        return new PostgresDirectory.RotationResult(status, done ? Optional.of(NOW) : Optional.empty(),
+                done ? Optional.of(NOW.plusSeconds(86_400)) : Optional.empty());
+    }
     static final String NEW_SECRET = "test-only-rotated-webhook-secret-not-a-real-key";
 
     void rotatable(PostgresDirectory.Rotation outcome) {
         token("test-token-ops-rotator", Optional.empty(), List.of("breaks:read", "secrets:write"));
         token("test-token-a-rotator", Optional.of(A), List.of("breaks:read", "secrets:write"));
         when(cipher.encrypt(any(), anyString())).thenReturn(new byte[64]);
-        when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString())).thenReturn(outcome);
+        when(rotateAny()).thenReturn(rotation(outcome));
     }
 
     @Test
@@ -418,7 +441,7 @@ class OpsApiTest {
             seen.add(plain.clone());
             return new byte[64];
         });
-        String body = mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-ops-rotator")
+        String body = mvc.perform(manual(ROTATE_A).header("Authorization", "Bearer test-token-ops-rotator")
                         .content("{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kid").value("k2"))
@@ -430,7 +453,7 @@ class OpsApiTest {
         assertThat(seen).singleElement().isEqualTo(NEW_SECRET.getBytes(StandardCharsets.UTF_8));
         assertThat(passed.getFirst()).as("the plaintext is wiped once encrypted").containsOnly((byte) 0);
         verify(directory).rotateWebhookSecret(eq(A), eq("k2"), any(), eq(NOW), eq(NOW.plusSeconds(86_400)),
-                anyString());
+                anyString(), eq(KEY), any());
         verify(refresher).refresh();
     }
 
@@ -438,36 +461,201 @@ class OpsApiTest {
     void rotatingNeedsTheSecretsScopeAndAnOpsToken() throws Exception {
         rotatable(PostgresDirectory.Rotation.ROTATED);
         String body = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
-        mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-a-rotator").content(body))
+        mvc.perform(manual(ROTATE_A).header("Authorization", "Bearer test-token-a-rotator").content(body))
                 .andExpect(status().isForbidden());
-        mvc.perform(post(ROTATE_A).header("Authorization", "Bearer test-token-ops").content(body))
+        mvc.perform(manual(ROTATE_A).header("Authorization", "Bearer test-token-ops").content(body))
                 .andExpect(status().isForbidden());
-        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString());
+        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString(),
+                anyString(), any());
     }
 
     @Test
     void aWeakOrMalformedRotationIs400AndTheDirectorysRefusalsMapTo404And409() throws Exception {
         rotatable(PostgresDirectory.Rotation.ROTATED);
         String ops = "Bearer test-token-ops-rotator";
-        mvc.perform(post(ROTATE_A).header("Authorization", ops).content("{\"kid\":\"k2\",\"secret\":\"short\"}"))
+        mvc.perform(manual(ROTATE_A).header("Authorization", ops).content("{\"kid\":\"k2\",\"secret\":\"short\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post(ROTATE_A).header("Authorization", ops)
+        mvc.perform(manual(ROTATE_A).header("Authorization", ops)
                         .content("{\"kid\":\"k 2\",\"secret\":\"" + NEW_SECRET + "\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post(ROTATE_A).header("Authorization", ops)
+        mvc.perform(manual(ROTATE_A).header("Authorization", ops)
                         .content("{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\",\"overlap_seconds\":10}"))
                 .andExpect(status().isBadRequest());
-        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString());
+        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString(),
+                anyString(), any());
         String body = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
         for (var outcome : new PostgresDirectory.Rotation[] {PostgresDirectory.Rotation.IN_PROGRESS,
             PostgresDirectory.Rotation.KID_TAKEN}) {
-            when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString())).thenReturn(outcome);
-            mvc.perform(post(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isConflict());
+            when(rotateAny()).thenReturn(rotation(outcome));
+            mvc.perform(manual(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isConflict());
         }
-        when(directory.rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString()))
-                .thenReturn(PostgresDirectory.Rotation.UNKNOWN_MERCHANT);
-        mvc.perform(post(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isNotFound());
+        when(rotateAny())
+                .thenReturn(rotation(PostgresDirectory.Rotation.UNKNOWN_MERCHANT));
+        mvc.perform(manual(ROTATE_A).header("Authorization", ops).content(body)).andExpect(status().isNotFound());
         verify(refresher, never()).refresh();
+    }
+
+    // ---- repeat-safe manual actions (Shift 11, D94) -------------------------------------------------------------------
+
+    @Test
+    void everyManualPostNeedsAWellFormedIdempotencyKeyBeforeAnythingIsRead() throws Exception {
+        resolvable();
+        LedgerRepo ledger = adjustable();
+        rotatable(PostgresDirectory.Rotation.ROTATED);
+        String rotateBody = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
+        record Call(String path, String token, String body) {
+        }
+        for (Call c : List.of(new Call(ESCALATED_PATH, "test-token-ops-resolver", "{\"note\":\"x\"}"),
+                new Call(ADJUST_A, "test-token-ops-adjuster", BALANCED),
+                new Call(ROTATE_A, "test-token-ops-rotator", rotateBody))) {
+            mvc.perform(post(c.path()).header("Authorization", "Bearer " + c.token()).content(c.body()))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("the Idempotency-Key header is required"));
+            for (String bad : List.of("<script>", "a b", "x".repeat(256), "k;DROP")) {
+                mvc.perform(post(c.path()).header("Authorization", "Bearer " + c.token()).header("Idempotency-Key", bad)
+                                .content(c.body()))
+                        .andExpect(status().isBadRequest());
+            }
+        }
+        verify(tx.breaks(), never()).transition(any(), anyString(), any(), any(), anyString());
+        verify(ledger, never()).post(any());
+        verify(directory, never()).rotateWebhookSecret(any(), anyString(), any(), any(), any(), anyString(),
+                anyString(), any());
+    }
+
+    /** An audit row for an earlier request with {@link #KEY} and the given request hash. */
+    static AuditRepo.Row earlier(String action, String subject, long seq, Sha256 request, Map<String, String> more) {
+        TreeMap<String, String> d = new TreeMap<>(more);
+        d.put(AuditRepo.REQUEST_KEY, KEY);
+        d.put(AuditRepo.REQUEST_SHA256, request.hex());
+        AuditRepo.Entry e = AuditRepo.Entry.of(NOW.minusSeconds(30), "ops/aaaaaaaa", action, subject, d);
+        return new AuditRepo.Row(seq, e, AuditRepo.GENESIS, AuditRepo.hash(AuditRepo.GENESIS, e));
+    }
+
+    @Test
+    void aRepeatedAdjustmentGetsTheFirstAnswerMarkedReplayedAndPostsNothing() throws Exception {
+        LedgerRepo ledger = adjustable();
+        Sha256 asked = ManualRequests.hash(ManualAdjustment.ACTION, "m_a", "bank fee we had not booked", "",
+                "BANK=-12.34;SETTLEMENT_DIFFERENCES=12.34");
+        when(tx.audit().byRequestKey(ManualAdjustment.ACTION, "m_a", KEY))
+                .thenReturn(Optional.of(earlier(ManualAdjustment.ACTION, "m_a", 3, asked, Map.of())));
+        LedgerTxn first = PostingRules.manualAdjustment(A, 3, List.of(
+                new io.github.vanish073.driftline.core.ledger.Entry(A, AccountCode.BANK, Money.parseSigned("-12.34")),
+                new io.github.vanish073.driftline.core.ledger.Entry(A, AccountCode.SETTLEMENT_DIFFERENCES,
+                        Money.parseSigned("12.34"))), NOW.minusSeconds(30));
+        when(ledger.find(A, first.cause())).thenReturn(Optional.of(first));
+        mvc.perform(manual(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops-adjuster"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.audit_seq").value(3))
+                .andExpect(jsonPath("$.cause").value("MANUAL_ADJUSTMENT:3"));
+        verify(ledger, never()).post(any());
+        verify(tx.audit(), never()).append(any());
+    }
+
+    @Test
+    void theSameKeyWithADifferentBodyIs409AndChangesNothing() throws Exception {
+        LedgerRepo ledger = adjustable();
+        when(tx.audit().byRequestKey(ManualAdjustment.ACTION, "m_a", KEY)).thenReturn(Optional.of(
+                earlier(ManualAdjustment.ACTION, "m_a", 3, ManualRequests.hash("something", "else"), Map.of())));
+        mvc.perform(manual(ADJUST_A).content(BALANCED).header("Authorization", "Bearer test-token-ops-adjuster"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(OpsController.KEY_REUSED));
+        verify(ledger, never()).post(any());
+
+        resolvable();
+        when(tx.audit().byRequestKey(ManualResolution.ACTION, ESCALATED_B.breakId(), KEY)).thenReturn(Optional.of(
+                earlier(ManualResolution.ACTION, ESCALATED_B.breakId(), 5, ManualRequests.hash("other"),
+                        Map.of("compensation", "0.00"))));
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"x\"}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(OpsController.KEY_REUSED));
+        verify(tx.breaks(), never()).transition(any(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    void aRepeatedResolutionGetsTheFirstAnswerMarkedReplayed() throws Exception {
+        resolvable();
+        Sha256 asked = ManualRequests.hash(ManualResolution.ACTION, ESCALATED_B.breakId(), "bank confirmed by phone");
+        when(tx.audit().byRequestKey(ManualResolution.ACTION, ESCALATED_B.breakId(), KEY)).thenReturn(Optional.of(
+                earlier(ManualResolution.ACTION, ESCALATED_B.breakId(), 5, asked, Map.of("compensation", "0.00"))));
+        mvc.perform(manual(ESCALATED_PATH).content("{\"note\":\"bank confirmed by phone\"}")
+                        .header("Authorization", "Bearer test-token-ops-resolver"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.audit_seq").value(5))
+                .andExpect(jsonPath("$.resolved_at").value(NOW.minusSeconds(30).toString()));
+        verify(tx.breaks(), never()).transition(any(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    void aRepeatedRotationIsReplayedWithoutReloadingAndAReusedKeyIs409() throws Exception {
+        rotatable(PostgresDirectory.Rotation.REPLAYED);
+        String body = "{\"kid\":\"k2\",\"secret\":\"" + NEW_SECRET + "\"}";
+        mvc.perform(manual(ROTATE_A).header("Authorization", "Bearer test-token-ops-rotator").content(body))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.active_from").value(NOW.toString()));
+        when(rotateAny()).thenReturn(rotation(PostgresDirectory.Rotation.KEY_REUSED));
+        mvc.perform(manual(ROTATE_A).header("Authorization", "Bearer test-token-ops-rotator").content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(OpsController.KEY_REUSED));
+        verify(refresher, never()).refresh();
+    }
+
+    // ---- erasure of customers' contacts (Shift 11, D99) -------------------------------------------------------------
+
+    static final String ERASE_A = "/v1/merchants/m_a/customers/erase";
+
+    CustomerVault erasable() {
+        token("test-token-ops-eraser", Optional.empty(), List.of("breaks:read", "pii:erase"));
+        token("test-token-a-eraser", Optional.of(A), List.of("breaks:read", "pii:erase"));
+        when(merchants.context(A)).thenReturn(Optional.of(new MerchantContext(A, 1, List.of(new byte[32]))));
+        CustomerVault vault = Mockito.mock(CustomerVault.class);
+        when(contacts.vault()).thenReturn(vault);
+        when(vault.erase(any(), any(), any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(new CustomerVault.Erased(List.of(PaymentId.of("pay_2"))));
+        return vault;
+    }
+
+    @Test
+    void anOpsTokenErasesAPaymentsContactWithAnAuditedRepeatSafeRequest() throws Exception {
+        CustomerVault vault = erasable();
+        mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-ops-eraser")
+                        .content("{\"payment_id\":\"pay_2\",\"note\":\"customer asked\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.erased").value(1))
+                .andExpect(jsonPath("$.payment_ids[0]").value("pay_2"));
+        verify(vault).erase(eq(A), eq(List.of(PaymentId.of("pay_2"))), eq(NOW), anyString(), eq("customer asked"),
+                eq(KEY), any());
+        when(vault.erase(any(), any(), any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(new CustomerVault.ErasureReplayed(1));
+        mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-ops-eraser")
+                        .content("{\"payment_id\":\"pay_2\",\"note\":\"customer asked\"}"))
+                .andExpect(status().isOk()).andExpect(header().string("Idempotent-Replayed", "true"));
+    }
+
+    @Test
+    void erasingNeedsItsScopeAnOpsTokenAKeyAndExactlyOneTarget() throws Exception {
+        CustomerVault vault = erasable();
+        String body = "{\"payment_id\":\"pay_2\",\"note\":\"x\"}";
+        mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-a-eraser").content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-ops").content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(ERASE_A).header("Authorization", "Bearer test-token-ops-eraser").content(body))
+                .andExpect(status().isBadRequest());
+        for (String bad : List.of("{\"note\":\"x\"}", "{\"payment_id\":\"pay_2\",\"vpa\":\"a@okaxis\",\"note\":\"x\"}",
+                "{\"payment_id\":\"<script>\",\"note\":\"x\"}", "{\"payment_id\":\"pay_2\"}")) {
+            mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-ops-eraser").content(bad))
+                    .andExpect(status().isBadRequest());
+        }
+        when(contacts.enabled()).thenReturn(false);
+        mvc.perform(manual(ERASE_A).header("Authorization", "Bearer test-token-ops-eraser")
+                        .content("{\"vpa\":\"buyer@okaxis\",\"note\":\"x\"}"))
+                .andExpect(status().isServiceUnavailable());
+        verify(vault, never()).erase(any(), any(), any(), anyString(), anyString(), anyString(), any());
     }
 
     // ---- customer contacts (D77) ----------------------------------------------------------------------------------

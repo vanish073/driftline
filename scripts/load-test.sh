@@ -58,11 +58,14 @@ on_exit() {
 trap on_exit EXIT
 stack_up
 docker compose -f deploy/compose/compose.yaml --env-file "$DEV/env" --profile core --profile obs up -d prometheus
+# D98: Prometheus asks for a password, which load-evaluate.py reads from PROMETHEUS_AUTH
+PROMETHEUS_AUTH="prometheus:$(cat "$DEV/secrets/grafana/prometheus-password")"
+export PROMETHEUS_AUTH
 for _ in $(seq 1 30); do
-    curl -fsS http://127.0.0.1:9090/-/ready > /dev/null 2>&1 && break
+    curl -fsS -u "$PROMETHEUS_AUTH" http://127.0.0.1:9090/-/ready > /dev/null 2>&1 && break
     sleep 2
 done
-curl -fsS http://127.0.0.1:9090/-/ready > /dev/null
+curl -fsS -u "$PROMETHEUS_AUTH" http://127.0.0.1:9090/-/ready > /dev/null
 
 vmstat -n 1 | awk '{print $0, systime(); fflush()}' > "$work/vmstat.txt" &
 vmstat_pid=$!
@@ -78,7 +81,8 @@ step() {
     local rate=$1 label=$2 out=$3 start end
     start=$(date +%s)
     echo "load: step $label at $rate events/s for $STEP s"
-    bench/build/install/bench/bin/bench --url http://127.0.0.1:8080 --bootstrap "$DEV/bootstrap.json" \
+    JAVA_OPTS="$(stack_tls_java)" bench/build/install/bench/bin/bench --url https://127.0.0.1:8080 \
+        --bootstrap "$DEV/bootstrap.json" \
         --rate "$rate" --seconds "$STEP" --label "$label" --out "$work/$label.json"
     end=$(date +%s)
     sleep 20   # two Prometheus scrapes past the step's end

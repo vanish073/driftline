@@ -26,10 +26,24 @@ trap cleanup EXIT
 if [ ! -d "$OVERLAY/.dev" ]; then
     created_dev=1
     mkdir -p "$OVERLAY/.dev"
-    printf 'SPRING_DATASOURCE_PASSWORD=dummy\nDRIFTLINE_SECRETS_KEYS_K1=dummy\nDRIFTLINE_PII_KEYS_P1=dummy\n%s\n%s\n' \
-        'DRIFTLINE_PII_INDEX_KEY=dummy' 'DRIFTLINE_DISPATCHER_SERVICE_TOKEN=dummy' > "$OVERLAY/.dev/driftline-secrets.env"
-    printf 'SPRING_DATASOURCE_USERNAME=postgres\nSPRING_DATASOURCE_PASSWORD=dummy\n' > "$OVERLAY/.dev/driftline-migrator.env"
-    printf 'POSTGRES_PASSWORD=dummy\nDRIFTLINE_DB_PASSWORD=dummy\n' > "$OVERLAY/.dev/driftline-infra.env"
+    mkdir -p "$OVERLAY/.dev/secrets/app" "$OVERLAY/.dev/secrets/migrate" "$OVERLAY/.dev/secrets/postgres"
+    for f in spring.datasource.password driftline.secrets.keys.k1 driftline.pii.keys.p1 driftline.pii.index-key \
+            driftline.dispatcher.service-token; do
+        printf 'dummy' > "$OVERLAY/.dev/secrets/app/$f"
+    done
+    printf 'dummy' > "$OVERLAY/.dev/secrets/migrate/spring.datasource.username"
+    printf 'dummy' > "$OVERLAY/.dev/secrets/migrate/spring.datasource.password"
+    printf 'dummy' > "$OVERLAY/.dev/secrets/postgres/postgres-password"
+    printf 'dummy' > "$OVERLAY/.dev/secrets/postgres/app-password"
+    printf 'dummy' > "$OVERLAY/.dev/secrets/app/driftline.kafka.password"
+    mkdir -p "$OVERLAY/.dev/secrets/tls-app" "$OVERLAY/.dev/secrets/tls-client" "$OVERLAY/.dev/secrets/tls-sandbox" \
+        "$OVERLAY/.dev/secrets/kafka"
+    for f in postgres/server.crt postgres/server.key tls-app/ca.crt tls-app/server.crt tls-app/server.key \
+            tls-app/truststore.p12 tls-client/ca.crt tls-client/truststore.p12 tls-sandbox/server.p12 \
+            tls-sandbox/keystore-password tls-sandbox/truststore.p12 kafka/ca.crt kafka/kafka.p12 \
+            kafka/keystore-password kafka/key-password kafka/jaas.conf kafka/client.properties; do
+        printf 'dummy' > "$OVERLAY/.dev/secrets/$f"
+    done
     echo '{}' > "$OVERLAY/.dev/bootstrap.json"
 fi
 kubectl kustomize deploy/k8s/base > "$work/base.yaml"

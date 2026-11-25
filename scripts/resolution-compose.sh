@@ -42,7 +42,8 @@ stack_up
 echo "{" > "$work/expected.json"
 first=1
 for t in "${TYPES[@]}"; do
-    report=$(sandbox/build/install/sandbox/bin/sandbox inject --type "$t" --count "$N")
+    report=$(JAVA_OPTS="$(stack_tls_java)" sandbox/build/install/sandbox/bin/sandbox inject --type "$t" --count "$N" \
+        --sandbox https://127.0.0.1:8085)
     echo "inject $t: $report"
     entry=$(python3 -I -c '
 import json, sys
@@ -60,7 +61,7 @@ echo "}" >> "$work/expected.json"
 
 status=0
 python3 scripts/resolution-compose.py "$DEV/bootstrap.json" "$work/expected.json" "$work/table.md" \
-    "$OUTDIR/auto-resolution-compose.json" http://127.0.0.1:8080 900 || status=$?
+    "$OUTDIR/auto-resolution-compose.json" https://127.0.0.1:8080 900 || status=$?
 {
     echo "# Auto-resolution share per break type, on the Compose stack"
     echo

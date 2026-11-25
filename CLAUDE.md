@@ -51,7 +51,8 @@
 - App integration tests (PostgreSQL and Kafka in Testcontainers, all under the production heap cap of 256 MB with SerialGC; includes the start/stop smoke test `*ApplicationSmokeIT`): `./gradlew :app:integrationTest`. `check` includes both suites; CI runs them as the separate `integration` job.
 - Everything except the Testcontainers suites (what CI's `build` job runs): `./gradlew check -x :store-postgres:integrationTest -x :app:integrationTest`
 - End to end in Docker Compose (M3; close VS Code first; stops Gradle itself): `scripts/e2e.sh [results-file]`. Generated secrets and the Compose log go to `deploy/compose/.dev/` (git-ignored).
-- Inject a scenario into a running stack: `sandbox/build/install/sandbox/bin/sandbox inject --type DUPLICATE_CAPTURE --count 5`
+- Inject a scenario into a running stack (HTTPS since Shift 11, D100; or use `scripts/demo.sh inject TYPE`): `JAVA_OPTS="-Djavax.net.ssl.trustStore=deploy/compose/.dev/secrets/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12" sandbox/build/install/sandbox/bin/sandbox inject --type DUPLICATE_CAPTURE --count 5 --sandbox https://127.0.0.1:8085`
+- Secrets of a local stack are files under `deploy/compose/.dev/secrets/` (D97): the CA (`ca.crt`), the Grafana and Prometheus passwords (`grafana/`), the ops token in `deploy/compose/.dev/bootstrap.json`.
 - Claims lint (CI job `claims-lint`): `scripts/claims-lint.sh`
 - Free memory when the machine is swapping: `./gradlew --stop`
 - One simulator seed: `./gradlew :sim:run --args="--seed 8812 --profile calm"`; add `--trace` for the timeline. A failing seed prints the REPRO line and writes `sim/build/sim-failures/seed-<n>.trace`.

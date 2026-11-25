@@ -37,6 +37,20 @@ class IdsTest {
     }
 
     @Test
+    void anOutsideKeyAllowsUuidsAndPrefixedIdsButNoMarkupQuotesOrSpaces() {
+        for (String ok : java.util.List.of("3f2a:17", "evt_7n2kq", "6f1c2a3e-58b4-4d2b-9c7e-0f1a2b3c4d5e",
+                "load-1-2", "ord_1.v2")) {
+            assertThat(IdRules.requireExternalKey("Idempotency-Key", ok)).isEqualTo(ok);
+        }
+        for (String bad : java.util.List.of("<script>", "a'b", "a\"b", "a;b", "a b", "a/b", "a\\b", "%00", "a\u00e9",
+                "", "x".repeat(256))) {
+            assertThatThrownBy(() -> IdRules.requireExternalKey("Idempotency-Key", bad))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining(bad.isEmpty() ? "\u0000" : bad);
+        }
+        assertThat(IdRules.requireExternalKey("Idempotency-Key", "x".repeat(255))).hasSize(255);
+    }
+
+    @Test
     void idsSortByValue() {
         assertThat(PaymentId.of("pay_1")).isLessThan(PaymentId.of("pay_2"));
         assertThat(OrderId.of("A")).isLessThan(OrderId.of("a"));

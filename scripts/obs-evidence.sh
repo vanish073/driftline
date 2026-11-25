@@ -38,7 +38,7 @@ traffic_from=$(date +%s)
 gap=$((DURATION / (ROUNDS * ${#TYPES[@]})))
 for round in $(seq 1 "$ROUNDS"); do
     for type in "${TYPES[@]}"; do
-        curl -fsS -X POST "http://127.0.0.1:8085/v1/inject?type=$type&count=5" > /dev/null
+        curl -fsS --cacert "$DEV/secrets/ca.crt" -X POST "https://127.0.0.1:8085/v1/inject?type=$type&count=5" > /dev/null
         echo "evidence: injected $type (round $round)"
         sleep "$gap"
     done
@@ -54,8 +54,10 @@ if [ -z "$trace" ]; then
 fi
 
 echo "evidence: the numbers behind the board (Prometheus, at the end of the run)"
+prometheus_auth="prometheus:$(cat "$DEV/secrets/grafana/prometheus-password")"
+grafana_auth="admin:$(cat "$DEV/secrets/grafana/admin-password")"
 query() {
-    curl -fsS --get --data-urlencode "query=$1" http://127.0.0.1:9090/api/v1/query | python3 -I -c '
+    curl -fsS -u "$prometheus_auth" --get --data-urlencode "query=$1" http://127.0.0.1:9090/api/v1/query | python3 -I -c '
 import json, sys
 label = sys.argv[1]
 for r in json.load(sys.stdin)["data"]["result"]:
@@ -73,7 +75,9 @@ query 'max by (kind, result) (driftline_outbox_attempts_total)' 'outbox attempts
 query 'max(driftline_compensation_exposure_rupees)' 'compensation exposure (INR)'
 echo "evidence: these times are for injected traffic whose events lie in the past (D51); they are not latency results"
 
-curl -fsS "http://127.0.0.1:16686/api/v3/traces/$trace" | python3 -I -m json.tool > "$OUTDIR/jaeger-trace-shift9.json"
+# Jaeger is not published (D98): its API through Grafana's datasource proxy
+curl -fsS -u "$grafana_auth" "http://127.0.0.1:3000/api/datasources/proxy/uid/jaeger/api/v3/traces/$trace" \
+    | python3 -I -m json.tool > "$OUTDIR/jaeger-trace-shift9.json"
 echo "evidence: saved trace $trace to $OUTDIR/jaeger-trace-shift9.json"
 
 # Screenshots from a headless browser on the Compose network (scripts/lib/screenshot.py, Playwright installed by hash),
@@ -83,7 +87,8 @@ shot() {
     local out=$1 url=$2 size=$3 selector=$4 minimum=$5 texts=$6 name status=0
     name="driftline-shot-$$-${out%.png}"
     timeout 360 docker run --rm --name "$name" --ipc=host --network "$network" -v "$PWD/scripts/lib:/work:ro" \
-        -v "$PWD/$OUTDIR:/out" --user "$(id -u):$(id -g)" -e HOME=/tmp --entrypoint sh "$BROWSER" -c \
+        -v "$PWD/$OUTDIR:/out" --user "$(id -u):$(id -g)" -e HOME=/tmp -e SHOT_AUTH="${SHOT_AUTH:-}" \
+        --entrypoint sh "$BROWSER" -c \
         'pip install --quiet --no-cache-dir --user --require-hashes --only-binary=:all: \
              -r /work/screenshot-requirements.txt 2> /dev/null \
          && python3 /work/screenshot.py "$0" "$1" "$2" "$3" "$4" "$5" "$6"' \
@@ -95,7 +100,7 @@ shot() {
     fi
     echo "evidence: saved $OUTDIR/$out ($(wc -c < "$OUTDIR/$out") bytes)"
 }
-shot grafana-shift9.png \
+SHOT_AUTH="$grafana_auth" shot grafana-shift9.png \
     "http://grafana:3000/d/driftline/driftline?orgId=1&kiosk&from=$((traffic_from - 60))000&to=$(date +%s)000&refresh=" \
     1600,2600 canvas 15 "Events consumed per second"
 shot jaeger-trace-shift9.png "http://jaeger:16686/trace/$trace" 1600,1100 body 1 \

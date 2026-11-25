@@ -1,5 +1,7 @@
 # Settings every role reads (§15.3). Nothing secret: passwords, keys and tokens come from the Secrets in
-# secrets.example.yaml. An overlay replaces the addresses and the dispatcher's targets.
+# secrets.example.yaml. An overlay replaces the addresses and the dispatcher's targets. Every link uses TLS (D100): the
+# database's certificate is verified, Kafka is TLS with a login, the API and the management port serve HTTPS from the
+# certificate in the Secret driftline-tls, and the JVM trusts that Secret's CA for its own HTTPS calls.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,21 +10,42 @@ metadata:
     app.kubernetes.io/name: driftline
     driftline.io/stage: infra
 data:
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/driftline?sslmode=verify-full&sslrootcert=/run/tls/ca.crt
   SPRING_DATASOURCE_USERNAME: driftline
   DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-  # The key ids whose keys the Secret holds (DRIFTLINE_SECRETS_KEYS_<KID>, DRIFTLINE_PII_KEYS_<KID>).
+  DRIFTLINE_KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  DRIFTLINE_KAFKA_USERNAME: driftline
+  DRIFTLINE_KAFKA_TRUSTSTORE_FILE: /run/tls/ca.crt
+  # The key ids whose keys the Secret holds, as the files driftline.secrets.keys.<kid> and driftline.pii.keys.<kid>
+  # (D97: secrets are mounted files, never environment variables).
   DRIFTLINE_SECRETS_ACTIVE_KID: k1
   DRIFTLINE_PII_ACTIVE_KID: p1
   # The dispatcher's targets (§9.2); an overlay must set real ones. The observations go back to ingest.
   DRIFTLINE_DISPATCHER_GATEWAY_URL: https://gateway.example.invalid
   DRIFTLINE_DISPATCHER_MERCHANT_URL: https://merchant.example.invalid
   DRIFTLINE_DISPATCHER_OPS_URL: https://ops.example.invalid
-  DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: http://ingest:8080
+  DRIFTLINE_DISPATCHER_OBSERVATIONS_URL: https://ingest:8080
   # The production heap cap (§15.1), committed from the start (D84: a heap that grows only through full collections
   # stalled the process); /tmp is the only writable path.
-  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k -Djava.io.tmpdir=/tmp"
+  JAVA_TOOL_OPTIONS: "-Xms256m -Xmx256m -XX:+UseSerialGC -Xss512k -Djava.io.tmpdir=/tmp
+    -Djavax.net.ssl.trustStore=/run/tls/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit
+    -Djavax.net.ssl.trustStoreType=PKCS12"
   # The OpenTelemetry Java agent (D78): off unless an overlay turns it on and points it at a collector.
   OTEL_JAVAAGENT_ENABLED: "false"
   OTEL_INSTRUMENTATION_KAFKA_ENABLED: "false"
   OTEL_INSTRUMENTATION_JDBC_ENABLED: "false"
+---
+# The HTTPS servers' settings (D100), read only by the service roles, which mount the certificate and its key. The
+# migrate Job runs no server and mounts only the CA: given these, Spring would load the certificate and fail.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: driftline-server-tls
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+data:
+  SERVER_SSL_BUNDLE: server
+  MANAGEMENT_SERVER_SSL_BUNDLE: server
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_CERTIFICATE: file:/run/tls/server.crt
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_PRIVATE_KEY: file:/run/tls/server.key

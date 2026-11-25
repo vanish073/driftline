@@ -87,7 +87,7 @@ class SettlementCaseCorpusTest {
             "noref_excludes_already_matched", "noref_excludes_failed_payments",
             "multi_line_forced_propagation_resolves_both", "multi_line_propagation_leaves_ambiguous",
             "multi_line_jointly_infeasible", "noref_refund_netted", "mixed_file_ref_and_noref",
-            "duplicate_bank_lines_same_amount_same_day", "near_overflow_amounts", "watermark_gate_not_passed",
+            "duplicate_bank_lines_same_amount_same_day", "largest_accepted_amounts", "watermark_gate_not_passed",
             "late_payment_after_inferred_match");
 
     static Path corpus() throws URISyntaxException {

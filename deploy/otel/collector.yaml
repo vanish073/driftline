@@ -1,12 +1,19 @@
 # The OpenTelemetry collector of the Compose `obs` profile (DESIGN §13, §15.1, D78): Driftline's Java agents send spans
-# over OTLP; the collector batches them under a memory limit and forwards them to Jaeger.
+# over OTLP; the collector batches them under a memory limit and forwards them to Jaeger. Driftline's spans arrive over
+# TLS (D100: the stack's certificate for otel-collector); the hop to Jaeger stays inside the dev-only obs profile.
 receivers:
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        tls:
+          cert_file: /run/tls/server.crt
+          key_file: /run/tls/server.key
       http:
         endpoint: 0.0.0.0:4318
+        tls:
+          cert_file: /run/tls/server.crt
+          key_file: /run/tls/server.key
 processors:
   memory_limiter:
     check_interval: 1s

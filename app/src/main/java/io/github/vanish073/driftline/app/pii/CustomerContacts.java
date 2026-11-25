@@ -45,6 +45,18 @@ public final class CustomerContacts {
         return cipher.flatMap(c -> vault.find(m, p).map(s -> c.open(m, p, s)));
     }
 
+    /** The vault itself, for erasure (D99): erasing needs no key, only the payment ids. */
+    public CustomerVault vault() {
+        return vault;
+    }
+
+    /** The VPA's blind index for this merchant, if storage is on and the VPA is well-formed (D99). */
+    public Optional<String> vpaIndex(MerchantId m, String vpa) {
+        PiiCipher c = cipher.orElseThrow(() -> new IllegalStateException("personal data storage is not configured"));
+        return CustomerContact.of(Optional.of(vpa), Optional.empty(), Optional.empty()).vpa()
+                .map(v -> c.vpaIndex(m, v));
+    }
+
     /** The merchant's payments whose customer used this VPA (normalised as a webhook's would be). */
     public List<PaymentId> paymentsByVpa(MerchantId m, String vpa) {
         PiiCipher c = cipher.orElseThrow(() -> new IllegalStateException("personal data storage is not configured"));

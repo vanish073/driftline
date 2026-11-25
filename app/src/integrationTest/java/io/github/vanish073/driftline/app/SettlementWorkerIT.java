@@ -69,7 +69,8 @@ class SettlementWorkerIT {
             SettlementInbox inbox = new SettlementInbox(pool);
             DriftlineProperties.Kafka kafka = new DriftlineProperties.Kafka(Containers.KAFKA.getBootstrapServers(),
                     topic, 2, "matcher-worker-it", 50, Duration.ofMillis(100), Duration.ofSeconds(6),
-                    Duration.ofSeconds(300), Duration.ofSeconds(10), Duration.ofSeconds(60));
+                    Duration.ofSeconds(300), Duration.ofSeconds(10), Duration.ofSeconds(60), "PLAINTEXT", null, null,
+                    null);
             byte[] raw = FILE.getBytes(StandardCharsets.UTF_8);
             SettlementInbox.Stored stored = inbox.store(M, raw, now);
             assertThat(stored.isNew()).isTrue();

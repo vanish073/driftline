@@ -39,7 +39,13 @@ public final class ManualResolution {
     public record NotEscalated(BreakState state) implements Result {
     }
 
-    public record Resolved(String breakId, Instant at, Money compensation, long auditSeq) implements Result {
+    /** Resolved now, or, if {@code replayed}, by an earlier request with the same key and content (D94). */
+    public record Resolved(String breakId, Instant at, Money compensation, long auditSeq, boolean replayed)
+            implements Result {
+    }
+
+    /** The {@code Idempotency-Key} was used before, on this break, for a different request (D94). */
+    public record KeyReused() implements Result {
     }
 
     private ManualResolution() {
@@ -59,11 +65,13 @@ public final class ManualResolution {
      * @param scope  the merchant the caller is bound to; empty for an ops token (every merchant)
      * @param actor  who resolved it, as the audit trail names them
      * @param note   why; required, at most {@link #MAX_NOTE} characters, no control characters
+     * @param requestKey the caller's {@code Idempotency-Key}: a repeat answers as the first request did and changes
+     *                   nothing, and the key with another note is refused (Shift 11, D94)
      * @throws IllegalArgumentException if the note is invalid ({@link #requireNote}), or if another caller closed the
      *                                  break between this read and this write (the row lock then sees it closed)
      */
     public static Result resolve(Tx tx, String breakId, Optional<MerchantId> scope, String actor, String note,
-                                 Instant now) {
+                                 String requestKey, Instant now) {
         requireNote(note);
         Optional<Break> found = tx.breaks().byId(breakId)
                 .filter(b -> scope.map(m -> m.equals(b.merchantId())).orElse(true));
@@ -71,6 +79,20 @@ public final class ManualResolution {
             return new NotFound();
         }
         Break b = found.get();
+        io.github.vanish073.driftline.core.event.Sha256 request = ManualRequests.hash(ACTION, breakId, note);
+        switch (ManualRequests.prior(tx.audit(), ACTION, breakId, requestKey, request)) {
+            case ManualRequests.Different d -> {
+                return new KeyReused();
+            }
+            case ManualRequests.Same same -> {
+                AuditRepo.Row first = same.row();
+                return new Resolved(breakId, first.entry().at(),
+                        Money.parseSigned(first.entry().details().get("compensation")), first.seq(), true);
+            }
+            case ManualRequests.None none -> {
+                // act below
+            }
+        }
         if (!BreakLifecycle.allowed(b.state(), BreakState.RESOLVED_MANUAL)) {
             return new NotEscalated(b.state());
         }
@@ -92,7 +114,9 @@ public final class ManualResolution {
         details.put("to", BreakState.RESOLVED_MANUAL.name());
         details.put("compensation", compensation.toString());
         details.put("note", note);
+        ManualRequests.stamp(details, requestKey, request);
         AuditRepo.Row row = tx.audit().append(AuditRepo.Entry.of(now, actor, ACTION, breakId, details));
-        return new Resolved(breakId, now, compensation, row.seq());
+        // the stored instant (microseconds), so a replay's answer is the same as this one (D94)
+        return new Resolved(breakId, row.entry().at(), compensation, row.seq(), false);
     }
 }

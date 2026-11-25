@@ -1,6 +1,7 @@
 package io.github.vanish073.driftline.core.event;
 
 import io.github.vanish073.driftline.core.id.PaymentId;
+import io.github.vanish073.driftline.core.money.AmountLimits;
 import io.github.vanish073.driftline.core.money.Money;
 import java.util.Objects;
 
@@ -13,5 +14,6 @@ public record RefundPayload(PaymentId paymentId, Money amount) implements EventP
         if (!amount.isPositive()) {
             throw new IllegalArgumentException("a refund amount must be positive");
         }
+        AmountLimits.requirePayment("a refund amount", amount);
     }
 }

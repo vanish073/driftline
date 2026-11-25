@@ -34,8 +34,9 @@ stack_up
 E2E=sandbox/build/e2e
 CP="$E2E/classes:$(find "$E2E/lib" -name '*.jar' | sort | tr '\n' ':')"
 run_suite() {
-    BOOTSTRAP_FILE="$DEV/bootstrap.json" DRIFTLINE_URL=http://127.0.0.1:8080 SANDBOX_URL=http://127.0.0.1:8085 \
-        java -Xmx192m -jar "$E2E"/launcher/junit-platform-console-standalone-*.jar execute \
+    # shellcheck disable=SC2046  # the truststore options are separate words
+    BOOTSTRAP_FILE="$DEV/bootstrap.json" DRIFTLINE_URL=https://127.0.0.1:8080 SANDBOX_URL=https://127.0.0.1:8085 \
+        java -Xmx192m $(stack_tls_java) -jar "$E2E"/launcher/junit-platform-console-standalone-*.jar execute \
         --class-path "$CP" --select-package io.github.vanish073.driftline.e2e --details=tree --disable-banner \
         --disable-ansi-colors
 }

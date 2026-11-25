@@ -93,7 +93,7 @@ class SecretRotationIT {
                 "--driftline.secrets.active-kid=it",
                 "--driftline.secrets.keys.it=" + Base64.getEncoder().encodeToString(new byte[32]),
                 "--driftline.secrets.refresh-interval=1s",
-                "--driftline.bootstrap-file=" + bootstrap,
+                "--driftline.bootstrap-file=" + bootstrap, "--driftline.environment=test",
                 "--driftline.instance-id=rotation",
                 "--server.port=0",
                 "--management.server.port=0")) {
@@ -103,6 +103,7 @@ class SecretRotationIT {
 
             HttpResponse<String> rotated = send(HttpRequest.newBuilder(URI.create(api + "/v1/merchants/" + MERCHANT
                             + "/webhook-secrets/rotate")).header("Authorization", "Bearer " + OPS_TOKEN)
+                    .header("Idempotency-Key", "rotate-k2")
                     .POST(HttpRequest.BodyPublishers.ofString("{\"kid\":\"k2\",\"secret\":\"" + NEW
                             + "\",\"overlap_seconds\":60}")));
             assertThat(rotated.statusCode()).as(rotated.body()).isEqualTo(201);

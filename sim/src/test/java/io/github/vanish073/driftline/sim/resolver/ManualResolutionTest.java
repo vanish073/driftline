@@ -26,8 +26,15 @@ class ManualResolutionTest {
 
     final InMemoryStore store = new InMemoryStore();
 
+    int keys;
+
     ManualResolution.Result manual(String breakId, Optional<MerchantId> scope, String actor, String note, Instant at) {
-        return store.transact("manual", tx -> ManualResolution.resolve(tx, breakId, scope, actor, note, at));
+        return manual(breakId, scope, actor, note, "res-" + ++keys, at);
+    }
+
+    ManualResolution.Result manual(String breakId, Optional<MerchantId> scope, String actor, String note, String key,
+                                   Instant at) {
+        return store.transact("manual", tx -> ManualResolution.resolve(tx, breakId, scope, actor, note, key, at));
     }
 
     /** A MISSING_SETTLEMENT, which the resolver escalates at once (§8.2). */
@@ -104,5 +111,30 @@ class ManualResolutionTest {
         String longest = "x".repeat(ManualResolution.MAX_NOTE);
         assertThat(manual(b.breakId(), Optional.empty(), "ops/x",
                 longest, T0)).isInstanceOf(ManualResolution.Resolved.class);
+    }
+
+    // ---- D94: a repeated request -----------------------------------------------------------------------------------
+
+    @Test
+    void aRepeatGetsTheFirstAnswerAndChangesNothingAndAnotherNoteWithTheKeyIsRefused() {
+        Break b = escalated();
+        ManualResolution.Resolved first = (ManualResolution.Resolved) manual(b.breakId(), Optional.empty(), "ops/x",
+                "bank confirmed", "same-key", T0.plusSeconds(60));
+        assertThat(manual(b.breakId(), Optional.empty(), "ops/x", "bank confirmed", "same-key", T0.plusSeconds(120)))
+                .isEqualTo(new ManualResolution.Resolved(b.breakId(), first.at(), first.compensation(),
+                        first.auditSeq(), true));
+        assertThat(manual(b.breakId(), Optional.empty(), "ops/x", "another reason", "same-key", T0.plusSeconds(180)))
+                .isEqualTo(new ManualResolution.KeyReused());
+        assertThat(store.committedAuditRows()).hasSize(1);
+        assertThat(store.transact("t", tx -> tx.breaks().transitions(M, b.breakId())).stream()
+                .filter(t -> t.to() == BreakState.RESOLVED_MANUAL)).hasSize(1);
+    }
+
+    @Test
+    void aRepeatCannotRevealAnotherMerchantsBreak() {
+        Break b = escalated();
+        manual(b.breakId(), Optional.empty(), "ops/x", "bank confirmed", "k", T0.plusSeconds(60));
+        assertThat(manual(b.breakId(), Optional.of(OTHER), "merchant:m_1/x", "bank confirmed", "k", T0.plusSeconds(90)))
+                .isEqualTo(new ManualResolution.NotFound());
     }
 }

@@ -86,15 +86,19 @@ class IngestTablesIT {
     void tokensAreStoredAsHashesAndAHashCannotBeReboundToAnotherMerchant() {
         Sha256 hash = Sha256.of("tok-1".getBytes(StandardCharsets.UTF_8));
         PostgresDirectory.ApiToken token = new PostgresDirectory.ApiToken(hash, Optional.of(M),
-                List.of("events:write", "breaks:read"), NOW, Optional.empty());
-        assertThat(directory.addToken(token)).isTrue();
-        assertThat(directory.addToken(token)).isFalse();
+                List.of("events:write", "breaks:read"), NOW, NOW.plusSeconds(86_400), Optional.empty());
+        assertThat(directory.addToken(token, "it")).isTrue();
+        assertThat(directory.addToken(token, "it")).isFalse();
         assertThat(directory.token(hash)).contains(token);
         assertThatThrownBy(() -> directory.addToken(new PostgresDirectory.ApiToken(hash, Optional.empty(),
-                List.of("breaks:read"), NOW, Optional.empty()))).isInstanceOf(IllegalStateException.class);
+                List.of("breaks:read"), NOW, NOW.plusSeconds(86_400), Optional.empty()), "it"))
+                .isInstanceOf(IllegalStateException.class);
         assertThat(directory.token(Sha256.of(new byte[] {1}))).isEmpty();
         assertThatThrownBy(() -> new PostgresDirectory.ApiToken(hash, Optional.empty(), List.of("root"), NOW,
-                Optional.empty())).isInstanceOf(IllegalArgumentException.class);
+                NOW.plusSeconds(86_400), Optional.empty())).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new PostgresDirectory.ApiToken(hash, Optional.empty(), List.of("breaks:read"), NOW,
+                NOW, Optional.empty())).as("every token expires after it is created")
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -137,7 +141,8 @@ class IngestTablesIT {
                 .as("an undecodable row names no merchant").hasMessageContaining("quarantine_shape");
         assertThatThrownBy(() -> asApp("INSERT INTO quarantine (id, partition, kafka_offset, reason) VALUES"
                 + " ('q2', 0, 2, 'IDEMPOTENCY_CONFLICT')")).hasMessageContaining("quarantine_shape");
-        assertThatThrownBy(() -> asApp("INSERT INTO api_tokens (token_sha256, scopes, created_at) VALUES ('"
-                + "a".repeat(64) + "', ARRAY['admin'], now())")).hasMessageContaining("check");
+        assertThatThrownBy(() -> asApp("INSERT INTO api_tokens (token_sha256, token_id, scopes, created_at, expires_at,"
+                + " created_by) VALUES ('" + "a".repeat(64) + "', 'tok_" + "a".repeat(16) + "', ARRAY['admin'], now(),"
+                + " now() + interval '1 day', 'it')")).hasMessageContaining("check");
     }
 }

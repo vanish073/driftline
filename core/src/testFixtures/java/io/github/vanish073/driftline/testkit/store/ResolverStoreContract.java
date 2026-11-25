@@ -10,6 +10,7 @@ import io.github.vanish073.driftline.core.breaks.DeadlineRule;
 import io.github.vanish073.driftline.core.id.MerchantId;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.core.port.AuditRepo;
+import io.github.vanish073.driftline.core.port.StoreConflict;
 import io.github.vanish073.driftline.core.port.BreakRepo.Plan;
 import io.github.vanish073.driftline.core.port.OutboxRepo.Command;
 import io.github.vanish073.driftline.core.port.OutboxRepo.CommandKind;
@@ -256,6 +257,33 @@ public abstract class ResolverStoreContract {
         assertThat(r2.prevHash()).isEqualTo(r1.hash());
         assertThat(r2.hash()).isEqualTo(AuditRepo.hash(r1.hash(), e2));
         assertThat(many(t -> t.audit().rows())).containsExactly(r1, r2);
+    }
+
+    @Test
+    void aRequestKeyFindsItsRowAndIsUniquePerActionAndSubject() {
+        Map<String, String> keyed = Map.of(AuditRepo.REQUEST_KEY, "req-1", AuditRepo.REQUEST_SHA256, "ab", "note", "x");
+        AuditRepo.Row r1 = tx(t -> t.audit().append(AuditRepo.Entry.of(T0, "ops:alice", "LEDGER_ADJUST_MANUAL", "m_1",
+                keyed)));
+        assertThat(one(t -> t.audit().byRequestKey("LEDGER_ADJUST_MANUAL", "m_1", "req-1"))).contains(r1);
+        assertThat(one(t -> t.audit().byRequestKey("LEDGER_ADJUST_MANUAL", "m_1", "req-2"))).isEmpty();
+        assertThat(one(t -> t.audit().byRequestKey("LEDGER_ADJUST_MANUAL", "m_2", "req-1"))).isEmpty();
+        assertThat(one(t -> t.audit().byRequestKey("BREAK_RESOLVE_MANUAL", "m_1", "req-1"))).isEmpty();
+
+        // D94: a second row with the key on the same action and subject cannot commit, and nothing of it remains
+        assertThatThrownBy(() -> tx(t -> t.audit().append(AuditRepo.Entry.of(T0.plusSeconds(1), "ops:bob",
+                "LEDGER_ADJUST_MANUAL", "m_1", keyed)))).isInstanceOf(StoreConflict.class);
+        assertThat(many(t -> t.audit().rows())).containsExactly(r1);
+
+        // the same key on another subject or action is another request; rows without a key are never unique-checked
+        AuditRepo.Row r2 = tx(t -> t.audit().append(AuditRepo.Entry.of(T0.plusSeconds(2), "ops:alice",
+                "LEDGER_ADJUST_MANUAL", "m_2", keyed)));
+        AuditRepo.Row r3 = tx(t -> t.audit().append(AuditRepo.Entry.of(T0.plusSeconds(3), "ops:alice",
+                "BREAK_RESOLVE_MANUAL", "m_1", keyed)));
+        tx(t -> t.audit().append(AuditRepo.Entry.of(T0.plusSeconds(4), "ops:alice", "LEDGER_ADJUST_MANUAL", "m_1",
+                Map.of())));
+        tx(t -> t.audit().append(AuditRepo.Entry.of(T0.plusSeconds(5), "ops:alice", "LEDGER_ADJUST_MANUAL", "m_1",
+                Map.of())));
+        assertThat(many(t -> t.audit().rows())).hasSize(5).contains(r2, r3);
     }
 
     @Test

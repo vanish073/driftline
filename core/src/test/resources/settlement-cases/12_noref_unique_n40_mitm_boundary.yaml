@@ -2,56 +2,57 @@ case: 12
 name: noref_unique_n40_mitm_boundary
 about: >-
   Forty candidates: the largest set meet-in-the-middle takes (2 x 2^20 partial sums, within the
-  20,000,000-operation budget); the dynamic programme would need ~10^16 cells. A fee-free merchant with
-  super-increasing amounts (each above the sum of all smaller ones), so exactly one subset of 20 fits; this was also
+  20,000,000-operation budget); the dynamic programme would need ~10^13 cells. A fee-free merchant with
+  super-increasing amounts (powers of two, 1 paisa to 2^39 paise, each above the sum of all smaller ones; until D93
+  they were 1,000 × 2^k + k + 1, above today's largest accepted amount), so exactly one subset of 20 fits; this was also
   checked by an exact meet-in-the-middle count when the case was generated. With realistic amounts, 40 candidates
   give tens of thousands of fitting subsets, and the answer would rightly be AMBIGUOUS.
 fees: {fee_bps: 0, gst_bps: 0}
 payments:
-  - {id: pay_06, gross_paise: 64007, captured: "2026-11-13T08:00:00"}
-  - {id: pay_16, gross_paise: 65536017, captured: "2026-11-13T08:15:00"}
-  - {id: pay_02, gross_paise: 4003, captured: "2026-11-13T08:30:00"}
-  - {id: pay_05, gross_paise: 32006, captured: "2026-11-13T08:45:00"}
-  - {id: pay_08, gross_paise: 256009, captured: "2026-11-13T09:00:00"}
-  - {id: pay_20, gross_paise: 1048576021, captured: "2026-11-13T09:15:00"}
-  - {id: pay_04, gross_paise: 16005, captured: "2026-11-13T09:30:00"}
-  - {id: pay_13, gross_paise: 8192014, captured: "2026-11-13T09:45:00"}
-  - {id: pay_15, gross_paise: 32768016, captured: "2026-11-13T10:00:00"}
-  - {id: pay_14, gross_paise: 16384015, captured: "2026-11-13T10:15:00"}
-  - {id: pay_34, gross_paise: 17179869184035, captured: "2026-11-13T10:30:00"}
-  - {id: pay_30, gross_paise: 1073741824031, captured: "2026-11-13T10:45:00"}
-  - {id: pay_24, gross_paise: 16777216025, captured: "2026-11-13T11:00:00"}
-  - {id: pay_07, gross_paise: 128008, captured: "2026-11-13T11:15:00"}
-  - {id: pay_26, gross_paise: 67108864027, captured: "2026-11-13T11:30:00"}
-  - {id: pay_10, gross_paise: 1024011, captured: "2026-11-13T11:45:00"}
-  - {id: pay_28, gross_paise: 268435456029, captured: "2026-11-13T12:00:00"}
-  - {id: pay_29, gross_paise: 536870912030, captured: "2026-11-13T12:15:00"}
-  - {id: pay_22, gross_paise: 4194304023, captured: "2026-11-13T12:30:00"}
-  - {id: pay_03, gross_paise: 8004, captured: "2026-11-13T12:45:00"}
-  - {id: pay_38, gross_paise: 274877906944039, captured: "2026-11-13T13:00:00"}
-  - {id: pay_17, gross_paise: 131072018, captured: "2026-11-13T13:15:00"}
-  - {id: pay_36, gross_paise: 68719476736037, captured: "2026-11-13T13:30:00"}
-  - {id: pay_11, gross_paise: 2048012, captured: "2026-11-13T13:45:00"}
-  - {id: pay_39, gross_paise: 549755813888040, captured: "2026-11-13T14:00:00"}
-  - {id: pay_12, gross_paise: 4096013, captured: "2026-11-13T14:15:00"}
-  - {id: pay_00, gross_paise: 1001, captured: "2026-11-13T14:30:00"}
-  - {id: pay_01, gross_paise: 2002, captured: "2026-11-13T14:45:00"}
-  - {id: pay_23, gross_paise: 8388608024, captured: "2026-11-13T15:00:00"}
-  - {id: pay_31, gross_paise: 2147483648032, captured: "2026-11-13T15:15:00"}
-  - {id: pay_33, gross_paise: 8589934592034, captured: "2026-11-13T15:30:00"}
-  - {id: pay_27, gross_paise: 134217728028, captured: "2026-11-13T15:45:00"}
-  - {id: pay_21, gross_paise: 2097152022, captured: "2026-11-13T16:00:00"}
-  - {id: pay_35, gross_paise: 34359738368036, captured: "2026-11-13T16:15:00"}
-  - {id: pay_32, gross_paise: 4294967296033, captured: "2026-11-13T16:30:00"}
-  - {id: pay_09, gross_paise: 512010, captured: "2026-11-13T16:45:00"}
-  - {id: pay_25, gross_paise: 33554432026, captured: "2026-11-13T17:00:00"}
-  - {id: pay_37, gross_paise: 137438953472038, captured: "2026-11-13T17:15:00"}
-  - {id: pay_18, gross_paise: 262144019, captured: "2026-11-13T17:30:00"}
-  - {id: pay_19, gross_paise: 524288020, captured: "2026-11-13T17:45:00"}
+  - {id: pay_06, gross_paise: 64, captured: "2026-11-13T08:00:00"}
+  - {id: pay_16, gross_paise: 65536, captured: "2026-11-13T08:15:00"}
+  - {id: pay_02, gross_paise: 4, captured: "2026-11-13T08:30:00"}
+  - {id: pay_05, gross_paise: 32, captured: "2026-11-13T08:45:00"}
+  - {id: pay_08, gross_paise: 256, captured: "2026-11-13T09:00:00"}
+  - {id: pay_20, gross_paise: 1048576, captured: "2026-11-13T09:15:00"}
+  - {id: pay_04, gross_paise: 16, captured: "2026-11-13T09:30:00"}
+  - {id: pay_13, gross_paise: 8192, captured: "2026-11-13T09:45:00"}
+  - {id: pay_15, gross_paise: 32768, captured: "2026-11-13T10:00:00"}
+  - {id: pay_14, gross_paise: 16384, captured: "2026-11-13T10:15:00"}
+  - {id: pay_34, gross_paise: 17179869184, captured: "2026-11-13T10:30:00"}
+  - {id: pay_30, gross_paise: 1073741824, captured: "2026-11-13T10:45:00"}
+  - {id: pay_24, gross_paise: 16777216, captured: "2026-11-13T11:00:00"}
+  - {id: pay_07, gross_paise: 128, captured: "2026-11-13T11:15:00"}
+  - {id: pay_26, gross_paise: 67108864, captured: "2026-11-13T11:30:00"}
+  - {id: pay_10, gross_paise: 1024, captured: "2026-11-13T11:45:00"}
+  - {id: pay_28, gross_paise: 268435456, captured: "2026-11-13T12:00:00"}
+  - {id: pay_29, gross_paise: 536870912, captured: "2026-11-13T12:15:00"}
+  - {id: pay_22, gross_paise: 4194304, captured: "2026-11-13T12:30:00"}
+  - {id: pay_03, gross_paise: 8, captured: "2026-11-13T12:45:00"}
+  - {id: pay_38, gross_paise: 274877906944, captured: "2026-11-13T13:00:00"}
+  - {id: pay_17, gross_paise: 131072, captured: "2026-11-13T13:15:00"}
+  - {id: pay_36, gross_paise: 68719476736, captured: "2026-11-13T13:30:00"}
+  - {id: pay_11, gross_paise: 2048, captured: "2026-11-13T13:45:00"}
+  - {id: pay_39, gross_paise: 549755813888, captured: "2026-11-13T14:00:00"}
+  - {id: pay_12, gross_paise: 4096, captured: "2026-11-13T14:15:00"}
+  - {id: pay_00, gross_paise: 1, captured: "2026-11-13T14:30:00"}
+  - {id: pay_01, gross_paise: 2, captured: "2026-11-13T14:45:00"}
+  - {id: pay_23, gross_paise: 8388608, captured: "2026-11-13T15:00:00"}
+  - {id: pay_31, gross_paise: 2147483648, captured: "2026-11-13T15:15:00"}
+  - {id: pay_33, gross_paise: 8589934592, captured: "2026-11-13T15:30:00"}
+  - {id: pay_27, gross_paise: 134217728, captured: "2026-11-13T15:45:00"}
+  - {id: pay_21, gross_paise: 2097152, captured: "2026-11-13T16:00:00"}
+  - {id: pay_35, gross_paise: 34359738368, captured: "2026-11-13T16:15:00"}
+  - {id: pay_32, gross_paise: 4294967296, captured: "2026-11-13T16:30:00"}
+  - {id: pay_09, gross_paise: 512, captured: "2026-11-13T16:45:00"}
+  - {id: pay_25, gross_paise: 33554432, captured: "2026-11-13T17:00:00"}
+  - {id: pay_37, gross_paise: 137438953472, captured: "2026-11-13T17:15:00"}
+  - {id: pay_18, gross_paise: 262144, captured: "2026-11-13T17:30:00"}
+  - {id: pay_19, gross_paise: 524288, captured: "2026-11-13T17:45:00"}
 files:
   - date: "2026-11-14"
     lines:
-      - {amount: "655202348953.60"}   # 20 of the 40
+      - {amount: "655202348.95"}   # 20 of the 40
 expect:
   lines:
     stl_20261114:1: {status: INFERRED, pays: [pay_00, pay_01, pay_02, pay_03, pay_07, pay_08, pay_12, pay_13, pay_14, pay_16, pay_17, pay_18, pay_19, pay_22, pay_24, pay_30, pay_32, pay_33, pay_34, pay_35]}

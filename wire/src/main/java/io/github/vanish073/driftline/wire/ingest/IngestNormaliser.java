@@ -42,6 +42,7 @@ public final class IngestNormaliser {
         }
         try {
             GatewayWebhook webhook = GatewayWebhookCodec.decode(body);
+            IdRules.requireExternalKey("id", webhook.eventId());
             byte[] canonical = GatewayWebhookCodec.encode(webhook);   // without the customer: never hashed (D77)
             Optional<CustomerContact> customer = webhook.payload() instanceof PaymentPayload
                     ? GatewayWebhookCodec.customer(body) : Optional.empty();
@@ -63,7 +64,7 @@ public final class IngestNormaliser {
             return new IngestResult.Rejected(400, "the Idempotency-Key header is required");
         }
         try {
-            String key = IdRules.requireKey("Idempotency-Key", idempotencyKey.get());
+            String key = IdRules.requireExternalKey("Idempotency-Key", idempotencyKey.get());
             OrderEventMessage message = OrderEventCodec.decode(body);
             byte[] canonical = OrderEventCodec.encode(message);
             return new IngestResult.Accepted(new EventEnvelope(EventEnvelope.SCHEMA_VERSION, merchant.merchantId(),

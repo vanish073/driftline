@@ -20,7 +20,7 @@ import java.util.TreeMap;
  *
  * <pre>
  * sandbox bootstrap --out FILE [--merchants 12] [--partitions 12] [--days-back 3]
- * sandbox serve --bootstrap FILE --driftline http://driftline:8080 [--port 8085]
+ * sandbox serve --bootstrap FILE --driftline https://driftline:8080 [--port 8085] [--tls true]
  * sandbox inject --type DUPLICATE_CAPTURE [--count 5] [--sandbox http://localhost:8085]
  * </pre>
  *
@@ -53,7 +53,7 @@ public final class SandboxMain {
             case "serve" -> {
                 BootstrapFile.Pool pool = BootstrapFile.read(Files.readAllBytes(Path.of(required(opts, "bootstrap"))));
                 SandboxServer server = new SandboxServer(Integer.parseInt(opts.getOrDefault("port", "8085")),
-                        URI.create(required(opts, "driftline")), pool);
+                        URI.create(required(opts, "driftline")), pool, "true".equals(opts.get("tls")));
                 server.start();
                 System.out.println("sandbox listening on " + server.port() + " with " + pool.merchants().size()
                         + " merchants");
@@ -95,7 +95,7 @@ public final class SandboxMain {
     private static void usage() {
         System.out.println("""
                 usage: sandbox bootstrap --out FILE [--merchants 12] [--partitions 12] [--days-back 3]
-                       sandbox serve --bootstrap FILE --driftline URL [--port 8085]
+                       sandbox serve --bootstrap FILE --driftline URL [--port 8085] [--tls true]
                        sandbox inject --type SCENARIO [--count 1] [--sandbox URL]""");
     }
 }

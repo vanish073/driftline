@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.vanish073.driftline.core.event.SettlementLinePayload;
 import io.github.vanish073.driftline.core.id.MerchantId;
+import io.github.vanish073.driftline.core.money.AmountLimits;
 import io.github.vanish073.driftline.core.money.Money;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
 import io.github.vanish073.driftline.wire.settlement.SettlementFile;
@@ -86,13 +87,14 @@ class SettlementFileParserTest {
     }
 
     @Test
-    void crlfBreaksQuotedQuotesAndANearOverflowTotalParseExactly() throws IOException {
+    void crlfBreaksQuotedQuotesAndTheLargestAcceptedAmountParseExactly() throws IOException {
         SettlementFile f = SettlementFileParser.parse(M0, resource("golden-crlf-no-final-break.csv"));
         assertThat(f.lines().get(0).narration()).isEqualTo("refund \"netted\" here");
         assertThat(f.lines().get(0).amount()).isEqualTo(Money.ofPaise(5));
         assertThat(f.lines().get(0).reference()).isEmpty();
         assertThat(f.lines().get(1).batchId()).contains("BATCH-7");
-        assertThat(f.totalAmount()).isEqualTo(Money.ofPaise(9_223_372_036_854_775_805L));
+        assertThat(f.lines().get(1).amount()).isEqualTo(AmountLimits.MAX_SETTLEMENT_FIELD);
+        assertThat(f.totalAmount()).isEqualTo(Money.ofPaise(100_000_000_000_005L));
     }
 
     @Test
@@ -149,9 +151,12 @@ class SettlementFileParserTest {
                 Arguments.of("line count too low", file(H, D1, D2, "T,1,150.50"), 4, "line_count"),
                 Arguments.of("total off by one paisa", file(H, D1, D2, "T,2,150.49"), 4, "total_amount"),
                 Arguments.of("total ignores a fee", file(H, D1, D2, "T,2,152.86"), 4, "total_amount"),
-                Arguments.of("overflowing running total",
-                        file(H, "D,1,2026-11-14,92233720368547758.07,,,,,a", "D,2,2026-11-14,0.01,,,,,b",
-                                "T,2,0.00"), 3, "overflows"),
+                Arguments.of("an amount above the largest accepted (D93)",
+                        file(H, "D,1,2026-11-14,1000000000000.01,,,,,a", "T,1,1000000000000.01"), 2, "largest accepted"),
+                Arguments.of("a fee above the largest accepted (D93)",
+                        file(H, "D,1,2026-11-14,1.00,1000000000000.01,,,,a", "T,1,1.00"), 2, "largest accepted"),
+                Arguments.of("a tax above the largest accepted (D93)",
+                        file(H, "D,1,2026-11-14,1.00,,1000000000000.01,,,a", "T,1,1.00"), 2, "largest accepted"),
                 // line numbers
                 Arguments.of("line number gap", file(H, D1, D2.replace("D,2,", "D,3,"), T), 3, "line_no must be 2"),
                 Arguments.of("line number repeat", file(H, D1, D1, T), 3, "line_no must be 2"),
@@ -245,7 +250,7 @@ class SettlementFileParserTest {
     @Provide
     Arbitrary<SettlementFile> files() {
         Arbitrary<Long> paise = Arbitraries.oneOf(Arbitraries.longs().between(0, 10_000_000L),
-                Arbitraries.longs().between(0, 100_000_000_000_000_000L));
+                Arbitraries.longs().between(0, AmountLimits.MAX_SETTLEMENT_FIELD.paise()));
         Arbitrary<Optional<Money>> optionalMoney = paise.map(Money::ofPaise).optional(0.5);
         Arbitrary<Optional<String>> token = Arbitraries.strings().withChars("abcXYZ019._-").ofMinLength(1)
                 .ofMaxLength(64).optional(0.5);

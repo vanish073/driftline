@@ -16,6 +16,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * rules, for example {@code DRIFTLINE_KAFKA_BOOTSTRAP_SERVERS}).
  *
  * @param instanceId    this process's name in partition leases (§5.1); a restart appends a fresh incarnation
+ * @param environment   {@code production} (the default), {@code dev} or {@code test} (Shift 11, D97): only dev and test
+ *                      may apply a bootstrap file or take keys from the environment
  * @param bootstrapFile dev and test only: merchants, secrets and tokens to onboard at start-up (D49); {@code null} when
  *                      unset (Spring's binder has no converter to {@code Optional<Path>}, so read it through
  *                      {@link #bootstrap()})
@@ -23,6 +25,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("driftline")
 public record DriftlineProperties(
         @DefaultValue("local") String instanceId,
+        @DefaultValue("production") String environment,
         @DefaultValue Kafka kafka,
         @DefaultValue Secrets secrets,
         @DefaultValue Pii pii,
@@ -31,6 +34,8 @@ public record DriftlineProperties(
         @DefaultValue Resolver resolver,
         @DefaultValue Dispatcher dispatcher,
         @DefaultValue Verify verify,
+        @DefaultValue RateLimit rateLimit,
+        @DefaultValue Metrics metrics,
         Path bootstrapFile) {
 
     /** The bootstrap file, if one is configured. */
@@ -38,7 +43,20 @@ public record DriftlineProperties(
         return Optional.ofNullable(bootstrapFile);
     }
 
-    /** §10.4. {@code partitions} must equal the topic's partition count; start-up checks it. */
+    /** The environments a deployment may name (D97). */
+    public static final java.util.Set<String> ENVIRONMENTS = java.util.Set.of("production", "dev", "test");
+
+    /** True for a dev or test stack (D97); anything else is treated as production. */
+    public boolean devOrTest() {
+        return environment.equals("dev") || environment.equals("test");
+    }
+
+    /**
+     * §10.4. {@code partitions} must equal the topic's partition count; start-up checks it. Security (Shift 11, D100):
+     * {@code securityProtocol} {@code SASL_SSL} logs in with {@code username} and {@code password} (SASL PLAIN, which
+     * Kafka sends only inside TLS) and trusts the broker's certificate through {@code truststoreFile} (a PEM CA); a
+     * production start refuses anything but {@code SASL_SSL}. {@code PLAINTEXT} is for tests' throwaway brokers.
+     */
     public record Kafka(
             @DefaultValue("localhost:9092") String bootstrapServers,
             @DefaultValue("driftline.events.v1") String topic,
@@ -49,7 +67,20 @@ public record DriftlineProperties(
             @DefaultValue("10s") Duration sessionTimeout,
             @DefaultValue("300s") Duration maxPollInterval,
             @DefaultValue("10s") Duration ackTimeout,
-            @DefaultValue("60s") Duration maxTickInterval) {
+            @DefaultValue("60s") Duration maxTickInterval,
+            @DefaultValue("PLAINTEXT") String securityProtocol,
+            String username,
+            String password,
+            String truststoreFile) {
+
+        /** Never prints the password. */
+        @Override
+        public String toString() {
+            return "Kafka[bootstrapServers=" + bootstrapServers + ", topic=" + topic + ", partitions=" + partitions
+                    + ", groupId=" + groupId + ", securityProtocol=" + securityProtocol + ", username=" + username
+                    + ", password=" + (password == null || password.isBlank() ? "unset" : "***") + ", truststoreFile="
+                    + truststoreFile + "]";
+        }
     }
 
     /**
@@ -70,10 +101,12 @@ public record DriftlineProperties(
     /**
      * Keys for customers' contact details (D77): an AES-256-GCM keyring (base64 by key id; {@code activeKid} encrypts)
      * separate from the webhook-secret keys, and a base64 HMAC key of at least 32 bytes for the VPA blind index. All
-     * empty: personal data storage is off, and contacts on webhooks are discarded.
+     * empty: personal data storage is off, and contacts on webhooks are discarded. Stored contacts are deleted once
+     * first seen longer ago than {@code retention}, checked every {@code purgeInterval} by the resolver role (D99).
      */
     public record Pii(@DefaultValue("") String activeKid, @DefaultValue Map<String, String> keys,
-                      @DefaultValue("") String indexKey) {
+                      @DefaultValue("") String indexKey, @DefaultValue("180d") Duration retention,
+                      @DefaultValue("1h") Duration purgeInterval) {
 
         public boolean configured() {
             return !activeKid.isBlank() && !keys.isEmpty() && !indexKey.isBlank();
@@ -83,11 +116,38 @@ public record DriftlineProperties(
         @Override
         public String toString() {
             return "Pii[activeKid=" + activeKid + ", keys=" + keys.keySet() + ", indexKey="
-                    + (indexKey.isBlank() ? "unset" : "***") + "]";
+                    + (indexKey.isBlank() ? "unset" : "***") + ", retention=" + retention + ", purgeInterval="
+                    + purgeInterval + "]";
         }
     }
 
     public record Store(@DefaultValue("APPEND_SNAPSHOT") BalanceStrategy balanceStrategy) {
+    }
+
+    /**
+     * The management port's metrics endpoint (Shift 11, D98): Prometheus must send {@code Authorization: Bearer
+     * <token>}. Unset, the endpoint refuses every scrape. Health stays open for the orchestrator's probes, and shows
+     * only UP or DOWN.
+     */
+    public record Metrics(String token) {
+
+        /** Never prints the token. */
+        @Override
+        public String toString() {
+            return "Metrics[token=" + (token == null || token.isBlank() ? "unset" : "***") + "]";
+        }
+    }
+
+    /**
+     * Request limits ahead of the API (Shift 11, D96): a client address that gets {@code maxFailures} answers of 401
+     * within {@code failureWindow} is refused for {@code lockout}; each credential (bearer token, webhook merchant,
+     * else address) gets {@code requestsPerSecond} with bursts of {@code burst}. At most {@code maxTracked} addresses and
+     * credentials are remembered. The defaults leave room for the load test's highest step, 400 events a second.
+     */
+    public record RateLimit(@DefaultValue("true") boolean enabled, @DefaultValue("20") int maxFailures,
+                            @DefaultValue("60s") Duration failureWindow, @DefaultValue("5m") Duration lockout,
+                            @DefaultValue("500") int requestsPerSecond, @DefaultValue("1000") int burst,
+                            @DefaultValue("10000") int maxTracked) {
     }
 
     public record Worker(@DefaultValue("1s") Duration pollInterval, @DefaultValue("10") int batchSize) {

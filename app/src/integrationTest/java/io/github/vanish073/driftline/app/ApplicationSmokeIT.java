@@ -81,7 +81,8 @@ class ApplicationSmokeIT {
                 "--driftline.kafka.session-timeout=6s",
                 "--driftline.secrets.active-kid=it",
                 "--driftline.secrets.keys.it=" + Base64.getEncoder().encodeToString(new byte[32]),
-                "--driftline.bootstrap-file=" + bootstrap,
+                "--driftline.bootstrap-file=" + bootstrap, "--driftline.environment=test",
+                "--driftline.metrics.token=test-only-metrics-token",
                 "--driftline.instance-id=smoke",
                 // role `all` includes the dispatcher; port 9 refuses at once, so any call fails fast and is retried later
                 "--driftline.dispatcher.gateway-url=http://127.0.0.1:9/gateway",
@@ -135,6 +136,30 @@ class ApplicationSmokeIT {
         assertThat(ready.statusCode()).isEqualTo(200);
         assertThat(send(HttpRequest.newBuilder(URI.create(api + "/actuator/health")).GET()).statusCode())
                 .as("actuator is not on the API port").isIn(401, 404);
+        assertThat(live.body()).as("health shows status only (show-details=never)").doesNotContain("components")
+                .doesNotContain("db");
+        // D98: the metrics need Prometheus's token; nothing else will do, not even a valid API token
+        URI metrics = URI.create(management + "/actuator/prometheus");
+        assertThat(send(HttpRequest.newBuilder(metrics).GET()).statusCode()).isEqualTo(401);
+        assertThat(send(HttpRequest.newBuilder(metrics).header("Authorization", "Bearer wrong").GET()).statusCode())
+                .isIn(401, 403);
+        assertThat(send(HttpRequest.newBuilder(metrics).header("Authorization", "Bearer " + TOKEN).GET())
+                .statusCode()).isIn(401, 403);
+        HttpResponse<String> scrape = send(HttpRequest.newBuilder(metrics)
+                .header("Authorization", "Bearer test-only-metrics-token").GET());
+        assertThat(scrape.statusCode()).isEqualTo(200);
+        assertThat(scrape.body()).contains("driftline_");
+    }
+
+    @Test
+    void theRequestLimitsAreOnInTheRealApplication() {
+        // D96: RateLimitApiTest drives the lockout through the same SecurityConfiguration; here, that the application
+        // builds the limiter enabled and that requests on the API port pass through it.
+        io.github.vanish073.driftline.app.security.RateLimiter limiter =
+                app.getBean(io.github.vanish073.driftline.app.security.RateLimiter.class);
+        assertThat(limiter.enabled()).isTrue();
+        assertThat(get("/v1/breaks", TOKEN).statusCode()).isEqualTo(200);
+        assertThat(limiter.trackedKeys()).as("the request went through the limiter").isPositive();
     }
 
     @Test

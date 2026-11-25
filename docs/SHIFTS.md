@@ -1,4 +1,4 @@
-# Driftline: the 10-shift build plan
+# Driftline: the build plan (10 shifts, then Shift 11: security hardening)
 
 Read with: [`docs/spec/REQUIREMENTS.md`](spec/REQUIREMENTS.md) (scope) and [`docs/DESIGN.md`](DESIGN.md) (how).
 A **shift** is one focused working session. The shifts run in order. Each one ends green or records exactly what carries over.
@@ -18,6 +18,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 8 | Resolver, outbox, dispatcher, crash tests | **M4 done** | **DONE** (2026-11-16); **M4 DONE** |
 | 9 | Observability, security, Kubernetes | M5 (part 1) | **DONE** (2026-11-17) |
 | 10 | Load test, hot-account benchmark, results, README | **M5 done** | **DONE** (2026-11-24); **M5 DONE** |
+| 11 | Security hardening: the backend's known weaknesses | after v1.0 | **DONE** (2026-11-25) |
 
 ## Human tasks (only you can do these)
 
@@ -231,7 +232,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 12 | noref_unique_n40_mitm_boundary | 30 | noref_refund_netted → NO_SOLUTION, escalated |
 | 13 | noref_n200_dp_after_gcd | 31 | mixed_file_ref_and_noref |
 | 14 | noref_budget_exceeded → orphan(BUDGET) | 32 | duplicate_bank_lines_same_amount_same_day |
-| 15 | noref_two_subsets_distinct_amounts → AMBIGUOUS | 33 | near_overflow_amounts (exact arithmetic) |
+| 15 | noref_two_subsets_distinct_amounts → AMBIGUOUS | 33 | largest_accepted_amounts (exact arithmetic; was near_overflow_amounts until D93) |
 | 16 | noref_equal_amounts_₹499×k → AMBIGUOUS | 34 | watermark_gate_not_passed → deferred |
 | 17 | noref_no_solution → orphan | 35 | late_payment_after_inferred_match → CHALLENGED |
 | 18 | noref_no_candidates → orphan | | |
@@ -316,6 +317,56 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 **Prove:** every README number can be traced to a file in `docs/results/` and the script that produced it.
 **Exit (M5):** "README carries throughput, latency and simulation results." Status → M5 DONE.
 **Carry-over:** Build list done except the stretch item, seed shrinking, which was not started (left out rather than rushed into the simulator at the end). The design details are D81–D90: the hot-account benchmark D81 (`APPEND_SNAPSHOT` stays the default); the load test D82, with the backlog probe D83 and the committed heap D84 that it led to (50 events/s sustained on the laptop of §15.1, the limit below the next step of 100); the `nightly` profile, `nightly.yml`'s 200,000-seed campaigns, the canary matrix and the cumulative seed count D85; commons-lang3 lifted in the build tooling D86 (Dependabot alert 1 closes once this reaches `main`); the drain oracle's two modelling errors D87; `scripts/render-results` and its CI check D88; the traceability pass and the detection-lag statistic D89; the drain oracle's third modelling error D90. Prove: every README number is rendered from a file in `docs/results/` by `scripts/render-results`, each table naming its raw files and the scripts that wrote them, and CI's `claims-lint` job fails if the README differs. The seed count is 2,175,600 campaign seeds (965,600 `nightly`, 1,210,000 `pr`) with seven violations, all accounted for: two were BUG-012, the shift's one simulator-found bug (a late lookup answer from an earlier attempt sent a refund; fixed, seed in the regression corpus), and five were the drain oracle's error (D87, D90); the last three nightly campaigns ran Driftline's final code, run 45341082943 with no seed failing and every canary caught on both profiles, run 45420779430 with the one D90 seed, which passes since; run 45478126889, on the final commit with the fix, had no seed failing and caught every canary on both profiles. Open, and stated in the README: the snapshotter is not scheduled in production (D81), the finance-ops interview was never held (R25, D54), and the known weaknesses of D73 as amended by D74 and D76, D77 and `docs/THREAT_MODEL.md`.
+
+---
+
+## Shift 11: Security hardening (after v1.0)
+
+**Why.** v1.0 lists security weaknesses in the README and `docs/THREAT_MODEL.md` (residual risks). This shift fixes
+them, and checks the API against the common ways a payment backend is attacked: hidden admin pages, another
+customer's ID in the URL, tokens leaking into URLs or logs, edited amounts, negative or absurd amounts, forged
+payments, the same request replayed many times, granting yourself more power, guessing credentials, script or markup
+in input, uploading the wrong kind of file, secret files committed to git, and SQL injection. Driftline has no AI
+model, no signup and no image upload, so prompt injection, signup and photo checks map to their nearest real
+surfaces (token creation, the settlement-file upload), or are recorded as not applicable.
+
+**Read:** DESIGN §10.1, §14, §15, §16, D21, D73–D80, D91; `docs/THREAT_MODEL.md`.
+
+**Build**
+1. **Attack-surface tests and quick fixes**: one test per attack above that applies (admin and actuator paths on the
+   API port, IDOR on every merchant path, a token in the query string authenticates nothing, security headers and no
+   CORS, script or SQL in every path and body field, a non-CSV upload, oversized and negative amounts); `.gitignore`
+   covers `.env.*`, key stores and certificates, and CI fails if a tracked file looks like a secret; the threat
+   model's stale Dependabot row (D91).
+2. **Repeat-safe manual actions**: every manual POST (resolve, ledger adjustment, secret rotation, and the new token
+   and erasure calls) requires an `Idempotency-Key`; a repeat returns the first answer and applies nothing, and the
+   same key with a different body is refused (409). The record commits in the same transaction as the action.
+3. **Amount ceiling**: amounts above a configured maximum are refused at the edge, if an oversized amount can overflow
+   a sum later (to be checked first).
+4. **Tokens**: every token expires (a required `expires_at`); a token API creates, lists and revokes tokens, audited;
+   a caller can grant only scopes it holds, never to itself beyond them, and a merchant token cannot use the API.
+5. **Rate limits**: per-client and per-token request limits and a lockout after repeated failed authentication
+   (wrong token or webhook signature), answering 429 with `Retry-After`; bounded memory.
+6. **Keys from files**: encryption keys and passwords are read from mounted secret files (Compose secrets, Kubernetes
+   Secret volumes), not environment variables; a production start refuses keys passed in the environment.
+7. **Management port and monitoring**: the metrics endpoint needs a token, health shows status only; Grafana needs a
+   login, Prometheus's UI needs a password, and Jaeger's UI is no longer published (traces are read through Grafana).
+8. **Encryption inside the deployment**: TLS for PostgreSQL (verified certificate), Kafka with TLS and SCRAM logins,
+   HTTPS on the API and on the dispatcher's calls, TLS for traces and metrics scrapes; certificates generated per run
+   (Compose) or per cluster (kind); a production start refuses plaintext connections.
+9. **Customer contacts**: a retention period and erasure on request (audited), so stored contacts are no longer kept
+   forever.
+10. **Dev bootstrap**: refused unless the deployment says it is a dev or test environment.
+11. **Docs**: `docs/THREAT_MODEL.md` updated (each fix with its proof; what remains), the README's known weaknesses
+    updated to match, design decisions appended to DESIGN §19.
+
+**Prove**
+- Each item has tests that fail without the fix; `./gradlew check` and the Testcontainers suites are green.
+- The Compose e2e and chaos runs pass with TLS, logins and file-based keys; the PII scan is clean.
+- CI green on the final commit, including the kind smoke test and a nightly campaign.
+
+**Exit:** no README security weakness remains that this shift could fix; what remains is stated precisely.
+**Carry-over:** Build list done; the design details are D92–D100 (attack-surface tests, headers, outside keys and the secret-file check D92; amount limits D93; repeat-safe manual actions D94; the token lifecycle D95; request limits and lockout D96; environments, the bootstrap guard and secrets as files D97; logins for metrics and monitoring D98; contact retention and erasure D99; TLS on every link D100), with `docs/results/security-shift11.md` walking through the usual attacks one by one. Two real bugs were found and fixed on the way, neither simulator-found (so no BUGS.md row): an amount near the 64-bit limit could overflow the matcher's fee arithmetic and halt a partition on every replay (D93), and a manual ledger adjustment retried after a timeout posted twice (D94). Prove: `./gradlew check` green locally (995 tests); CI on the final code: run 45632070796 (all 14 jobs, including the Compose e2e with the obs profile, TLS and logins, and the chaos run with TLS) and run 45632070638 (the kind smoke test with TLS: NetworkPolicies, e2e 8 of 8, verify CLEAN; its first attempt failed on the known OpenTelemetry-agent download mismatch and passed on a re-run). The first kind run found one deployment bug, fixed before merging: the migrate Job read the HTTPS server's settings and crashed (they are now in a config map only the services read). Local Compose runs lost tests only to the laptop sleeping mid-run (gaps of 18 and 26 minutes in the logs). Open, and stated in the README and the threat model: no KMS (keys are mounted files), services authenticate each other with tokens and passwords inside TLS rather than client certificates and Kafka has no ACLs, rate limits are per process, and the dev-only obs profile's links among the monitoring tools are plaintext on the Compose network.
 
 ---
 

@@ -60,7 +60,7 @@ class VerifyIT {
                     "--spring.datasource.url=" + url,
                     "--spring.datasource.username=" + Containers.APP_USER,
                     "--spring.datasource.password=" + Containers.APP_PASSWORD,
-                    "--driftline.verify.wait-for=0s").close();
+                    "--driftline.verify.wait-for=0s", "--driftline.environment=test").close();
             return null;
         } catch (RuntimeException e) {
             return e;
