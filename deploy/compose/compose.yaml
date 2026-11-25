@@ -84,7 +84,7 @@ services:
 
   kafka:
     profiles: [core]
-    image: apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -111,7 +111,7 @@ services:
   # One topic, 12 partitions (DESIGN §3.3).
   kafka-init:
     profiles: [core]
-    image: apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
     depends_on:
       kafka:
         condition: service_healthy
@@ -242,7 +242,7 @@ services:
 
   otel-collector:
     profiles: [obs]
-    image: otel/opentelemetry-collector:0.164.0@sha256:28b6d41ac51bff6b41ba5e8fe503569ffb9d6a1ea90f7a78419e86f34e44f750
+    image: otel/opentelemetry-collector:0.165.0@sha256:34b24b740c3c88d3467740e8642a397c13898ef76d7295c5425164c482ed1b73
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ../otel/collector.yaml:/etc/otelcol/config.yaml:ro
@@ -253,14 +253,14 @@ services:
   # Jaeger v2 all-in-one, traces in memory only; UI on 16686.
   jaeger:
     profiles: [obs]
-    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    image: jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
     ports:
       - "127.0.0.1:16686:16686"
     mem_limit: 160m
 
   prometheus:
     profiles: [obs]
-    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d",
               "--storage.tsdb.path=/prometheus"]
     volumes:
@@ -274,7 +274,7 @@ services:
   # to render the board; at 160 MB it thrashed and queries took minutes (D78).
   grafana:
     profiles: [obs]
-    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     depends_on:
       - prometheus
     environment:
