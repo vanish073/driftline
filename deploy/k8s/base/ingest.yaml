@@ -39,6 +39,7 @@ spec:
                 fieldRef: {fieldPath: metadata.name}
           envFrom:
             - configMapRef: {name: driftline-config}
+            - configMapRef: {name: driftline-server-tls}
           ports:
             - name: http
               containerPort: 8080

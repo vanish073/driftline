@@ -16,10 +16,6 @@ data:
   DRIFTLINE_KAFKA_SECURITY_PROTOCOL: SASL_SSL
   DRIFTLINE_KAFKA_USERNAME: driftline
   DRIFTLINE_KAFKA_TRUSTSTORE_FILE: /run/tls/ca.crt
-  SERVER_SSL_BUNDLE: server
-  MANAGEMENT_SERVER_SSL_BUNDLE: server
-  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_CERTIFICATE: file:/run/tls/server.crt
-  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_PRIVATE_KEY: file:/run/tls/server.key
   # The key ids whose keys the Secret holds, as the files driftline.secrets.keys.<kid> and driftline.pii.keys.<kid>
   # (D97: secrets are mounted files, never environment variables).
   DRIFTLINE_SECRETS_ACTIVE_KID: k1
@@ -38,3 +34,18 @@ data:
   OTEL_JAVAAGENT_ENABLED: "false"
   OTEL_INSTRUMENTATION_KAFKA_ENABLED: "false"
   OTEL_INSTRUMENTATION_JDBC_ENABLED: "false"
+---
+# The HTTPS servers' settings (D100), read only by the service roles, which mount the certificate and its key. The
+# migrate Job runs no server and mounts only the CA: given these, Spring would load the certificate and fail.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: driftline-server-tls
+  labels:
+    app.kubernetes.io/name: driftline
+    driftline.io/stage: infra
+data:
+  SERVER_SSL_BUNDLE: server
+  MANAGEMENT_SERVER_SSL_BUNDLE: server
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_CERTIFICATE: file:/run/tls/server.crt
+  SPRING_SSL_BUNDLE_PEM_SERVER_KEYSTORE_PRIVATE_KEY: file:/run/tls/server.key
