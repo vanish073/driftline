@@ -33,6 +33,9 @@ spec:
             matchLabels: {app.kubernetes.io/name: driftline}
         - podSelector:
             matchLabels: {app.kubernetes.io/name: kafka-init}
+        # the broker itself, through its Service: scripts/kafka-acl-check.sh runs its client tools in this pod (D101)
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: kafka}
       ports:
         - {port: 9092, protocol: TCP}
 ---

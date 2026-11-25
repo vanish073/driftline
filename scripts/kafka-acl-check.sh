@@ -26,7 +26,7 @@ else
     echo "kafka-acl-check: FAIL: the driftline login created a topic, or failed for another reason: $out" >&2
     failed=1
 fi
-out=$(inside "/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --consumer.config $P --topic driftline.events.v1 --group acl-probe-intruder --max-messages 1 --timeout-ms 15000")
+out=$(inside "/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --command-config $P --topic driftline.events.v1 --group acl-probe-intruder --max-messages 1 --timeout-ms 15000")
 if grep -qi 'not authorized to access group\|GroupAuthorization' <<< "$out"; then
     echo "kafka-acl-check: the driftline login may not use another consumer group"
 else
