@@ -4,7 +4,7 @@ buildscript {
         constraints {
             // The Spring Boot Gradle plugin 4.1.2 brings commons-compress 1.27.1 and, through it, commons-lang3 3.16.0
             // (CVE-2025-48924, fixed in 3.18.0; Dependabot alert 1, build tooling only). Lifted, not suppressed (D79).
-            classpath("org.apache.commons:commons-lang3:3.20.0")
+            classpath("org.apache.commons:commons-lang3:3.21.0")
         }
     }
 }
