@@ -44,6 +44,7 @@ walks through the usual attacks on a payment API one by one.
 | **T**ampering | Reading or altering traffic inside the deployment | TLS on PostgreSQL (`hostssl` only), Kafka (`SASL_SSL`), the API, the management port, the dispatcher's calls and the trace export (D100) | as above |
 | **T**ampering | An absurd amount that overflows the matcher's arithmetic and halts a partition | Amounts above ₹1,000 crore (payments) or ₹1 lakh crore (settlement fields) are refused wherever they enter (D93) | `AmountLimitsTest`, `AttackSurfaceTest`, the settlement corpus |
 | **T**ampering | Replaying a manual action ("redeem it 100 times") | Every manual POST needs an `Idempotency-Key`; a repeat gets the first answer and changes nothing; a unique index stops concurrent repeats (D94) | `ManualAdjustmentTest`, `ManualResolutionTest`, `OpsApiTest`, `WebhookSecretRotationIT`, the store contract |
+| **E**levation of privilege | A leaked Kafka password used to read, write or create other topics, or to change permissions | The broker denies anything not granted; Driftline's login may use only its topic and its consumer group (D101) | `scripts/kafka-acl-check.sh` in the Compose e2e and the kind smoke test |
 | **E**levation of privilege | A token creating a stronger one ("admin at signup") | No signup; a token grants only scopes it holds; merchant tokens get merchant scopes only; unknown fields such as `role` are refused (D95) | `TokenApiTest` |
 | **I**nformation disclosure | A browser on another site reading the API, or markup in a key | No CORS grant; `nosniff`, `frame-ancestors 'none'`, `default-src 'none'`, `no-store`, `no-referrer`; outside keys limited to `[A-Za-z0-9._:-]` (D92) | `AttackSurfaceTest`, `IdsTest` |
 | **I**nformation disclosure | Keys and passwords in environment variables, or secrets committed to git | Secrets are mounted files; a production start refuses them in its environment (D97); CI fails if a tracked file is named like a secret | `SecretSourceGuardTest`, CI `security` (`scripts/check-secret-files.sh`) |
@@ -75,8 +76,8 @@ limiting (D96), token expiry and a token API (D95), an unauthenticated managemen
 - **No KMS or HSM.** Keys are files mounted from the deployment's secret store, never environment variables (D97), but
   whoever can read those files or the process's memory can decrypt the stored secrets and contacts.
 - **Services authenticate each other with tokens and passwords, not client certificates.** TLS checks the server's
-  certificate on every link (D100); the client proves itself with a token or a password inside it. Kafka checks logins
-  but has no ACLs: any client with a login may read or write any topic, and only Driftline and the admin have one.
+  certificate on every link (D100); the client proves itself with a token or a password inside it. Kafka's permissions
+  limit Driftline's login to its one topic and consumer group (D101).
 - **Rate limits are per process, in memory.** With N instances a client gets up to N times the rate, and behind a proxy
   the per-address lockout sees the proxy's address (D96); a deployment behind one relies on the proxy for addresses.
 - **The dev-only `obs` profile's own links are plaintext**: collector to Jaeger, Grafana to Prometheus and Jaeger, and

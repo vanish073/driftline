@@ -46,6 +46,7 @@ run_all() {
     if [ "$OBS" = 1 ]; then
         scripts/obs-check.sh || status=1
     fi
+    scripts/kafka-acl-check.sh "${COMPOSE[@]}" exec -T kafka || status=1
     return "$status"
 }
 if [ -n "$RESULTS" ]; then

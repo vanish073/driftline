@@ -41,7 +41,8 @@ if [ ! -d "$OVERLAY/.dev" ]; then
     for f in postgres/server.crt postgres/server.key tls-app/ca.crt tls-app/server.crt tls-app/server.key \
             tls-app/truststore.p12 tls-client/ca.crt tls-client/truststore.p12 tls-sandbox/server.p12 \
             tls-sandbox/keystore-password tls-sandbox/truststore.p12 kafka/ca.crt kafka/kafka.p12 \
-            kafka/keystore-password kafka/key-password kafka/jaas.conf kafka/client.properties; do
+            kafka/keystore-password kafka/key-password kafka/jaas.conf kafka/client.properties \
+            kafka/driftline-client.properties; do
         printf 'dummy' > "$OVERLAY/.dev/secrets/$f"
     done
     echo '{}' > "$OVERLAY/.dev/bootstrap.json"

@@ -66,6 +66,7 @@ secretGenerator:
       - .dev/secrets/kafka/key-password
       - .dev/secrets/kafka/jaas.conf
       - .dev/secrets/kafka/client.properties
+      - .dev/secrets/kafka/driftline-client.properties
   - name: driftline-bootstrap
     files: [.dev/bootstrap.json]
 configMapGenerator:
@@ -73,6 +74,8 @@ configMapGenerator:
     files: [01-roles.sh=../../../compose/postgres-init.sh]
   - name: postgres-hba
     files: [pg_hba.conf=../../../compose/pg_hba.conf]
+  - name: kafka-init
+    files: [init.sh=../../../kafka/init.sh]
   - name: driftline-config
     behavior: merge
     literals:

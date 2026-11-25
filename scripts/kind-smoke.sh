@@ -142,6 +142,9 @@ smoke() {
         --class-path "$cp" --select-package io.github.vanish073.driftline.e2e --details=tree --disable-banner \
         --disable-ansi-colors
 
+    echo "kind-smoke: Kafka permissions"
+    scripts/kafka-acl-check.sh "${K[@]}" exec kafka-0 -- || return 1
+
     echo "kind-smoke: verify"
     apply_stage verify
     # verify re-checks for up to 5 minutes; the Job ends as succeeded (CLEAN) or failed (violations)

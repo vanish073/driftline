@@ -50,6 +50,10 @@ spec:
             - {name: KAFKA_SSL_TRUSTSTORE_TYPE, value: PEM}
             - {name: KAFKA_SSL_TRUSTSTORE_LOCATION, value: /etc/kafka/secrets/ca.crt}
             - {name: KAFKA_OPTS, value: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf"}
+            # D101: deny anything not granted (as in Compose); deploy/kafka/init.sh grants the driftline login
+            - {name: KAFKA_AUTHORIZER_CLASS_NAME, value: org.apache.kafka.metadata.authorizer.StandardAuthorizer}
+            - {name: KAFKA_SUPER_USERS, value: "User:broker;User:admin;User:ANONYMOUS"}
+            - {name: KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND, value: "false"}
             - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
             - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
             - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
@@ -92,15 +96,16 @@ spec:
       containers:
         - name: kafka-init
           image: apache/kafka:4.2.2@sha256:1213eb3943d551e5ed1fca7a4e109001cee35770b66a02a0c37a8964efe09b69
-          command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:9092",
-                    "--command-config", "/etc/kafka/secrets/client.properties", "--create", "--if-not-exists",
-                    "--topic", "driftline.events.v1", "--partitions", "12", "--replication-factor", "1"]
+          command: ["bash", "/opt/kafka-init/init.sh"]   # the topic, then the driftline login's permissions (D101)
           env:
             - {name: KAFKA_HEAP_OPTS, value: "-Xmx64m"}
           resources:
             limits: {memory: 192Mi}
           volumeMounts:
             - {name: secrets, mountPath: /etc/kafka/secrets, readOnly: true}
+            - {name: init, mountPath: /opt/kafka-init, readOnly: true}
       volumes:
         - name: secrets
           secret: {secretName: driftline-kafka, defaultMode: 0444}
+        - name: init
+          configMap: {name: kafka-init, defaultMode: 0555}

@@ -90,6 +90,9 @@ tls_stack() {
         "$kafka_broker" "$kafka_broker" "$kafka_app" "$kafka_admin" > "$s/kafka/jaas.conf"
     printf 'security.protocol=SASL_SSL\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\nssl.truststore.type=PEM\nssl.truststore.location=/etc/kafka/secrets/ca.crt\n' \
         "$kafka_admin" > "$s/kafka/client.properties"
+    # the driftline login as a client file too, for scripts/kafka-acl-check.sh (D101)
+    printf 'security.protocol=SASL_SSL\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="driftline" password="%s";\nssl.truststore.type=PEM\nssl.truststore.location=/etc/kafka/secrets/ca.crt\n' \
+        "$kafka_app" > "$s/kafka/driftline-client.properties"
     printf '%s' "$kafka_app" > "$s/app/driftline.kafka.password"
     rm -rf "$s/tls"
     chmod 644 "$s"/tls-*/* "$s"/postgres/* "$s"/kafka/* "$s"/collector/* "$s/ca.crt" "$s/truststore.p12" \
