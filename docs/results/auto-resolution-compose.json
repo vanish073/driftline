@@ -1,0 +1,116 @@
+{
+  "escalation_reasons": {
+    "DEBITED_NO_ORDER": {},
+    "DUPLICATE_CAPTURE": {
+      "deadline": 20
+    },
+    "LATE_SUCCESS": {},
+    "MISSING_SETTLEMENT": {
+      "for_a_person": 20
+    },
+    "ORPHAN_SETTLEMENT": {},
+    "SHORT_SETTLEMENT": {
+      "for_a_person": 10
+    }
+  },
+  "expected": {
+    "DEBITED_NO_ORDER": {
+      "expected": 20,
+      "expected_other_types": [],
+      "injected": 20,
+      "merchant": "m_e2e_01"
+    },
+    "DUPLICATE_CAPTURE": {
+      "expected": 20,
+      "expected_other_types": [],
+      "injected": 20,
+      "merchant": "m_e2e_03"
+    },
+    "LATE_SUCCESS": {
+      "expected": 20,
+      "expected_other_types": [
+        "DEBITED_NO_ORDER"
+      ],
+      "injected": 20,
+      "merchant": "m_e2e_02"
+    },
+    "MISSING_SETTLEMENT": {
+      "expected": 20,
+      "expected_other_types": [],
+      "injected": 20,
+      "merchant": "m_e2e_05"
+    },
+    "ORPHAN_SETTLEMENT": {
+      "expected": 20,
+      "expected_other_types": [],
+      "injected": 20,
+      "merchant": "m_e2e_06"
+    },
+    "SHORT_SETTLEMENT": {
+      "expected": 20,
+      "expected_other_types": [],
+      "injected": 20,
+      "merchant": "m_e2e_04"
+    }
+  },
+  "other": {
+    "m_e2e_01 FEED_STALL": {
+      "ESCALATED": 1
+    },
+    "m_e2e_02 DEBITED_NO_ORDER": {
+      "LINKED": 16
+    },
+    "m_e2e_02 FEED_STALL": {
+      "ESCALATED": 2
+    },
+    "m_e2e_03 DEBITED_NO_ORDER": {
+      "SELF_HEALED": 17
+    },
+    "m_e2e_03 FEED_STALL": {
+      "ESCALATED": 2
+    },
+    "m_e2e_04 DEBITED_NO_ORDER": {
+      "SELF_HEALED": 15
+    },
+    "m_e2e_04 FEED_STALL": {
+      "ESCALATED": 2
+    },
+    "m_e2e_05 DEBITED_NO_ORDER": {
+      "SELF_HEALED": 16
+    },
+    "m_e2e_05 FEED_STALL": {
+      "ESCALATED": 3
+    },
+    "m_e2e_06 DEBITED_NO_ORDER": {
+      "SELF_HEALED": 15
+    },
+    "m_e2e_06 FEED_STALL": {
+      "ESCALATED": 1
+    }
+  },
+  "settled": true,
+  "stable_seconds": 180,
+  "states": {
+    "DEBITED_NO_ORDER": {
+      "RESOLVED_AUTO": 20
+    },
+    "DUPLICATE_CAPTURE": {
+      "ESCALATED": 20
+    },
+    "LATE_SUCCESS": {
+      "RESOLVED_AUTO": 8,
+      "SELF_HEALED": 12
+    },
+    "MISSING_SETTLEMENT": {
+      "ESCALATED": 20
+    },
+    "ORPHAN_SETTLEMENT": {
+      "AWAITING_EVIDENCE": 20
+    },
+    "SHORT_SETTLEMENT": {
+      "ESCALATED": 10,
+      "RESOLVED_AUTO": 10
+    }
+  },
+  "waited_seconds": 185
+}

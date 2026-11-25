@@ -147,6 +147,40 @@ class DispatcherTest {
     }
 
     @Test
+    void aLateLookupAnswerFromAnEarlierAttemptSendsNothing() {
+        // BUG-012 (seed 209037988302806862, nightly): attempt 3's "no refund" came back six minutes late, while the same
+        // dispatcher held attempt 6's lease; it was taken as attempt 6's answer and the refund was sent after the
+        // gateway had forgotten the key, though attempt 4 had refunded meanwhile
+        refundCommand(T0);
+        claim(T0, "d1");
+        Instant second = command("cmd_r").nextAttemptAt();
+        OutboundCall staleLookup = claim(second, "d1").get(0);
+        assertThat(staleLookup.callId()).isEqualTo("cmd_r.2.lookup");
+        Instant third = command("cmd_r").nextAttemptAt();
+        OutboundCall currentLookup = claim(third, "d1").get(0);
+        assertThat(currentLookup.callId()).isEqualTo("cmd_r.3.lookup");
+
+        assertThat(result(staleLookup, Map.of("found", "no"), third.plusSeconds(1), "d1"))
+                .as("attempt 2's answer, under attempt 3's lease").isEmpty();
+        assertThat(command("cmd_r").status()).isEqualTo(CommandStatus.IN_FLIGHT);
+        assertThat(result(currentLookup, Map.of("found", "no"), third.plusSeconds(2), "d1"))
+                .extracting(OutboundCall::callId).as("attempt 3's own answer").containsExactly("cmd_r.3");
+    }
+
+    @Test
+    void aLateLookupAnswerThatFindsTheRefundStillCompletesIt() {
+        refundCommand(T0);
+        claim(T0, "d1");
+        OutboundCall staleLookup = claim(command("cmd_r").nextAttemptAt(), "d1").get(0);
+        Instant third = command("cmd_r").nextAttemptAt();
+        claim(third, "d1");
+        assertThat(result(staleLookup, Map.of("found", "yes", "refund_id", "rfd_7",
+                "processed_at", "2026-11-13T06:00:09Z"), third.plusSeconds(1), "d1")).isEmpty();
+        assertThat(command("cmd_r").result().orElseThrow()).as("a found refund is a fact, whatever attempt asked")
+                .containsEntry("status", "PROCESSED").containsEntry("refund_id", "rfd_7");
+    }
+
+    @Test
     void aRetryLooksUpFirstEvenWhenTheFirstSendWasStampedByAFastClock() {
         // BUG-008 (seed 8551): the first send was stamped 11 minutes ahead; by the dispatcher's own clock the retry is
         // seconds after it, though the gateway may have forgotten the key long ago

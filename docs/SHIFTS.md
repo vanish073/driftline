@@ -17,7 +17,7 @@ A **shift** is one focused working session. The shifts run in order. Each one en
 | 7 | Batch settlement matching and test corpus | M4 (part 1) | **DONE** (2026-11-16) |
 | 8 | Resolver, outbox, dispatcher, crash tests | **M4 done** | **DONE** (2026-11-16); **M4 DONE** |
 | 9 | Observability, security, Kubernetes | M5 (part 1) | **DONE** (2026-11-17) |
-| 10 | Load test, hot-account benchmark, results, README | **M5 done** | TODO |
+| 10 | Load test, hot-account benchmark, results, README | **M5 done** | **DONE** (2026-11-24); **M5 DONE** |
 
 ## Human tasks (only you can do these)
 
@@ -315,40 +315,43 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 
 **Prove:** every README number can be traced to a file in `docs/results/` and the script that produced it.
 **Exit (M5):** "README carries throughput, latency and simulation results." Status → M5 DONE.
+**Carry-over:** Build list done except the stretch item, seed shrinking, which was not started (left out rather than rushed into the simulator at the end). The design details are D81–D90: the hot-account benchmark D81 (`APPEND_SNAPSHOT` stays the default); the load test D82, with the backlog probe D83 and the committed heap D84 that it led to (50 events/s sustained on the laptop of §15.1, the limit below the next step of 100); the `nightly` profile, `nightly.yml`'s 200,000-seed campaigns, the canary matrix and the cumulative seed count D85; commons-lang3 lifted in the build tooling D86 (Dependabot alert 1 closes once this reaches `main`); the drain oracle's two modelling errors D87; `scripts/render-results` and its CI check D88; the traceability pass and the detection-lag statistic D89; the drain oracle's third modelling error D90. Prove: every README number is rendered from a file in `docs/results/` by `scripts/render-results`, each table naming its raw files and the scripts that wrote them, and CI's `claims-lint` job fails if the README differs. The seed count is 2,175,600 campaign seeds (965,600 `nightly`, 1,210,000 `pr`) with seven violations, all accounted for: two were BUG-012, the shift's one simulator-found bug (a late lookup answer from an earlier attempt sent a refund; fixed, seed in the regression corpus), and five were the drain oracle's error (D87, D90); the last three nightly campaigns ran Driftline's final code, run 45341082943 with no seed failing and every canary caught on both profiles, run 45420779430 with the one D90 seed, which passes since; run 45478126889, on the final commit with the fix, had no seed failing and caught every canary on both profiles. Open, and stated in the README: the snapshotter is not scheduled in production (D81), the finance-ops interview was never held (R25, D54), and the known weaknesses of D73 as amended by D74 and D76, D77 and `docs/THREAT_MODEL.md`.
 
 ---
 
 ## Traceability: requirement → shift → evidence
 
+Checked at the end of Shift 10 (D89): every Evidence entry names a test, file, result or CI job that exists, and R25 is stated as not met.
+
 | # | Requirement (REQUIREMENTS.md) | Shift | Evidence |
 |---|---|---|---|
-| R1 | Watch three records (orders, gateway, bank file) | 3, 5, 6 | world models; join; e2e |
-| R2 | Streaming: a break is found minutes after it happens | 5, 6, 10 | `driftline_detection_lag_seconds`; README |
-| R3 | Six break types with their automatic actions | 5, 7, 8 | detection tests; playbooks; e2e |
-| R4 | REST ingest; HMAC; idempotency key on every write; separate settlement worker | 6 | API integration tests; e2e |
-| R5 | Kafka, partitioned by merchant | 6 | partition driver integration tests |
-| R6 | Matcher in Java without Flink; keyed state; 3-way join; event-time watermarks | 5, 6 | watermark tests; simulation |
-| R7 | Double-entry ledger in PostgreSQL; append-only; every transaction sums to 0 | 2 | three-layer rejection tests |
-| R8 | Resolver state machine; outbox; never refund twice or lose a refund | 8 | crash-point simulation plus `OutboxCrashIT` |
-| R9 | Fake bank, gateway, network and clock, one seed | 3, 4 | kernel; determinism double-run |
-| R10 | OTel, Prometheus, Grafana, Compose, K8s, GitHub Actions | 1, 6, 9 | workflows; compose; dashboard; kind smoke |
-| R11 | Explicit legal transitions; dedupe table | 1, 3 | table tests; order-insensitivity property; INV-EVENT-ONCE |
-| R12 | Subset-sum; narrow by merchant, date and batch; exact paise; ambiguous; never guess | 7 | 35-case corpus; P1–P6; INV-AMBIGUITY-WITNESSED |
-| R13 | "Missing" only after the due date in event time | 5 | settlement watermark; INV-MISSING-IS-REAL; C07 |
-| R14 | Outbox + idempotency keys + ledger uniqueness; three layers | 2, 8 | DESIGN §9.3 matrix; C02, C03, C04, C05, C11 |
-| R15 | Hot accounts: row locking vs append-only with snapshots, both measured | 2, 10 | `hot-accounts.csv` |
-| R16 | Clock, Network, Store interfaces; real in production, fakes in the simulator | 1, 2, 3, 6 | ports; ArchUnit; composition roots |
-| R17 | Seeded single-threaded scheduler: deliver, drop, duplicate, delay, crash, jump clock | 3, 4 | fault catalogue |
-| R18 | Invariants after every step (money conserved, one final state, no double refund, deadlines) | 3, 4, 8 | §11.7 invariants |
-| R19 | A violation prints the seed; the seed reproduces | 3, 4 | REPRO line; regression corpus |
-| R20 | State the in-memory store limit; PostgreSQL via Testcontainers | 2, 10 | contract suite; README limits |
-| R21 | Bug log | 4–10 | `docs/BUGS.md` |
-| R22 | Security list, written in the README | 6, 9, 10 | §14 table tests; README |
+| R1 | Watch three records (orders, gateway, bank file) | 3, 5, 6 | world models `FakeMerchant`, `FakeGateway`, `SettlementFeed`; the join in `MatcherTest`; `ComposeE2eTest` (`docs/results/e2e-compose-shift8.txt`) |
+| R2 | Streaming: a break is found minutes after it happens | 5, 6, 10 | `driftline_detection_lag_seconds` (`ObservabilityIT`, the Grafana dashboard); the simulator's capture-to-break time for every stream break (`DetectionLagTest`; README "How soon a break is found", from `docs/results/sim-campaign-{calm,pr}-10k-shift10.txt`); settlement breaks wait for the bank's file or the due date by rule (§5.6) |
+| R3 | Six break types with their automatic actions | 5, 7, 8 | `DetectionTest`; the playbooks in `ResolverTest`; INV-DETECTED; Compose e2e 8 of 8; README "Breaks resolved without a person" |
+| R4 | REST ingest; HMAC; idempotency key on every write; separate settlement worker | 6 | `IngestApiTest`, `WebhookSignatureTest`, `IngestTablesIT`, `SettlementWorkerIT`, `RolesTest`; Compose e2e |
+| R5 | Kafka, partitioned by merchant | 6 | `PartitionDriverIT` (rebalance, zombie fenced at CP7, replay at CP6), `PartitionFencingIT`; INV-FENCED |
+| R6 | Matcher in Java without Flink; keyed state; 3-way join; event-time watermarks | 5, 6 | `MatcherTest`, `DetectionTest` (watermarks and timers), `OrderInsensitivityProperties`; the simulation campaigns |
+| R7 | Double-entry ledger in PostgreSQL; append-only; every transaction sums to 0 | 2 | `LedgerTxnTest`, `PostingRulesTest`, `LedgerDatabaseGuardsIT` (raw SQL), `LedgerConcurrencyIT`; INV-LEDGER-BALANCED, INV-LEDGER-ONCE |
+| R8 | Resolver state machine; outbox; never refund twice or lose a refund | 8 | `ResolverTest`, `DispatcherTest`, `ForcedCrashPointTest`, `OutboxCrashIT`, `OutboxDatabaseGuardsIT`; INV-REFUND-ONCE, INV-CUSTOMER-WHOLE; BUG-008, BUG-012 |
+| R9 | Fake bank, gateway, network and clock, one seed | 3, 4 | `SchedulerTest`, `SplitMix64Test`, `FaultInjectorTest`; `CalmCampaignTest` (each seed twice); the double-runs of every CI campaign (INV-DETERMINISTIC) |
+| R10 | OTel, Prometheus, Grafana, Compose, K8s, GitHub Actions | 1, 6, 9 | `.github/workflows/ci.yml`, `nightly.yml`; `deploy/compose`, `deploy/otel`, `deploy/prometheus`, `deploy/grafana`, `deploy/k8s`; `docs/results/grafana-shift9.png`, `jaeger-trace-shift9.png`; `scripts/kind-smoke.sh` (nightly) |
+| R11 | Explicit legal transitions; dedupe table | 1, 3 | `PaymentTransitionTableTest`, `OrderTransitionTableTest`, `PaymentStateMachineTest`, `OrderInsensitivityProperties`; INV-TRANSITIONS-LEGAL, INV-EVENT-ONCE |
+| R12 | Subset-sum; narrow by merchant, date and batch; exact paise; ambiguous; never guess | 7 | `SettlementCaseCorpusTest` (35 cases, 6 golden files), `SubsetSumProperties` (P1–P6), `BatchMatchingTest`; INV-AMBIGUITY-WITNESSED, INV-INFERRED-HONEST |
+| R13 | "Missing" only after the due date in event time | 5 | `DetectionTest`; INV-MISSING-IS-REAL; canary C07 (`docs/results/canaries.md`) |
+| R14 | Outbox + idempotency keys + ledger uniqueness; three layers | 2, 8 | DESIGN §9.3 matrix; `OutboxDatabaseGuardsIT`, `LedgerDatabaseGuardsIT`; canaries C02, C03, C04, C05, C11 |
+| R15 | Hot accounts: row locking vs append-only with snapshots, both measured | 2, 10 | `docs/results/hot-accounts.csv` (`scripts/hot-accounts.sh`); `BalanceStrategyEquivalenceIT`; README "Hot accounts" |
+| R16 | Clock, Network, Store interfaces; real in production, fakes in the simulator | 1, 2, 3, 6 | the ports in `core`; `CoreArchitectureTest`, `SimArchitectureTest`, `WireArchitectureTest`, `AppArchitectureTest`; the `@Configuration` composition roots in `app` |
+| R17 | Seeded single-threaded scheduler: deliver, drop, duplicate, delay, crash, jump clock | 3, 4 | the fault catalogue (§11.5); `SchedulerTest`, `FaultInjectorTest`; README "Failure model" |
+| R18 | Invariants after every step (money conserved, one final state, no double refund, deadlines) | 3, 4, 8 | 18 invariants in `Invariants` (§11.7 plus INV-DRAINED and INV-NO-ANOMALY), `ChecksTest`; 11 canaries |
+| R19 | A violation prints the seed; the seed reproduces | 3, 4 | the REPRO line and trace file (`SimMain`); `sim/regression-seeds.txt`, run first by every campaign |
+| R20 | State the in-memory store limit; PostgreSQL via Testcontainers | 2, 10 | the contract suites on both stores (`InMemory*ContractTest`, `*StoreContractIT`); README Non-claims |
+| R21 | Bug log | 4–10 | `docs/BUGS.md` (BUG-001 to BUG-012) |
+| R22 | Security list, written in the README | 6, 9, 10 | `docs/results/security-shift9.md` (each §14 row with its tests and CI jobs); `docs/THREAT_MODEL.md`; README "Security" |
 | R23 | M1–M5 "done when" criteria | 2, 4, 6, 8, 10 | Status table |
-| R24 | Numbers to report (events/s, p99, auto share, seeds, bugs) | 8, 10 | `docs/results/`; README |
-| R25 | Interview a finance-ops person before M4; who would pay | before 7, 10 | interview notes; README |
-| R26 | Prior art stated; data from the simulator; formats modelled on public docs | 5, 10 | `docs/formats.md`; README |
-| R27 | RBI T+1 / T+5 and ₹100 per day | 8 | `deadlines.yaml`; compensation tests |
+| R24 | Numbers to report (events/s, p99, auto share, seeds, bugs) | 8, 10 | `docs/results/`; README "The numbers" and "Simulation and canaries", rendered by `scripts/render-results` and checked by CI's `claims-lint` job |
+| R25 | Interview a finance-ops person before M4; who would pay | before 7, 10 | **Not met as written:** no one who does the job could be reached; public desk research stood in (D54, `docs/research/finance-ops-desk-research.md`; the unused questions in `finance-ops-interview.md`); README "Who would pay" says so |
+| R26 | Prior art stated; data from the simulator; formats modelled on public docs | 5, 10 | `docs/formats.md`; README "Prior art" |
+| R27 | RBI T+1 / T+5 and ₹100 per day | 8 | `config/deadlines.yaml`; `DeadlinesYamlTest`, `DeadlineRuleTest`, `ResolverTest` (compensation) |
 
 ## Reviewer concerns: how each is closed
 
@@ -356,5 +359,5 @@ Plus about 6 **golden end-to-end files** (`*.csv`, parsed, matched, ledger posti
 |---|---|---|
 | "Kafka + PostgreSQL + Kubernetes + simulation is a large scope" | Simulator first; one image and one topic; K8s is manifests plus a kind smoke test, not a production cluster; time-boxed shifts; explicit cut and never-cut lists (DESIGN §20) | This plan; the Carry-over lines; the cut list honoured |
 | "Don't claim exactly-once processing merely because you use Kafka" | DESIGN §2: at-least-once delivery, effectively-once *effects*, the mechanism per effect, non-claims, the failure model; offsets in PostgreSQL rather than Kafka EOS; **CI `claims-lint`** | The README Guarantees section; the green `claims-lint` job |
-| "Demonstrate idempotent effects, crash recovery and ledger invariants" | 17 simulator invariants including world-oracle checks; crash points CP1–CP8 in the simulator **and** with real PostgreSQL (`OutboxCrashIT`); the Compose chaos run; DB-level ledger enforcement tested with raw SQL; 11 canaries proving the checks bite | CI jobs; `docs/results/canaries.md`; `docs/BUGS.md` |
+| "Demonstrate idempotent effects, crash recovery and ledger invariants" | 18 simulator invariants including world-oracle checks; crash points CP1–CP8 in the simulator **and** with real PostgreSQL (`OutboxCrashIT`); the Compose chaos run; DB-level ledger enforcement tested with raw SQL; 11 canaries proving the checks bite | CI jobs; `docs/results/canaries.md`; `docs/BUGS.md` |
 | "Settlement matching needs real test cases, not just an algorithm" | A 35-case YAML corpus with expected outcomes; golden CSV files run end to end; 6 properties against a brute-force oracle; simulator ground-truth checks on inferred and ambiguous results | `settlement-cases/`; the jqwik reports; INV-INFERRED-HONEST |

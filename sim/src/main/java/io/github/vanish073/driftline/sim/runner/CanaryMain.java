@@ -13,7 +13,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * {@code ./gradlew :sim:canaries} (DESIGN §11.10, §11.12): for each active canary, runs {@code pr} seeds from
+ * {@code ./gradlew :sim:canaries} (DESIGN §11.10, §11.12): for each active canary, runs seeds of {@code --profile}
+ * (default {@code pr}; the nightly matrix also runs {@code nightly}, D85) from
  * {@code --from} (default 1) with that one bug planted until a seed fails, and prints <em>seeds-to-detection</em>
  * and the invariant that caught it. A canary is a miss if nothing fails within {@code --budget} seeds (default
  * {@value CanaryCatalog#SEED_BUDGET}) or if the first failure is not one of its expected invariants. Exit status 1 on
@@ -29,6 +30,7 @@ public final class CanaryMain {
         int budget = CanaryCatalog.SEED_BUDGET;
         int threads = Runtime.getRuntime().availableProcessors();
         Path out = null;
+        Profile profile = Profile.PR;
         List<Canary> canaries = new ArrayList<>(CanaryCatalog.active());
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -36,6 +38,7 @@ public final class CanaryMain {
                 case "--budget" -> budget = Integer.parseInt(args[++i]);
                 case "--threads" -> threads = Integer.parseInt(args[++i]);
                 case "--out" -> out = Path.of(args[++i]);
+                case "--profile" -> profile = Profile.fromId(args[++i]);
                 case "--canary" -> {
                     canaries.clear();
                     for (String code : args[++i].split(",")) {
@@ -60,7 +63,7 @@ public final class CanaryMain {
             for (long chunk = from; chunk < from + budget && caught == null; chunk += threads) {
                 List<CampaignMain.Job> jobs = new ArrayList<>();
                 for (long s = chunk; s < Math.min(chunk + threads, from + budget); s++) {
-                    jobs.add(new CampaignMain.Job(s, Profile.PR, Canaries.of(canary), "canary"));
+                    jobs.add(new CampaignMain.Job(s, profile, Canaries.of(canary), "canary"));
                 }
                 for (RunResult r : CampaignMain.runAll(jobs, threads)) {
                     if (caught == null) {
@@ -88,8 +91,8 @@ public final class CanaryMain {
             }
             table.add(row);
         }
-        System.out.printf(Locale.ROOT, "canaries: profile=pr from=%d budget=%d threads=%d wall=%.1fs%n",
-                from, budget, threads, (System.nanoTime() - started) / 1e9);
+        System.out.printf(Locale.ROOT, "canaries: profile=%s from=%d budget=%d threads=%d wall=%.1fs%n",
+                profile.id(), from, budget, threads, (System.nanoTime() - started) / 1e9);
         table.forEach(System.out::println);
         if (out != null) {
             if (out.getParent() != null) {

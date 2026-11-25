@@ -8,6 +8,7 @@ import io.github.vanish073.driftline.app.kafka.KafkaClients;
 import io.github.vanish073.driftline.app.kafka.KafkaEventPublisher;
 import io.github.vanish073.driftline.app.kafka.PartitionDriver;
 import io.github.vanish073.driftline.app.merchant.MerchantRegistry;
+import io.github.vanish073.driftline.app.observability.BacklogProbe;
 import io.github.vanish073.driftline.app.observability.DispatcherObserver;
 import io.github.vanish073.driftline.app.observability.MatcherObserver;
 import io.github.vanish073.driftline.app.observability.ResolverObserver;
@@ -24,11 +25,13 @@ import io.github.vanish073.driftline.core.port.Clock;
 import io.github.vanish073.driftline.core.port.Store;
 import io.github.vanish073.driftline.core.resolver.Resolver;
 import io.github.vanish073.driftline.store.postgres.SettlementInbox;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.springframework.beans.factory.ObjectProvider;
@@ -74,6 +77,24 @@ public class RoleConfiguration {
                 () -> new KafkaConsumer<>(KafkaClients.consumer(kafka, "driftline-matcher-" + owner)), kafka.topic(),
                 owner, crashPoints, observer, kafka.pollTimeout(), kafka.maxTickInterval(),
                 kafka.sessionTimeout().multipliedBy(3));
+    }
+
+    /** The backlog probe's own Kafka client: the driver's consumer is not thread-safe (D83). */
+    @Bean(destroyMethod = "close")
+    @Profile(Roles.MATCHER)
+    Admin backlogProbeAdmin(DriftlineProperties properties) {
+        return Admin.create(KafkaClients.admin(properties.kafka(), "driftline-backlog-" + leaseOwner(properties)));
+    }
+
+    /** {@code driftline_consumer_lag_records}, measured every 5 s from outside the driver loop (D83). */
+    @Bean
+    @Profile(Roles.MATCHER)
+    BacklogProbe backlogProbe(MeterRegistry registry, PartitionDriver driver, Admin backlogProbeAdmin, Store store,
+                              DriftlineProperties properties) {
+        DriftlineProperties.Kafka kafka = properties.kafka();
+        return new BacklogProbe(registry, driver::ownedPartitions,
+                partitions -> KafkaClients.endOffsets(backlogProbeAdmin, kafka.topic(), partitions, kafka.ackTimeout()),
+                BacklogProbe.storedOffsets(store), Duration.ofSeconds(5));
     }
 
     @Bean

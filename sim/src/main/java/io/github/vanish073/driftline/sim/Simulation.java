@@ -33,6 +33,7 @@ import io.github.vanish073.driftline.sim.node.ResolverNode;
 import io.github.vanish073.driftline.sim.node.SettlementWorkerNode;
 import io.github.vanish073.driftline.sim.random.SplitMix64;
 import io.github.vanish073.driftline.sim.store.InMemoryStore;
+import io.github.vanish073.driftline.sim.world.Delivery;
 import io.github.vanish073.driftline.sim.world.FakeBank;
 import io.github.vanish073.driftline.sim.world.FakeGateway;
 import io.github.vanish073.driftline.sim.world.FakeMerchant;
@@ -251,8 +252,10 @@ public final class Simulation {
                 }
             }
             if (violation.isEmpty()) {
-                violation = invariants.atEnd(scheduler.now(), log, gateway.undelivered() + feed.undelivered()
-                        + merchants.values().stream().mapToLong(FakeMerchant::undelivered).sum());
+                long judgedBefore = endMillis - Delivery.DRAIN_GRACE_MILLIS;
+                violation = invariants.atEnd(scheduler.now(), log, gateway.undelivered(judgedBefore)
+                        + feed.undelivered(judgedBefore)
+                        + merchants.values().stream().mapToLong(m -> m.undelivered(judgedBefore)).sum());
             }
             if (violation.isEmpty() && !coordinator.allAssigned()) {
                 violation = Optional.of(new Violation(Invariants.DRAINED, "a partition has no owner after HEAL",
@@ -312,6 +315,7 @@ public final class Simulation {
             stats.merge("resolution." + b.type().name() + "." + b.state().name(), 1L, Long::sum);
         }
         stats.put("oracle.detected", (long) invariants.detected().size());
+        stats.putAll(invariants.detectionLag());
         stats.put("oracle.covered.idempotency_conflict", invariants.coveredByIdempotencyConflict());
         stats.put("oracle.covered.unresolved_batch", invariants.coveredByUnresolvedBatch());
         long cacheHits = 0;

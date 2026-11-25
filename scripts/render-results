@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""Fills in the README's result tables from the raw outputs in docs/results/ (DESIGN §17: every README number comes
+from a committed script and its raw output).
+
+    scripts/render-results              rewrites every generated block in README.md in place
+    scripts/render-results --check      fails, printing a diff, if any block differs from what the raw outputs give
+    scripts/render-results --print NAME prints one block (for writing the README around it)
+
+A generated block sits between `<!-- results:NAME -->` and `<!-- /results:NAME -->`; everything between the two lines
+belongs to this script, everything outside them to the README's author. Each block ends with the files it was rendered
+from and the scripts that wrote them. Every block must appear in the README exactly once, so no number can be left
+out or copied by hand. Only the standard library; the output depends only on the input files.
+"""
+import csv
+import difflib
+import glob
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS = os.path.join(ROOT, "docs", "results")
+README = os.path.join(ROOT, "README.md")
+
+# The break types and states as scripts/resolution-share.py and scripts/resolution-compose.py count them.
+ONE_TO_ONE = ["DEBITED_NO_ORDER", "LATE_SUCCESS", "DUPLICATE_CAPTURE", "SHORT_SETTLEMENT", "MISSING_SETTLEMENT",
+              "ORPHAN_SETTLEMENT"]
+AUTO = ["RESOLVED_AUTO", "SELF_HEALED", "LINKED"]
+OPEN = ["DETECTED", "AWAITING_EVIDENCE", "ACTION_PENDING"]
+STATES = AUTO + ["ESCALATED"] + OPEN
+
+
+def path(name):
+    return os.path.join(RESULTS, name)
+
+
+def load_json(name):
+    with open(path(name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def header_lines(name, prefixes):
+    """The `# key: value` lines at the top of a raw output whose key is in prefixes, in file order."""
+    out = []
+    with open(path(name), encoding="utf-8") as f:
+        for raw in f:
+            if not raw.startswith("#"):
+                break
+            if raw[1:].strip().split(":")[0] in prefixes:
+                out.append(raw[1:].strip())
+    return out
+
+
+def thousands(n):
+    return "{:,}".format(n)
+
+
+def pct(n, total):
+    return "%.1f%%" % (100.0 * n / total) if total else "-"
+
+
+def seconds(s):
+    """A latency: whole milliseconds below one second, else seconds to one decimal."""
+    return "%d ms" % round(s * 1000) if s < 1 else "%.1f s" % s
+
+
+def ms(v):
+    return "%.1f ms" % v if v < 100 else "%d ms" % round(v)
+
+
+def source(files, writers):
+    """The block's last line: its raw files (linked, or named when a glob) and what wrote them."""
+    named = ["`docs/results/%s`" % f if "*" in f else "[`%s`](docs/results/%s)" % (f, f) for f in files]
+    return "*Raw output: %s. Written by %s; rendered by `scripts/render-results`.*" % (
+        ", ".join(named), ", ".join(w if "`" in w else "`%s`" % w for w in writers))
+
+
+def table(head, aligns, rows):
+    if len(aligns) != len(head) or any(len(r) != len(head) for r in rows):
+        sys.exit("render-results: a table's columns do not line up: %s" % head)
+    lines = ["| " + " | ".join(head) + " |", "|" + "|".join("---:" if a == "r" else "---" for a in aligns) + "|"]
+    lines += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
+    return lines
+
+
+# ---- blocks ---------------------------------------------------------------------------------------------------------
+
+def block_load():
+    summary = load_json("load-summary.json")
+    steps = sorted(glob.glob(path("load-step-*.json")),
+                   key=lambda p: int(re.search(r"load-step-(\d+)\.json$", p).group(1)))
+    best = summary["highest_sustained_offered_rate"]
+    runs = [(os.path.basename(p), "%d" % int(load_json(os.path.basename(p))["generator"]["offered_rate"])) for p in steps]
+    runs += [("load-p99-50pct.json", "%d (50%% of %d)" % (summary["at_50pct"]["offered_rate"], best)),
+             ("load-p99-80pct.json", "%d (80%% of %d)" % (summary["at_80pct"]["offered_rate"], best))]
+    rows = []
+    for name, label in runs:
+        d = load_json(name)
+        p, g = d["prometheus"], d["generator"]
+        rows.append([label, d["verdict"], "%.1f" % p["events_consumed_per_s"], seconds(p["event_to_match_p50_s"]),
+                     seconds(p["event_to_match_p99_s"]), "%s of %s" % (thousands(g["accepted"]), thousands(g["arrivals"])),
+                     thousands(int(p["consumer_lag_max"])), "%.2f s" % d["jvm"]["gc_pause_max_s"]])
+    higher = sorted(st["rate"] for st in summary["steps"] if st["rate"] > best)
+    limit = {"not_sustained": "the limit lies between %d events/s and the next step, %s events/s" % (
+                 best, higher[0] if higher else "?"),
+             "invalid_step": "a step after %d events/s was invalid, so %d events/s is only a lower bound" % (best, best)}
+    out = ["**Highest sustained rate: %d events/s** (%s). Each step ran 10 minutes; the columns describe its last 5." % (
+        best, limit.get(summary["stopped_by"], "every rate tried was sustained"))]
+    out += [""] + table(["Offered (events/s)", "Result", "Consumed (events/s)", "Event-to-match p50", "p99",
+                         "Requests accepted", "Largest backlog (records)", "Longest GC pause"],
+                        "llrrrrrr", rows)
+    out += ["", "*Sustained:* " + re.sub(r"^sustained:\s*", "", summary["definition"]) + "."]
+    out += ["", "Setup: " + "; ".join(header_lines("load-test.txt", ("host", "containers"))) + "."]
+    out += ["", source(["load-summary.json", "load-step-*.json", "load-p99-*.json", "load-test.txt"],
+                       ["scripts/load-test.sh", "scripts/load-evaluate.py"])]
+    return out
+
+
+def block_hot_accounts():
+    with open(path("hot-accounts.csv"), encoding="utf-8", newline="") as f:
+        rows = [[r["strategy"], r["writers"], r["tps"], ms(float(r["commit_p50_ms"])), ms(float(r["commit_p99_ms"])),
+                 ms(float(r["read_p50_ms"])), ms(float(r["read_p99_ms"])), r["errors"]] for r in csv.DictReader(f)]
+    out = table(["Strategy", "Concurrent writers", "Commits/s", "Commit p50", "Commit p99", "Balance read p50",
+                 "Balance read p99", "Errors"], "lrrrrrrr", rows)
+    out += ["", "Setup: " + "; ".join(header_lines("hot-accounts.txt", ("host", "postgres", "runs"))) + "."]
+    out += ["", source(["hot-accounts.csv", "hot-accounts.txt", "hot-accounts.svg"],
+                       ["scripts/hot-accounts.sh", "scripts/hot-accounts-chart.py"])]
+    return out
+
+
+def share_rows(states_by_type, injected=None):
+    rows = []
+    for t in [t for t in ONE_TO_ONE if t in states_by_type] + sorted(t for t in states_by_type if t not in ONE_TO_ONE):
+        c = states_by_type[t]
+        unknown = sorted(set(c) - set(STATES))
+        if unknown:
+            sys.exit("render-results: unexpected states for %s: %s" % (t, ", ".join(unknown)))
+        total = sum(c.values())
+        row = [t if t in ONE_TO_ONE else t + " (anomaly)"]
+        if injected is not None:
+            row.append(injected[t])
+        row += [thousands(total), "**%s**" % pct(sum(c.get(s, 0) for s in AUTO), total)]
+        row += [pct(c.get(s, 0), total) for s in AUTO + ["ESCALATED"]]
+        row.append(pct(sum(c.get(s, 0) for s in OPEN), total))
+        rows.append(row)
+    return rows
+
+
+SHARE_HEAD = ["Breaks", "Closed without a person", "RESOLVED_AUTO", "SELF_HEALED", "LINKED", "ESCALATED", "Still open"]
+
+
+def block_resolution_sim():
+    name = "sim-campaign-pr-10k-shift10.txt"
+    line = re.compile(r"^\s*resolution\.([A-Z_]+)\.([A-Z_]+) = (\d+)\s*$")
+    counts, seeds = {}, None
+    with open(path(name), encoding="utf-8") as f:
+        for raw in f:
+            m = line.match(raw)
+            if m:
+                counts.setdefault(m.group(1), {})[m.group(2)] = int(m.group(3))
+            m = re.match(r"^totals over (\d+) campaign seeds:", raw)
+            if m:
+                seeds = int(m.group(1))
+    if not counts or seeds is None:
+        sys.exit("render-results: no campaign totals in " + name)
+    out = ["Every break of %s fresh `pr` seeds, in its state when its seed's run ended "
+           "(*closed without a person* = RESOLVED_AUTO + SELF_HEALED + LINKED)." % thousands(seeds)]
+    out += [""] + table(["Type"] + SHARE_HEAD, "l" + "r" * len(SHARE_HEAD), share_rows(counts))
+    out += ["", "; ".join(h for h in header_lines(name, ("command", "base commit"))) + "."]
+    out += ["", source([name, "auto-resolution-shift10.md"], ["`./gradlew :sim:campaign`", "scripts/resolution-share.py"])]
+    return out
+
+
+LAG_CAMPAIGNS = [("calm", "sim-campaign-calm-10k-shift10.txt"), ("pr", "sim-campaign-pr-10k-shift10.txt")]
+LAG_SHOWN = [(1, "1 min"), (5, "5 min"), (15, "15 min"), (60, "1 h"), (1440, "1 day")]
+
+
+def share(n, total):
+    """A percentage that never rounds a few breaks away: 0% and 100% only when exact, else <0.1% or >99.9%."""
+    if n == 0 or n == total:
+        return "%d%%" % (100 * n // total)
+    v = 100.0 * n / total
+    return "<0.1%" if v < 0.05 else ">99.9%" if v >= 99.95 else "%.1f%%" % v
+
+
+def lag_counts(name):
+    """`detection_lag.TYPE.BUCKET = N` from a campaign's totals: TYPE -> {minutes bound (None past a day): count}."""
+    line = re.compile(r"^\s*detection_lag\.([A-Z_]+)\.(le_(\d+)m|gt_1d|[a-z_]+) = (\d+)\s*$")
+    counts = {}
+    with open(path(name), encoding="utf-8") as f:
+        for raw in f:
+            m = line.match(raw)
+            if m:
+                if m.group(3) is None and m.group(2) != "gt_1d":
+                    sys.exit("render-results: %s counts %s breaks %s, which the world never captured" % (
+                        name, m.group(1), m.group(2)))
+                bound = int(m.group(3)) if m.group(3) else None
+                counts.setdefault(m.group(1), {})[bound] = int(m.group(4))
+    if not counts:
+        sys.exit("render-results: no detection_lag totals in " + name)
+    return counts
+
+
+def block_detection_lag():
+    rows = []
+    for profile, name in LAG_CAMPAIGNS:
+        counts = lag_counts(name)
+        for t in [t for t in ONE_TO_ONE if t in counts]:
+            c = counts[t]
+            total = sum(c.values())
+            row = [profile, t, thousands(total)]
+            row += [share(sum(n for b, n in c.items() if b is not None and b <= limit), total)
+                    for limit, _ in LAG_SHOWN]
+            row.append(share(c.get(None, 0), total))
+            rows.append(row)
+    head = ["Profile", "Type", "Breaks"] + ["Within " + label for _, label in LAG_SHOWN] + ["Later"]
+    out = ["How long after the simulated world captured the payment each stream break was first committed, in "
+           "simulated time, over the same 10,000 seeds of each profile (`calm`: no faults; `pr`: faults on)."]
+    out += [""] + table(head, "ll" + "r" * (len(head) - 2), rows)
+    out += [""] + ["%s: %s." % (profile, "; ".join(header_lines(name, ("command", "base commit"))))
+                   for profile, name in LAG_CAMPAIGNS]
+    out += ["", source([name for _, name in LAG_CAMPAIGNS], ["`./gradlew :sim:campaign`"])]
+    return out
+
+
+def block_resolution_compose():
+    d = load_json("auto-resolution-compose.json")
+    injected = {t: e["injected"] for t, e in d["expected"].items()}
+    sizes = sorted(set(injected.values()))
+    out = ["%s breaks of each type injected on the running Compose stack, each type on its own merchant, counted once "
+           "no state had changed for %d seconds (settled: %s)." % (
+               sizes[0] if len(sizes) == 1 else "Up to %d" % sizes[-1], d["stable_seconds"],
+               "yes" if d["settled"] else "no")]
+    out += [""] + table(["Type", "Injected"] + SHARE_HEAD, "lr" + "r" * len(SHARE_HEAD), share_rows(d["states"], injected))
+    reasons = ["%s: %s" % (t, ", ".join("%s (%d)" % kv for kv in sorted(r.items())))
+               for t, r in sorted(d["escalation_reasons"].items()) if r]
+    if reasons:
+        out += ["", "Escalation reasons: " + "; ".join(reasons) + "."]
+    out += ["", source(["auto-resolution-compose.json", "auto-resolution-compose.md"],
+                       ["scripts/resolution-compose.sh", "scripts/resolution-compose.py"])]
+    return out
+
+
+def bug_rows():
+    rows = []
+    with open(os.path.join(ROOT, "docs", "BUGS.md"), encoding="utf-8") as f:
+        for raw in f:
+            if raw.startswith("| BUG-"):
+                cells = [c.strip() for c in raw.strip().strip("|").split("|")]
+                if len(cells) != 9:
+                    sys.exit("render-results: BUGS.md row %s has %d cells, not 9" % (cells[0], len(cells)))
+                rows.append(cells)
+    return rows
+
+
+def block_seeds():
+    d = load_json("seed-count.json")
+    bugs = bug_rows()
+    rows = [[p, thousands(t["seeds"]), thousands(t["seeds"] - t["failed_seeds"]), thousands(t["failed_seeds"])]
+            for p, t in sorted(d["by_profile"].items())]
+    rows.append(["**total**", "**%s**" % thousands(d["total_seeds"]),
+                 "**%s**" % thousands(d["total_seeds"] - d["failed_seeds"]), "**%s**" % thousands(d["failed_seeds"])])
+    runs = sorted({s["run_id"] for s in d["summaries"] if s["source"] == "github"})
+    local = sum(s["seeds"] for s in d["summaries"] if s["source"] != "github")
+    out = table(["Profile", "Campaign seeds", "With zero violations", "With a violation"], "lrrr", rows)
+    out += ["", "Fresh seeds with no planted bug, from %d GitHub Actions runs' campaign shards and %s seeds run locally. "
+            "Real bugs the simulator found: **%d** (`docs/BUGS.md`; canaries are not bugs)." % (
+                len(runs), thousands(local), len(bugs))]
+    out += ["", source(["seed-count.json", "seed-count.md"], ["scripts/seed-count.sh", "scripts/seed-count.py"])]
+    return out
+
+
+def canary_table(name):
+    rows = {}
+    with open(path(name), encoding="utf-8") as f:
+        for raw in f:
+            m = re.match(r"^\| (C\d\d) `([A-Z_]+)` \| (.*?) \| (\d+|not caught) \| ([^|]*) \| ([^|]*) \| ([^|]*) \|$",
+                         raw.rstrip("\n"))
+            if m:
+                rows[m.group(1)] = {"name": m.group(2), "bug": m.group(3), "seeds": m.group(4),
+                                    "first": m.group(5).strip(), "by": m.group(6).strip(),
+                                    "expected": [e.strip() for e in m.group(7).split(",")]}
+    if not rows:
+        sys.exit("render-results: no canary rows in " + name)
+    for c, r in rows.items():
+        if r["seeds"] == "not caught" or r["by"] not in r["expected"]:
+            sys.exit("render-results: %s in %s was not caught by an expected invariant" % (c, name))
+    return rows
+
+
+def block_canaries():
+    base = canary_table("canaries.md")
+    profiles = ["pr", "nightly"]
+    matrix = sorted(glob.glob(path("canaries-matrix-run-*-*.md")),
+                    key=lambda p: (re.search(r"run-(\d+)-", p).group(1), profiles.index(re.search(r"-([a-z]+)\.md$", p).group(1))))
+    if not matrix:
+        sys.exit("render-results: no canary matrix tables in docs/results")
+    cols = []
+    for p in matrix:
+        run, profile = re.search(r"canaries-matrix-run-(\d+)-([a-z]+)\.md$", p).groups()
+        cols.append(("`%s`, run %s" % (profile, run), canary_table(os.path.basename(p))))
+    if any(set(t) != set(base) for _, t in cols):
+        sys.exit("render-results: the canary tables do not list the same canaries")
+    head = ["Canary", "Planted bug", "`pr`, from seed 1"] + [c for c, _ in cols] + ["Caught by (from seed 1)"]
+    rows = [["%s `%s`" % (c, base[c]["name"]), base[c]["bug"], base[c]["seeds"]] + [t[c]["seeds"] for _, t in cols]
+            + [base[c]["by"]] for c in sorted(base)]
+    out = ["Seeds until each planted bug is first caught, by an invariant expected to catch it (a different "
+           "invariant would not count). The CI columns start from fresh seeds each nightly run."]
+    out += [""] + table(head, "ll" + "r" * (1 + len(cols)) + "l", rows)
+    out += ["", source(["canaries.md"] + [os.path.basename(p) for p in matrix],
+                       ["`./gradlew :sim:canaries`", "nightly.yml's `canary-matrix`"])]
+    return out
+
+
+def block_bugs():
+    rows = []
+    for c in bug_rows():
+        invariant = re.sub(r"\s*\([^()]*\)", "", c[4])
+        rows.append([c[0], c[2], c[3].split(" · ")[1].strip("` ") if " · " in c[3] else "", invariant,
+                     c[8].split(":")[0]])
+    out = table(["Bug", "Shift", "Profile", "Invariant violated", "Would a unit test have caught it?"], "lrlll", rows)
+    out += ["", "*From [`docs/BUGS.md`](docs/BUGS.md), which gives each bug's seed, symptom, root cause and fix; "
+            "rendered by `scripts/render-results`.*"]
+    return out
+
+
+BLOCKS = {
+    "load": block_load,
+    "hot-accounts": block_hot_accounts,
+    "resolution-sim": block_resolution_sim,
+    "detection-lag": block_detection_lag,
+    "resolution-compose": block_resolution_compose,
+    "seeds": block_seeds,
+    "canaries": block_canaries,
+    "bugs": block_bugs,
+}
+
+
+def render(text):
+    out, pos = [], 0
+    seen = []
+    opening = re.compile(r"^<!-- results:([a-z-]+) -->$", re.M)
+    for m in opening.finditer(text):
+        name = m.group(1)
+        if m.start() < pos:
+            sys.exit("render-results: block %s starts inside another block" % name)
+        if name not in BLOCKS:
+            sys.exit("render-results: unknown block %s" % name)
+        if name in seen:
+            sys.exit("render-results: block %s appears twice" % name)
+        seen.append(name)
+        end = text.find("\n<!-- /results:%s -->" % name, m.end())
+        if end < 0:
+            sys.exit("render-results: block %s has no closing line" % name)
+        out.append(text[pos:m.end()])
+        out.append("\n" + "\n".join(BLOCKS[name]()))
+        pos = end
+    out.append(text[pos:])
+    missing = [b for b in BLOCKS if b not in seen]
+    if missing:
+        sys.exit("render-results: README.md lacks the blocks " + ", ".join(missing))
+    return "".join(out)
+
+
+def main(argv):
+    if len(argv) == 3 and argv[1] == "--print" and argv[2] in BLOCKS:
+        print("\n".join(BLOCKS[argv[2]]()))
+        return 0
+    if len(argv) > 2 or (len(argv) == 2 and argv[1] != "--check"):
+        sys.exit(__doc__)
+    if not os.path.exists(README):
+        sys.exit("render-results: no README.md")
+    with open(README, encoding="utf-8") as f:
+        text = f.read()
+    new = render(text)
+    if len(argv) == 2:
+        if new != text:
+            sys.stdout.writelines(difflib.unified_diff(text.splitlines(True), new.splitlines(True),
+                                                       "README.md", "README.md as rendered"))
+            print("render-results: README.md is out of date; run scripts/render-results", file=sys.stderr)
+            return 1
+        print("render-results: README.md matches docs/results")
+        return 0
+    if new != text:
+        with open(README, "w", encoding="utf-8", newline="\n") as f:
+            f.write(new)
+    print("render-results: %d blocks rendered" % len(BLOCKS))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

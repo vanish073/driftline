@@ -22,6 +22,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +35,12 @@ import org.springframework.context.ConfigurableApplicationContext;
  * rotation leaves one audit row and the secret appears nowhere in it.
  */
 class SecretRotationIT {
+
+    /**
+     * Two days ahead, whatever today is: a first settlement date already past makes a settlement break due on the
+     * first record, which this test does not expect (it passed until 2026-11-18, then failed).
+     */
+    static final String FIRST_SETTLEMENT = LocalDate.now(ZoneOffset.UTC).plusDays(2).toString();
 
     static final String MERCHANT = "m_rotate";
     static final String OLD = "test-only-webhook-secret-before-rotation";
@@ -73,9 +81,9 @@ class SecretRotationIT {
         Files.writeString(bootstrap, """
                 {"format":"driftline-bootstrap-v1",
                  "merchants":{"%s":{"partition":2,"fee_bps":200,"gst_bps":1800,"cycle_days":1,
-                                    "first_settlement_date":"2026-11-18","webhook_secret":"%s","token":"test-token-rotation_m"}},
+                                    "first_settlement_date":"%s","webhook_secret":"%s","token":"test-token-rotation_m"}},
                  "ops_token":"%s","service_token":"test-token-rotation_service"}
-                """.formatted(MERCHANT, OLD, OPS_TOKEN));
+                """.formatted(MERCHANT, FIRST_SETTLEMENT, OLD, OPS_TOKEN));
         try (ConfigurableApplicationContext app = DriftlineApplication.application("ingest").run(
                 "--spring.datasource.url=" + url,
                 "--spring.datasource.username=" + Containers.APP_USER,

@@ -165,9 +165,11 @@ public final class FakeMerchant {
         trace.line(scheduler.now(), node, status.wireName() + " " + order.id + " v" + order.version
                 + (reuse ? " REUSING key " + key : ""));
         String sentKey = key;
-        Delivery delivery = new Delivery(scheduler, node, (attemptNo, reply) -> network.send("ingest",
-                () -> ingress.receive(new Request.OrderEvent(merchantId, body, Optional.of(sentKey)),
-                        status2 -> network.send(node, () -> reply.accept(status2)))), at -> null);
+        Delivery delivery = new Delivery(scheduler, node, (attemptNo, answered, reply) -> network.send("ingest",
+                () -> ingress.receive(new Request.OrderEvent(merchantId, body, Optional.of(sentKey)), status2 -> {
+                    answered.accept(status2);
+                    network.send(node, () -> reply.accept(status2));
+                })), at -> null);
         deliveries.add(delivery);
         delivery.start();
     }
@@ -176,9 +178,9 @@ public final class FakeMerchant {
         return Optional.ofNullable(orders.get(id));
     }
 
-    /** Deliveries never acknowledged, including those given up on. */
-    public long undelivered() {
-        return deliveries.stream().filter(d -> !d.acked()).count();
+    /** Deliveries Driftline never accepted though first sent before {@code judgedBefore} (D87), given up on or not. */
+    public long undelivered(long judgedBefore) {
+        return deliveries.stream().filter(d -> d.undrained(judgedBefore)).count();
     }
 
     /** Keys this merchant's buggy client sent with a second, different body. */

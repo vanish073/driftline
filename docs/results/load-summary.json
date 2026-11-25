@@ -1,0 +1,34 @@
+{
+  "at_50pct": {
+    "event_to_match_p50_s": 0.016557042141732287,
+    "event_to_match_p99_s": 2.7384393318066587,
+    "events_consumed_per_s": 25.014126822009064,
+    "offered_rate": 25.0,
+    "verdict": "sustained"
+  },
+  "at_80pct": {
+    "event_to_match_p50_s": 0.025740972373085338,
+    "event_to_match_p99_s": 2.0020220189030113,
+    "events_consumed_per_s": 39.84852366729957,
+    "offered_rate": 40.0,
+    "verdict": "sustained"
+  },
+  "definition": "sustained: over the last 5 minutes of a 10-minute step, consumer lag (end offsets minus stored offsets, D83) did not grow and the generator saw no rejection, error, skip or unanswered request (DESIGN \u00a717)",
+  "highest_sustained_offered_rate": 50,
+  "steps": [
+    {
+      "rate": 25,
+      "result": "sustained"
+    },
+    {
+      "rate": 50,
+      "result": "sustained"
+    },
+    {
+      "rate": 100,
+      "result": "not_sustained"
+    }
+  ],
+  "stopped_by": "not_sustained",
+  "stopped_by_means": "the limit lies between the highest sustained rate and the next step"
+}

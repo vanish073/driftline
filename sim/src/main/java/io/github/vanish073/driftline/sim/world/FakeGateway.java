@@ -649,10 +649,13 @@ public final class FakeGateway {
             return false;
         }
         trace.line(scheduler.now(), "gateway", what);
-        Delivery delivery = new Delivery(scheduler, "gateway", (attemptNo, reply) -> {
+        Delivery delivery = new Delivery(scheduler, "gateway", (attemptNo, answered, reply) -> {
             String signature = WebhookSignature.sign(secret, scheduler.instant(), body);
             network.send("ingest", () -> ingress.receive(new Request.Webhook(p.merchant, body, Optional.of(signature)),
-                    status -> network.send("gateway", () -> reply.accept(status))));
+                    status -> {
+                        answered.accept(status);
+                        network.send("gateway", () -> reply.accept(status));
+                    }));
         }, at -> null);
         deliveries.add(delivery);
         delivery.start();
@@ -681,8 +684,8 @@ public final class FakeGateway {
         return new TreeMap<>(payments);
     }
 
-    /** Deliveries never acknowledged, including those given up on. */
-    public long undelivered() {
-        return deliveries.stream().filter(d -> !d.acked()).count();
+    /** Deliveries Driftline never accepted though first sent before {@code judgedBefore} (D87), given up on or not. */
+    public long undelivered(long judgedBefore) {
+        return deliveries.stream().filter(d -> d.undrained(judgedBefore)).count();
     }
 }

@@ -15,7 +15,7 @@ stack_secrets() {
     shift
     mkdir -p "$DEV"
     sandbox/build/install/sandbox/bin/sandbox bootstrap --out "$DEV/bootstrap.json" --merchants "$merchants" \
-        --partitions 12 --days-back 3
+        --partitions 12 --days-back "${BOOTSTRAP_DAYS_BACK:-3}"
     umask 077
     # The service token (observations:write) is generated into the bootstrap file, which registers its hash.
     local service_token

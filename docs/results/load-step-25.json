@@ -1,0 +1,267 @@
+{
+  "containers": {
+    "driftline-driftline-1": {
+      "max_cores": 0.508,
+      "mean_cores": 0.229,
+      "samples": 60
+    },
+    "driftline-kafka-1": {
+      "max_cores": 2.207,
+      "mean_cores": 0.591,
+      "samples": 60
+    },
+    "driftline-postgres-1": {
+      "max_cores": 0.357,
+      "mean_cores": 0.191,
+      "samples": 60
+    },
+    "driftline-prometheus-1": {
+      "max_cores": 0.013,
+      "mean_cores": 0.005,
+      "samples": 60
+    },
+    "driftline-sandbox-1": {
+      "max_cores": 0.108,
+      "mean_cores": 0.028,
+      "samples": 60
+    }
+  },
+  "generator": {
+    "accepted": 15000,
+    "arrivals": 15000,
+    "cpu_seconds": 73.3,
+    "first_rejections": [],
+    "http_max_ms": 2454.58,
+    "http_p50_ms": 10.01,
+    "http_p99_ms": 80.68,
+    "label": "s25",
+    "max_in_flight": 59,
+    "offered_rate": 25.0,
+    "rejected": 0,
+    "schedule_seconds": 600.0,
+    "seconds": 600,
+    "sent": 15000,
+    "skipped": 0,
+    "statuses": {
+      "202": 15000
+    },
+    "still_in_flight": 0,
+    "transport_errors": 0
+  },
+  "jvm": {
+    "gc_pause_max_s": 0.096,
+    "gc_pause_total_s": 0.273716864468042,
+    "machine_cpu_max_share": 0.19417696055290357,
+    "process_cpu_avg_share_of_machine": 0.019929700690030364,
+    "process_cpu_max_share_of_machine": 0.03452534665693595
+  },
+  "machine": {
+    "busiest_second": 1795424902,
+    "busy_cores_at_busiest": 4.56,
+    "containers_cores_at_busiest": {
+      "driftline-driftline-1": 0.398,
+      "driftline-kafka-1": 2.207,
+      "driftline-postgres-1": 0.241,
+      "driftline-prometheus-1": 0.012,
+      "driftline-sandbox-1": 0.067
+    },
+    "cores": 12,
+    "generator_cores_step_mean": 0.122,
+    "largest_sample_gap_s": 2,
+    "vmstat_samples": 603,
+    "window_max_run_queue": 19,
+    "window_min_idle_cpu_pct": 62
+  },
+  "prometheus": {
+    "consumer_client_lag_max": 0.0,
+    "consumer_client_lag_series": [
+      [
+        1795424727,
+        0.0
+      ],
+      [
+        1795424742,
+        0.0
+      ],
+      [
+        1795424757,
+        0.0
+      ],
+      [
+        1795424772,
+        0.0
+      ],
+      [
+        1795424787,
+        0.0
+      ],
+      [
+        1795424802,
+        0.0
+      ],
+      [
+        1795424817,
+        0.0
+      ],
+      [
+        1795424832,
+        0.0
+      ],
+      [
+        1795424847,
+        0.0
+      ],
+      [
+        1795424862,
+        0.0
+      ],
+      [
+        1795424877,
+        0.0
+      ],
+      [
+        1795424892,
+        0.0
+      ],
+      [
+        1795424907,
+        0.0
+      ],
+      [
+        1795424922,
+        0.0
+      ],
+      [
+        1795424937,
+        0.0
+      ],
+      [
+        1795424952,
+        0.0
+      ],
+      [
+        1795424967,
+        0.0
+      ],
+      [
+        1795424982,
+        0.0
+      ],
+      [
+        1795424997,
+        0.0
+      ],
+      [
+        1795425012,
+        0.0
+      ],
+      [
+        1795425027,
+        0.0
+      ]
+    ],
+    "consumer_lag_max": 2.0,
+    "consumer_lag_series": [
+      [
+        1795424727,
+        1.0
+      ],
+      [
+        1795424742,
+        1.0
+      ],
+      [
+        1795424757,
+        0.0
+      ],
+      [
+        1795424772,
+        1.0
+      ],
+      [
+        1795424787,
+        1.0
+      ],
+      [
+        1795424802,
+        0.0
+      ],
+      [
+        1795424817,
+        2.0
+      ],
+      [
+        1795424832,
+        1.0
+      ],
+      [
+        1795424847,
+        0.0
+      ],
+      [
+        1795424862,
+        0.0
+      ],
+      [
+        1795424877,
+        0.0
+      ],
+      [
+        1795424892,
+        0.0
+      ],
+      [
+        1795424907,
+        1.0
+      ],
+      [
+        1795424922,
+        0.0
+      ],
+      [
+        1795424937,
+        0.0
+      ],
+      [
+        1795424952,
+        0.0
+      ],
+      [
+        1795424967,
+        1.0
+      ],
+      [
+        1795424982,
+        0.0
+      ],
+      [
+        1795424997,
+        0.0
+      ],
+      [
+        1795425012,
+        0.0
+      ],
+      [
+        1795425027,
+        1.0
+      ]
+    ],
+    "consumer_lag_slope_per_s": -0.0021645021645021645,
+    "event_to_match_p50_s": 0.014702794849593496,
+    "event_to_match_p99_s": 0.045946692079545416,
+    "events_consumed_per_s": 25.002982811984594,
+    "ingest_accepted_per_s": 25.002982811984594
+  },
+  "swap": {
+    "longest_swap_in_streak_s": 1,
+    "swap_in_streak_threshold_kb_per_s": 256,
+    "swap_in_total_kb": 3145
+  },
+  "verdict": "sustained",
+  "window": {
+    "from": 1795424727,
+    "seconds": 300,
+    "to": 1795425027
+  }
+}

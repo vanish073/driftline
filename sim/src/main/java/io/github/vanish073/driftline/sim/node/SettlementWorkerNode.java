@@ -12,6 +12,7 @@ import io.github.vanish073.driftline.sim.kernel.Scheduler;
 import io.github.vanish073.driftline.sim.kernel.SimClock;
 import io.github.vanish073.driftline.sim.kernel.SimLog;
 import io.github.vanish073.driftline.sim.kernel.Trace;
+import io.github.vanish073.driftline.sim.world.Delivery;
 import io.github.vanish073.driftline.sim.world.SettlementUploads;
 import io.github.vanish073.driftline.wire.ingest.MerchantContext;
 import io.github.vanish073.driftline.wire.settlement.MalformedSettlementFile;
@@ -147,7 +148,7 @@ public final class SettlementWorkerNode implements SettlementUploads {
         boolean ackLost = faults.produceAmbiguous();
         trace.line(scheduler.now(), NAME, (ackLost ? "503 (emitted, ack lost) " : "202 ") + receipt + " "
                 + file.fileId() + " lines=" + file.lines().size());
-        reply.accept(ackLost ? 503 : 202);
+        reply.accept(ackLost ? Delivery.TAKEN_ACK_LOST : 202);
     }
 
     private void emit(MerchantContext merchant, SettlementFile file, Sha256 sha, Instant receivedAt) {

@@ -67,9 +67,11 @@ public final class SettlementFeed {
     }
 
     private void send(MerchantId m, byte[] body, Runnable onAck) {
-        Delivery delivery = new Delivery(scheduler, NODE, (attemptNo, reply) -> network.send(WORKER,
-                () -> worker.upload(m, body, status -> network.send(NODE, () -> reply.accept(status)))), at -> null)
-                .onAck(onAck);
+        Delivery delivery = new Delivery(scheduler, NODE, (attemptNo, answered, reply) -> network.send(WORKER,
+                () -> worker.upload(m, body, status -> {
+                    answered.accept(status);
+                    network.send(NODE, () -> reply.accept(status));
+                })), at -> null).onAck(onAck);
         deliveries.add(delivery);
         delivery.start();
     }
@@ -83,8 +85,8 @@ public final class SettlementFeed {
         return files;
     }
 
-    /** Uploads never acknowledged, including those given up on. */
-    public long undelivered() {
-        return deliveries.stream().filter(d -> !d.acked()).count();
+    /** Uploads the worker never accepted though first sent before {@code judgedBefore} (D87), given up on or not. */
+    public long undelivered(long judgedBefore) {
+        return deliveries.stream().filter(d -> d.undrained(judgedBefore)).count();
     }
 }

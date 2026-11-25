@@ -16,12 +16,14 @@ class DeliveryTest {
     private final List<Long> gaveUpAt = new ArrayList<>();
 
     private Delivery delivery(int ackOnAttempt) {
-        return new Delivery(scheduler, "merchant", (attemptNo, reply) -> {
+        return new Delivery(scheduler, "merchant", (attemptNo, answered, reply) -> {
             attemptsAt.add(scheduler.now());
             if (attemptNo == ackOnAttempt) {
+                answered.accept(200);
                 reply.accept(200);
             } else if (attemptNo % 2 == 0) {
-                reply.accept(503);
+                answered.accept(401);
+                reply.accept(401);
             }
         }, at -> {
             gaveUpAt.add(at);
@@ -48,6 +50,7 @@ class DeliveryTest {
         assertThat(attemptsAt.getLast() + 21_600_000L).isGreaterThan(Delivery.HORIZON_MILLIS);
         assertThat(d.gaveUp()).isTrue();
         assertThat(d.acked()).isFalse();
+        assertThat(d.accepted()).as("refused every time, never taken: a failure to drain").isFalse();
         assertThat(gaveUpAt).containsExactly(attemptsAt.getLast() + 21_600_000L);
         assertThat(d.attempts()).isEqualTo(attemptsAt.size());
     }
@@ -58,8 +61,66 @@ class DeliveryTest {
         d.start();
         drain();
         assertThat(d.acked()).isTrue();
+        assertThat(d.accepted()).isTrue();
         assertThat(d.gaveUp()).isFalse();
         assertThat(attemptsAt).containsExactly(0L, 30_000L, 150_000L);
         assertThat(gaveUpAt).isEmpty();
+    }
+
+    @Test
+    void aMessageDriftlineAcceptedIsDrainedEvenIfEveryAnswerWasLostAndTheSenderGaveUp() {
+        // D87 (seed 209037988302897762, nightly): ingest answered 202 eleven times, every answer was lost on the way
+        // back, and the merchant gave up after 3 days, all inside the 5 faulty traffic days
+        Delivery d = new Delivery(scheduler, "merchant", (attemptNo, answered, reply) -> {
+            attemptsAt.add(scheduler.now());
+            answered.accept(202);
+        }, at -> {
+            gaveUpAt.add(at);
+            return null;
+        });
+        d.start();
+        drain();
+        assertThat(d.gaveUp()).isTrue();
+        assertThat(d.acked()).isFalse();
+        assertThat(d.accepted()).isTrue();
+        assertThat(d.attempts()).isEqualTo(attemptsAt.size()).isGreaterThan(6);
+        assertThat(d.undrained(Long.MAX_VALUE)).isFalse();
+    }
+
+    @Test
+    void aMessageTakenWithItsAckLostIsDrainedEvenIfEveryAnswerWasThatAndTheSenderGaveUp() {
+        // D90 (seed 209084155886090823, nightly): a gateway webhook was appended at every attempt that reached ingest,
+        // but PRODUCE_AMBIGUOUS lost the log's ack each time, so all ten answers ingest gave were 503; the gateway
+        // gave up after 3 days, all inside the 5 faulty traffic days
+        Delivery d = new Delivery(scheduler, "gateway", (attemptNo, answered, reply) -> {
+            attemptsAt.add(scheduler.now());
+            answered.accept(Delivery.TAKEN_ACK_LOST);
+            reply.accept(Delivery.TAKEN_ACK_LOST);
+        }, at -> {
+            gaveUpAt.add(at);
+            return null;
+        });
+        d.start();
+        drain();
+        assertThat(d.gaveUp()).isTrue();
+        assertThat(d.acked()).as("a 503 does not stop the retries").isFalse();
+        assertThat(d.accepted()).isTrue();
+        assertThat(d.attempts()).isEqualTo(attemptsAt.size()).isGreaterThan(6);
+        assertThat(d.undrained(Long.MAX_VALUE)).isFalse();
+        assertThat(Delivery.TAKEN_ACK_LOST).isEqualTo(503);
+    }
+
+    @Test
+    void aMessageNeverAcceptedIsUndrainedOnlyIfFirstSentBeforeTheGraceBeforeTheEnd() {
+        // D87 (seed 209053576945360396, nightly): a settlement file held back by FILE_LATE was released 88 ms before
+        // the end of the run, too late for any delivery
+        Delivery d = new Delivery(scheduler, "bank", (attemptNo, answered, reply) -> attemptsAt.add(scheduler.now()),
+                at -> null);
+        scheduler.after(5_000L, "bank", d::start);
+        scheduler.step(Long.MAX_VALUE);
+        assertThat(attemptsAt).containsExactly(5_000L);
+        assertThat(d.undrained(5_000L)).as("sent at the cut-off: not judged").isFalse();
+        assertThat(d.undrained(5_001L)).as("sent before it, never accepted").isTrue();
+        assertThat(Delivery.DRAIN_GRACE_MILLIS).isEqualTo(600_000L);
     }
 }

@@ -1,6 +1,7 @@
-# Nightly (DESIGN §16). Shift 9: the Trivy image scan (D79) and the kind smoke test (D80); the 200,000-seed `nightly`
-# campaign and the full canary matrix join it in Shift 10, with the `nightly` profile. A pull request that changes the
-# Kubernetes manifests, the smoke script or this file runs the kind smoke test too.
+# Nightly (DESIGN §16). Shift 9: the Trivy image scan (D79) and the kind smoke test (D80). Shift 10 (D85): §16's
+# 200,000-seed campaign of the `nightly` profile, 200,000 fresh `pr` seeds, and the full canary matrix (every canary on
+# both profiles, from fresh seeds). A pull request that changes the Kubernetes manifests, the smoke script or this file runs
+# the kind smoke test too; the campaigns run on the schedule and by hand (workflow_dispatch).
 # Every third-party action is pinned by commit SHA, every container image by digest.
 name: nightly
 
@@ -19,6 +20,162 @@ permissions:
   contents: read
 
 jobs:
+  # D85: 10 shards x 20,000 = 200,000 fresh pr seeds, from a range of their own (10^17 + run id x 200,000), so no two
+  # runs, and no ci.yml run, share a seed. Shard 0 also replays sim/regression-seeds.txt. Each shard uploads its
+  # summary (scripts/seed-count.sh adds them up) and, on failure, the failing seeds' traces.
+  campaign-pr:
+    name: campaign-pr (shard ${{ matrix.shard }} of 10, 20,000 pr seeds)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
+      - name: Resolve and compile (retried on a failed download)
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
+
+      - name: Campaign
+        env:
+          SHARD: ${{ matrix.shard }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          FROM=$(( 100000000000000000 + RUN_ID * 200000 + 1 ))
+          CORPUS=$([ "$SHARD" = "0" ] && echo "regression-seeds.txt" || echo "none")
+          echo "base seed $FROM, shard $SHARD/10, corpus $CORPUS"
+          ./gradlew --configure-on-demand :sim:campaign --args="--profile pr --from $FROM --count 200000 --shard $SHARD/10 --threads 4 --regression $CORPUS --summary build/sim-results/summary.json"
+
+      - name: Upload the shard's summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-summary-nightly-pr-${{ matrix.shard }}
+          path: sim/build/sim-results/summary.json
+          retention-days: 90
+
+      - name: Upload failing-seed traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-failures-nightly-pr-${{ matrix.shard }}
+          path: sim/build/sim-failures/
+          retention-days: 14
+
+  # D85: §16's 200,000-seed `nightly` campaign, 40 shards x 5,000 fresh seeds from their own range (2 x 10^17 + run
+  # id x 200,000). A `nightly` seed (5 merchants, 6 partitions, about 2,000 orders over 5 days) cost 4.5 to 6.5 s of
+  # one core on these runners (5.6 s on average), so a shard takes about 2 hours on 4 threads.
+  campaign-nightly:
+    name: campaign-nightly (shard ${{ matrix.shard }} of 40, 5,000 nightly seeds)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
+      - name: Resolve and compile (retried on a failed download)
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
+
+      - name: Campaign
+        env:
+          SHARD: ${{ matrix.shard }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          FROM=$(( 200000000000000000 + RUN_ID * 200000 + 1 ))
+          echo "base seed $FROM, shard $SHARD/40"
+          ./gradlew --configure-on-demand :sim:campaign --args="--profile nightly --from $FROM --count 200000 --shard $SHARD/40 --threads 4 --regression none --summary build/sim-results/summary.json"
+
+      - name: Upload the shard's summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-summary-nightly-nightly-${{ matrix.shard }}
+          path: sim/build/sim-results/summary.json
+          retention-days: 90
+
+      - name: Upload failing-seed traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sim-failures-nightly-nightly-${{ matrix.shard }}
+          path: sim/build/sim-failures/
+          retention-days: 14
+
+  # The full canary matrix (DESIGN §11.10, D85): every canary on both profiles, from fresh seeds each run (ci.yml's
+  # canaries-quick always starts at seed 1), each caught within its budget by an expected invariant.
+  canary-matrix:
+    name: canary-matrix (${{ matrix.profile }})
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The seed range in units of 10^17: a literal 3 x 10^17 here would reach the shell as 3E+17.
+          - profile: pr
+            budget: 500
+            range: 3
+          - profile: nightly
+            budget: 100
+            range: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      # --configure-on-demand: only the simulator's projects are configured, so :app's build-script classpath
+      # (D86) is never downloaded here; a download that fails anyway is retried (D85).
+      - name: Resolve and compile (retried on a failed download)
+        run: scripts/gradle-warm.sh --configure-on-demand :sim:classes
+
+      - name: Canaries
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RANGE: ${{ matrix.range }}
+        run: |
+          FROM=$(( RANGE * 100000000000000000 + RUN_ID * 10000 + 1 ))
+          echo "base seed $FROM"
+          ./gradlew --configure-on-demand :sim:canaries --args="--profile ${{ matrix.profile }} --from $FROM --budget ${{ matrix.budget }} --threads 4 --out build/sim-results/canaries-${{ matrix.profile }}.md"
+
+      - name: Upload the canary table
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: canary-matrix-${{ matrix.profile }}
+          path: sim/build/sim-results/canaries-${{ matrix.profile }}.md
+          retention-days: 90
+
   # The app and sandbox images, built from this commit: fails on any high or critical vulnerability that has a fix,
   # in the base image's packages or in the jars inside.
   trivy:
