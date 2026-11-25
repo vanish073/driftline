@@ -1,11 +1,16 @@
-# Dependabot version updates (DESIGN §14, D79). Weekly, grouped per ecosystem, with a 14-day cooldown so a release is
-# at least two weeks old before it is proposed; security updates are not held back by the cooldown.
-# A Gradle update also needs new lockfiles: if Dependabot leaves them unchanged, CI's `security` job fails with
-# "lockfiles out of date"; run scripts/check-lockfiles.sh --write on the branch and push.
+# Dependabot version updates (DESIGN §14, D79), switched off after v1.0 (D91): every ecosystem below has
+# open-pull-requests-limit 0, so no version-update pull requests are opened. The results, the README and DESIGN name
+# the versions they were measured with, so a version bump is now a deliberate change (re-run CI and the nightly, and
+# re-measure what depends on it). Security is still watched: Dependabot alerts, dependency-review on pull requests,
+# OSV-Scanner on the lockfiles and Trivy on the images (D79).
+# The schedule, cooldown and groups are kept so updates can be switched back on by raising the limit. A Gradle update
+# also needs new lockfiles: if Dependabot leaves them unchanged, CI's `security` job fails with "lockfiles out of
+# date"; run scripts/check-lockfiles.sh --write on the branch and push.
 version: 2
 updates:
   - package-ecosystem: gradle
     directory: /
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
@@ -13,10 +18,10 @@ updates:
     groups:
       gradle:
         patterns: ["*"]
-    open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
@@ -25,10 +30,11 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The app and sandbox base image (pinned by digest). Java stays on 21, the LTS release (DESIGN §18): a major-version
-  # jump of the JRE (PR #8 proposed 24, a short-term release) is not proposed; patch and minor updates of 21 are.
+  # The app and sandbox base image (pinned by digest). Java stays on 21, the LTS release (DESIGN §18): even with
+  # updates switched back on, a major-version jump of the JRE (PR #8 proposed 24, a short-term release) is not proposed.
   - package-ecosystem: docker
     directory: /deploy/docker
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
@@ -43,6 +49,7 @@ updates:
   # PostgreSQL, Kafka and the obs profile's images in Compose (pinned by digest).
   - package-ecosystem: docker-compose
     directory: /deploy/compose
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
